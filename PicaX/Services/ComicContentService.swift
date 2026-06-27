@@ -1,0 +1,2865 @@
+import CryptoKit
+import CFNetwork
+import Foundation
+
+private enum AppNetworkSettings {
+    private enum Key {
+        nonisolated static let useProxy = "settings.network.useProxy"
+        nonisolated static let proxyHost = "settings.network.proxyHost"
+        nonisolated static let proxyPort = "settings.network.proxyPort"
+        nonisolated static let imageQuality = "settings.network.imageQuality"
+        nonisolated static let retryCount = "settings.network.retryCount"
+    }
+
+    private nonisolated static var defaults: UserDefaults {
+        .standard
+    }
+
+    nonisolated static var retryAttempts: Int {
+        let retryCount = defaults.object(forKey: Key.retryCount) == nil ? 2 : defaults.integer(forKey: Key.retryCount)
+        return min(max(retryCount, 0), 5) + 1
+    }
+
+    nonisolated static var picacgImageQuality: String {
+        switch defaults.string(forKey: Key.imageQuality) ?? "均衡" {
+        case "省流":
+            return "low"
+        case "高清":
+            return "high"
+        case "原图":
+            return "original"
+        default:
+            return "medium"
+        }
+    }
+
+    nonisolated static func makeSession() -> URLSession {
+        let configuration = URLSessionConfiguration.default
+        configuration.timeoutIntervalForRequest = 30
+        configuration.timeoutIntervalForResource = 90
+
+        let host = (defaults.string(forKey: Key.proxyHost) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if defaults.bool(forKey: Key.useProxy), !host.isEmpty {
+            let storedPort = defaults.object(forKey: Key.proxyPort) == nil ? 7890 : defaults.integer(forKey: Key.proxyPort)
+            let port = min(max(storedPort, 1), 65535)
+            configuration.connectionProxyDictionary = [
+                kCFNetworkProxiesHTTPEnable as String: 1,
+                kCFNetworkProxiesHTTPProxy as String: host,
+                kCFNetworkProxiesHTTPPort as String: port,
+                "HTTPSEnable": 1,
+                "HTTPSProxy": host,
+                "HTTPSPort": port
+            ]
+        }
+
+        return URLSession(configuration: configuration)
+    }
+}
+
+struct ComicContentService {
+    private let session: URLSession
+    private let localStore: LocalFavoritesStore
+
+    nonisolated init(session: URLSession? = nil, localStore: LocalFavoritesStore = LocalFavoritesStore()) {
+        self.session = session ?? AppNetworkSettings.makeSession()
+        self.localStore = localStore
+    }
+
+    var localFolders: [LocalFavoriteFolder] {
+        localStore.folders
+    }
+
+    func loadExplore(platform: ComicPlatform, entry: ComicExploreEntry, account: PlatformAccount?, page: Int = 1) async throws -> [ComicListItem] {
+        switch platform {
+        case .picacg:
+            return try await loadPicacgExplore(entry: entry, page: page, account: account)
+        case .nhentai:
+            return try await loadNhentaiExplore(entry: entry, page: page)
+        case .eHentai:
+            return try await loadEhentaiExplore(entry: entry, page: page)
+        case .htManga:
+            return try await loadHtMangaExplore(entry: entry, page: page)
+        case .jmComic:
+            return try await loadJmComicExplore(entry: entry, page: page)
+        case .hitomi:
+            return try await loadHitomiExplore(entry: entry, page: page)
+        }
+    }
+
+    func loadEhentaiSubscription(page: Int = 1) async throws -> [ComicListItem] {
+        try await loadEhentaiWatched(page: page)
+    }
+
+    func loadFavorites(account: PlatformAccount) async throws -> [ComicListItem] {
+        switch account.platform {
+        case .picacg:
+            return try await loadPicacgFavorites(account: account)
+        case .nhentai:
+            throw ComicContentError.loginRequired("NHentai 收藏接口需要 Web 登录后的 access_token，当前账号模型还没有保存 cookie/token。")
+        case .eHentai:
+            throw ComicContentError.loginRequired("E-Hentai 收藏接口需要网页登录 cookie，当前账号模型还没有保存 cookie。")
+        case .htManga:
+            return try await loadHtMangaFavorites(account: account)
+        case .jmComic:
+            return try await loadJmComicFavorites(account: account)
+        case .hitomi:
+            throw ComicContentError.unsupported("Hitomi 没有平台收藏接口。")
+        }
+    }
+
+    func loadLocalFavorites(folder: LocalFavoriteFolder) -> [ComicListItem] {
+        localStore.items(folderID: folder.id)
+    }
+
+    func addLocalFavorite(item: ComicListItem, folder: LocalFavoriteFolder) {
+        localStore.add(item: item, folderID: folder.id)
+    }
+
+    func supportsPlatformFavorite(platform: ComicPlatform) -> Bool {
+        switch platform {
+        case .picacg, .jmComic, .htManga:
+            true
+        case .nhentai, .eHentai, .hitomi:
+            false
+        }
+    }
+
+    func supportsLike(platform: ComicPlatform) -> Bool {
+        switch platform {
+        case .picacg, .jmComic:
+            true
+        case .nhentai, .eHentai, .htManga, .hitomi:
+            false
+        }
+    }
+
+    func supportsCommentPosting(platform: ComicPlatform) -> Bool {
+        switch platform {
+        case .picacg, .jmComic:
+            true
+        case .eHentai:
+            true
+        case .nhentai, .htManga, .hitomi:
+            false
+        }
+    }
+
+    func setComicLiked(item: ComicListItem, isLiked: Bool, account: PlatformAccount?) async throws {
+        switch item.platform {
+        case .picacg:
+            try await togglePicacgComicLike(item: item, account: account)
+        case .jmComic:
+            if isLiked {
+                try await likeJmComic(item: item)
+            }
+        case .nhentai, .eHentai, .htManga, .hitomi:
+            throw ComicContentError.unsupported("\(item.platformTitle) 当前没有可用点赞接口。")
+        }
+    }
+
+    func loadPlatformFavoriteFolders(item: ComicListItem, account: PlatformAccount?) async throws -> [PlatformFavoriteFolder] {
+        switch item.platform {
+        case .picacg:
+            _ = try await picacgToken(account: account)
+            return [PlatformFavoriteFolder(id: "default", title: "云端收藏夹", subtitle: "PicACG 默认收藏", platform: .picacg)]
+        case .jmComic:
+            return try await loadJmComicFavoriteFolders(account: account)
+        case .htManga:
+            return try await loadHtMangaFavoriteFolders(account: account)
+        case .nhentai, .eHentai, .hitomi:
+            throw ComicContentError.unsupported("\(item.platformTitle) 当前没有可用平台收藏写入接口。")
+        }
+    }
+
+    func addPlatformFavorite(item: ComicListItem, folder: PlatformFavoriteFolder, account: PlatformAccount?) async throws {
+        switch item.platform {
+        case .picacg:
+            try await addPicacgFavorite(item: item, account: account)
+        case .jmComic:
+            try await addJmComicFavorite(item: item, folderID: folder.id, account: account)
+        case .htManga:
+            try await addHtMangaFavorite(item: item, folderID: folder.id, account: account)
+        case .nhentai, .eHentai, .hitomi:
+            throw ComicContentError.unsupported("\(item.platformTitle) 当前没有可用平台收藏写入接口。")
+        }
+    }
+
+    func validateLogin(platform: ComicPlatform, username: String, password: String) async throws -> PlatformAccount {
+        let trimmedUsername = username.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedPassword = password.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedUsername.isEmpty else {
+            throw PlatformAccountError.emptyUsername
+        }
+        guard !trimmedPassword.isEmpty else {
+            throw PlatformAccountError.emptyPassword
+        }
+
+        let account = PlatformAccount(platform: platform, username: trimmedUsername, password: trimmedPassword, loggedInAt: Date())
+        switch platform {
+        case .picacg:
+            _ = try await picacgToken(account: account)
+            if UserDefaults.standard.bool(forKey: PlatformFeatureSettingsKey.picacgAutoPunchIn) {
+                try? await picacgPunchIn(account: account)
+            }
+        case .htManga:
+            try await htMangaLogin(account: account, baseURL: htMangaBaseURL, cookies: HTTPCookieStorage())
+        case .nhentai:
+            throw ComicContentError.loginRequired("NHentai 账号校验需要 Web 登录后的 access_token，请通过网页登录。")
+        case .eHentai:
+            throw ComicContentError.loginRequired("E-Hentai 账号校验需要网页登录 cookie，请通过网页登录。")
+        case .jmComic:
+            try await jmLogin(account: account, cookies: HTTPCookieStorage())
+            if UserDefaults.standard.bool(forKey: PlatformFeatureSettingsKey.jmAutoCheckIn) {
+                _ = try? await jmComicCheckIn(account: account)
+            }
+        case .hitomi:
+            throw ComicContentError.unsupported("Hitomi 没有账号密码登录接口。")
+        }
+        return account
+    }
+
+    func loadDetail(item: ComicListItem, account: PlatformAccount?) async throws -> ComicDetailInfo {
+        switch item.platform {
+        case .picacg:
+            return try await loadPicacgDetail(item: item, account: account)
+        case .nhentai:
+            return try await loadNhentaiDetail(item: item)
+        case .eHentai:
+            return try await loadEhentaiDetail(item: item)
+        case .htManga:
+            return try await loadHtMangaDetail(item: item)
+        case .jmComic:
+            return try await loadJmComicDetail(item: item)
+        case .hitomi:
+            return try await loadHitomiDetail(item: item)
+        }
+    }
+
+    func loadTagComics(tag: ComicTagReference, account: PlatformAccount?, page: Int = 1) async throws -> [ComicListItem] {
+        switch tag.platform {
+        case .picacg:
+            if let category = tag.query.removingPrefix("category:") {
+                return try await loadPicacgCategoryComics(category: category, page: page, account: account)
+            }
+            return try await searchPicacg(keyword: tag.query, page: page, account: account)
+        case .nhentai:
+            return try await searchNhentai(query: tag.query, page: page)
+        case .eHentai:
+            return try await searchEhentai(query: tag.query, page: page)
+        case .htManga:
+            return try await searchHtManga(tag: tag, page: page)
+        case .jmComic:
+            return try await searchJmComic(query: BlockingKeywordService.jmKeywordByApplyingBlocks(to: tag.query), page: page)
+        case .hitomi:
+            return try await searchHitomi(tag: tag, page: page)
+        }
+    }
+
+    func searchComics(
+        platform: ComicPlatform,
+        keyword: String,
+        account: PlatformAccount?,
+        page: Int = 1,
+        options: ComicSearchAdvancedOptions? = nil
+    ) async throws -> [ComicListItem] {
+        let trimmed = keyword.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+        let resolvedOptions = options ?? ComicSearchAdvancedOptions()
+
+        switch platform {
+        case .picacg:
+            return try await searchPicacg(keyword: trimmed, page: page, account: account, sort: resolvedOptions.sortValue(for: platform))
+        case .nhentai:
+            return try await searchNhentai(query: resolvedOptions.keyword(trimmed, for: platform), page: page, sort: resolvedOptions.sortValue(for: platform))
+        case .eHentai:
+            return try await searchEhentai(query: trimmed, page: page)
+        case .htManga:
+            let tag = ComicTagReference(title: trimmed, query: trimmed, platform: platform, urlString: nil)
+            return try await searchHtManga(tag: tag, page: page)
+        case .jmComic:
+            return try await searchJmComic(
+                query: BlockingKeywordService.jmKeywordByApplyingBlocks(to: trimmed),
+                page: page,
+                sort: resolvedOptions.sortValue(for: platform)
+            )
+        case .hitomi:
+            let tag = ComicTagReference(title: trimmed, query: trimmed, platform: platform, urlString: nil)
+            return try await searchHitomi(tag: tag, page: page)
+        }
+    }
+
+    func loadCategories(platform: ComicPlatform, account: PlatformAccount?) async throws -> [ComicCategoryItem] {
+        switch platform {
+        case .picacg:
+            return try await loadPicacgCategories(account: account)
+        default:
+            return defaultCategories(platform: platform)
+        }
+    }
+
+    func loadComments(item: ComicListItem, account: PlatformAccount?, page: Int = 1) async throws -> [ComicComment] {
+        switch item.platform {
+        case .picacg:
+            return try await loadPicacgComments(item: item, account: account, page: page)
+        case .nhentai:
+            return try await loadNhentaiComments(item: item)
+        case .eHentai:
+            return try await loadEhentaiComments(item: item)
+        case .jmComic:
+            return try await loadJmComicComments(item: item, page: page)
+        case .htManga, .hitomi:
+            throw ComicContentError.unsupported("\(item.platformTitle) 没有可用评论接口。")
+        }
+    }
+
+    func supportsChapterComments(platform: ComicPlatform) -> Bool {
+        switch platform {
+        case .picacg, .nhentai, .eHentai, .jmComic:
+            true
+        case .htManga, .hitomi:
+            false
+        }
+    }
+
+    func loadChapterComments(
+        item: ComicListItem,
+        chapter: ComicChapter,
+        account: PlatformAccount?,
+        page: Int = 1
+    ) async throws -> [ComicComment] {
+        switch item.platform {
+        case .picacg:
+            return try await loadPicacgChapterComments(item: item, chapter: chapter, account: account, page: page)
+        case .jmComic:
+            return try await loadJmComicChapterComments(chapter: chapter, page: page)
+        case .nhentai, .eHentai:
+            return try await loadComments(item: item, account: account, page: page)
+        case .htManga, .hitomi:
+            throw ComicContentError.unsupported("\(item.platformTitle) 没有可用章节评论接口。")
+        }
+    }
+
+    func loadChapterImages(item: ComicListItem, chapter: ComicChapter, account: PlatformAccount?) async throws -> [ComicChapterImage] {
+        let urls: [String]
+        switch item.platform {
+        case .picacg:
+            urls = try await loadPicacgChapterImages(item: item, chapter: chapter, account: account)
+        case .nhentai:
+            urls = try await loadNhentaiImages(item: item)
+        case .eHentai:
+            urls = try await loadEhentaiImages(item: item)
+        case .htManga:
+            urls = try await loadHtMangaImages(item: item)
+        case .jmComic:
+            urls = try await loadJmComicChapterImages(chapter: chapter)
+        case .hitomi:
+            urls = try await loadHitomiImages(item: item)
+        }
+        return urls.enumerated().map { index, url in
+            ComicChapterImage(id: "\(chapter.id)-\(index + 1)", urlString: url)
+        }
+    }
+
+    func prefetchImages(urlStrings: [String]) async {
+        for urlString in urlStrings {
+            guard !Task.isCancelled, let url = URL.picaxResolved(from: urlString) else { continue }
+            guard url.picaxLocalFileURL == nil else { continue }
+            _ = try? await ImageCacheService.data(for: url)
+        }
+    }
+
+    func loadImageData(urlString: String) async throws -> Data {
+        guard let url = URL.picaxResolved(from: urlString) else {
+            throw ComicContentError.invalidURL(urlString)
+        }
+
+        return try await ImageCacheService.data(for: url)
+    }
+
+    func postComment(item: ComicListItem, content: String, account: PlatformAccount?) async throws {
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw ComicContentError.invalidResponse("请输入评论内容。")
+        }
+
+        switch item.platform {
+        case .picacg:
+            try await postPicacgComment(item: item, content: trimmed, account: account)
+        case .eHentai:
+            try await postEhentaiComment(item: item, content: trimmed)
+        case .jmComic:
+            try await postJmComicComment(item: item, content: trimmed, account: account)
+        case .nhentai, .htManga, .hitomi:
+            throw ComicContentError.unsupported("\(item.platformTitle) 当前不支持发送评论。")
+        }
+    }
+
+    func loadPicacgProfile(account: PlatformAccount?) async throws -> PicacgUserProfile {
+        let token = try await picacgToken(account: account)
+        let json = try await picacgJSON(path: "users/profile", token: token)
+        guard let user = json.value(at: ["data", "user"]) as? [String: Any] else {
+            throw ComicContentError.invalidResponse("PicACG 用户资料响应缺少 user。")
+        }
+        return picacgProfile(from: user)
+    }
+
+    func loadPicacgUserComments(account: PlatformAccount?, page: Int = 1) async throws -> PicacgUserCommentsPageData {
+        let token = try await picacgToken(account: account)
+        let json = try await picacgJSON(path: "users/my-comments?page=\(max(page, 1))", token: token)
+        guard let comments = json.value(at: ["data", "comments"]) as? [String: Any],
+              let docs = comments["docs"] as? [[String: Any]] else {
+            throw ComicContentError.invalidResponse("PicACG 我的评论响应缺少 comments。")
+        }
+        return PicacgUserCommentsPageData(
+            comments: docs.compactMap { picacgUserComment(from: $0) },
+            page: comments.intValue(for: "page") ?? page,
+            pages: comments.intValue(for: "pages") ?? page
+        )
+    }
+
+    func picacgPunchIn(account: PlatformAccount?) async throws {
+        let token = try await picacgToken(account: account)
+        _ = try await picacgJSON(path: "users/punch-in", method: "POST", token: token)
+    }
+
+    func jmComicCheckIn(account: PlatformAccount?) async throws -> String {
+        guard let account else {
+            throw ComicContentError.loginRequired("JMComic 签到需要先登录平台账号。")
+        }
+        let cookies = HTTPCookieStorage()
+        let loginInfo = try await jmLoginInfo(account: account, cookies: cookies)
+        guard let userID = loginInfo.userID, !userID.isEmpty else {
+            throw ComicContentError.invalidResponse("JMComic 登录响应缺少用户 ID。")
+        }
+        guard let daily = try await jmJSON(path: "daily?user_id=\(userID.urlEncoded)", cookies: cookies, baseURL: loginInfo.baseURL) as? [String: Any] else {
+            throw ComicContentError.invalidResponse("JMComic 签到响应不是对象。")
+        }
+        guard let dailyID = jmString(daily["daily_id"]), !dailyID.isEmpty else {
+            throw ComicContentError.invalidResponse("JMComic 签到响应缺少 daily_id。")
+        }
+        guard let result = try await jmJSON(
+            path: "daily_chk",
+            method: "POST",
+            body: "user_id=\(userID.urlEncoded)&daily_id=\(dailyID.urlEncoded)&",
+            cookies: cookies,
+            baseURL: loginInfo.baseURL
+        ) as? [String: Any] else {
+            throw ComicContentError.invalidResponse("JMComic 签到结果不是对象。")
+        }
+        return jmString(result["msg"]) ?? "签到完成"
+    }
+
+    func refreshJmAPIEndpoints() async throws -> JmAPIUpdateResult {
+        let baseURLs = try await loadRemoteJmAPIBaseURLs()
+        UserDefaults.standard.set(baseURLs.joined(separator: "\n"), forKey: PlatformFeatureSettingsKey.jmCustomAPIBaseURLs)
+        let appVersion = try? await loadRemoteJmAppVersion(baseURLs: baseURLs)
+        if let appVersion {
+            UserDefaults.standard.set(appVersion, forKey: PlatformFeatureSettingsKey.jmAppVersion)
+        }
+        return JmAPIUpdateResult(baseURLs: baseURLs, appVersion: appVersion)
+    }
+
+    func refreshJmAppVersion() async throws -> String {
+        let version = try await loadRemoteJmAppVersion(baseURLs: PlatformFeatureSettings.jmAPIBaseURLs())
+        UserDefaults.standard.set(version, forKey: PlatformFeatureSettingsKey.jmAppVersion)
+        return version
+    }
+
+    func loadEhentaiProfiles() async throws -> [EhentaiProfile] {
+        guard let url = URL(string: "\(ehentaiBaseURL)/uconfig.php") else {
+            throw ComicContentError.invalidURL("E-Hentai Profile")
+        }
+        let html = try await requestString(url: url, headers: webHeaders(referer: ehentaiBaseURL))
+        guard let selectHTML = html.firstRegexCapture(#"<select[^>]+name="profile_set"[^>]*>.*?</select>"#) else {
+            throw ComicContentError.invalidResponse("E-Hentai 没有返回 Profile 列表。")
+        }
+        let profiles = selectHTML.regexMatches(#"<option[^>]+value="([^"]*)"[^>]*>.*?</option>"#, options: [.dotMatchesLineSeparators]).compactMap { row -> EhentaiProfile? in
+            let id = row.firstRegexCapture(#"value="([^"]*)""#) ?? ""
+            let title = row.strippingHTML.nilIfEmpty ?? (id.isEmpty ? "Do not modify" : id)
+            return EhentaiProfile(id: id, title: title)
+        }
+        guard !profiles.isEmpty else {
+            throw ComicContentError.invalidResponse("E-Hentai 没有返回 Profile 列表。")
+        }
+        return [EhentaiProfile(id: "", title: "Do not modify")] + profiles.filter { !$0.id.isEmpty }
+    }
+
+    func loadHtMangaAPIBaseURLs() async throws -> [String] {
+        guard let url = URL(string: "https://raw.githubusercontent.com/ccbkv/PicaComicapitxt/refs/heads/main/htmanga_api_list.txt") else {
+            throw ComicContentError.invalidURL("HT Manga API 分流")
+        }
+        let text = try await requestString(url: url, headers: webHeaders(referer: "https://github.com/ccbkv/PicaComicapitxt"))
+        let values = text
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .compactMap { value -> String? in
+                if let data = Data(base64Encoded: value),
+                   let decoded = String(data: data, encoding: .utf8),
+                   !decoded.isEmpty {
+                    return PlatformFeatureSettings.normalizedBaseURL(decoded, fallback: "")
+                }
+                return PlatformFeatureSettings.normalizedBaseURL(value, fallback: "")
+            }
+            .filter { URL(string: $0)?.host != nil }
+        guard !values.isEmpty else {
+            throw ComicContentError.invalidResponse("HT Manga 没有返回可用 API 分流。")
+        }
+        return uniqueBaseURLs(values)
+    }
+}
+
+private struct PicacgChapterInfo {
+    let id: String
+    let title: String
+    let order: String
+}
+
+private struct JmLoginInfo {
+    let baseURL: String
+    let userID: String?
+}
+
+private extension ComicContentService {
+    func singleReaderChapter(title: String = "第 1 章") -> [ComicChapter] {
+        [ComicChapter(id: "1", title: title, subtitle: nil)]
+    }
+
+    func loadPicacgExplore(entry: ComicExploreEntry, page: Int, account: PlatformAccount?) async throws -> [ComicListItem] {
+        let token = try await picacgToken(account: account)
+        switch entry {
+        case .random:
+            let json = try await picacgJSON(path: "comics/random", token: token)
+            return try picacgItems(from: json, arrayPath: ["data", "comics"])
+        case .latest:
+            let sort = PlatformFeatureSettings.picacgDefaultSort()
+            let json = try await picacgJSON(path: "comics?page=\(page)&s=\(sort)", token: token)
+            return try picacgItems(from: json, arrayPath: ["data", "comics", "docs"])
+        case .ranking:
+            guard page == 1 else { return [] }
+            let json = try await picacgJSON(path: "comics/leaderboard?tt=H24&ct=VC", token: token)
+            return try picacgItems(from: json, arrayPath: ["data", "comics"])
+        case .search:
+            throw ComicContentError.unsupported("PicACG 搜索接口需要关键词和排序条件，当前入口页还没有筛选表单。")
+        }
+    }
+
+    func loadPicacgFavorites(account: PlatformAccount) async throws -> [ComicListItem] {
+        let token = try await picacgToken(account: account)
+        let sort = PlatformFeatureSettings.picacgFavoriteSort()
+        let json = try await picacgJSON(path: "users/favourite?s=\(sort)&page=1", token: token)
+        return try picacgItems(from: json, arrayPath: ["data", "comics", "docs"], favoriteDate: Date())
+    }
+
+    func addPicacgFavorite(item: ComicListItem, account: PlatformAccount?) async throws {
+        let token = try await picacgToken(account: account)
+        _ = try await picacgJSON(path: "comics/\(item.id)/favourite", method: "POST", token: token, body: Data("{}".utf8))
+    }
+
+    func togglePicacgComicLike(item: ComicListItem, account: PlatformAccount?) async throws {
+        let token = try await picacgToken(account: account)
+        _ = try await picacgJSON(path: "comics/\(item.id)/like", method: "POST", token: token, body: Data("{}".utf8))
+    }
+
+    func picacgToken(account: PlatformAccount?) async throws -> String {
+        guard let account else {
+            throw ComicContentError.loginRequired("PicACG 接口需要先登录平台账号。")
+        }
+
+        let path = "auth/sign-in"
+        let body = try JSONSerialization.data(withJSONObject: [
+            "email": account.username,
+            "password": account.password
+        ])
+        let json = try await picacgJSON(path: path, method: "POST", token: "", body: body)
+        guard let token = json.value(at: ["data", "token"]) as? String, !token.isEmpty else {
+            throw ComicContentError.invalidResponse("PicACG 登录响应缺少 token。")
+        }
+        return token
+    }
+
+    func picacgProfile(from user: [String: Any]) -> PicacgUserProfile {
+        PicacgUserProfile(
+            id: user["_id"] as? String ?? "",
+            email: user["email"] as? String ?? "",
+            name: user["name"] as? String ?? "",
+            title: user["title"] as? String ?? "User",
+            level: user.intValue(for: "level") ?? 0,
+            exp: user.intValue(for: "exp") ?? 0,
+            slogan: user["slogan"] as? String,
+            avatarURLString: picacgImageURL(from: user["avatar"] as? [String: Any]),
+            frameURLString: (user["character"] as? String)?.nilIfEmpty,
+            isPunched: user["isPunched"] as? Bool
+        )
+    }
+
+    func picacgUserComment(from doc: [String: Any]) -> PicacgUserComment? {
+        guard let id = doc["_id"] as? String,
+              let comic = doc["_comic"] as? [String: Any],
+              let comicID = comic["_id"] as? String else {
+            return nil
+        }
+
+        return PicacgUserComment(
+            id: id,
+            content: doc["content"] as? String ?? "",
+            comicID: comicID,
+            comicTitle: comic["title"] as? String ?? "Unknown",
+            timeText: doc["created_at"] as? String,
+            likesCount: doc.intValue(for: "likesCount") ?? 0,
+            replyCount: doc.intValue(for: "commentsCount") ?? 0,
+            isLiked: doc["isLiked"] as? Bool ?? false
+        )
+    }
+
+    func picacgJSON(path: String, method: String = "GET", token: String, body: Data? = nil) async throws -> [String: Any] {
+        guard let url = URL(string: "https://picaapi.picacomic.com/\(path)") else {
+            throw ComicContentError.invalidURL(path)
+        }
+        let headers = picacgHeaders(path: path, method: method, token: token)
+        return try await requestJSON(url: url, method: method, headers: headers, body: body)
+    }
+
+    func picacgItems(from json: [String: Any], arrayPath: [String], favoriteDate: Date? = nil) throws -> [ComicListItem] {
+        guard let docs = json.value(at: arrayPath) as? [[String: Any]] else {
+            throw ComicContentError.invalidResponse("PicACG 响应缺少漫画列表。")
+        }
+
+        return picacgItems(from: docs, favoriteDate: favoriteDate)
+    }
+
+    func picacgItems(from docs: [[String: Any]], favoriteDate: Date? = nil) -> [ComicListItem] {
+        return docs.compactMap { doc in
+            guard let id = doc["_id"] as? String else { return nil }
+            let thumb = doc["thumb"] as? [String: Any]
+            let fileServer = thumb?["fileServer"] as? String ?? ""
+            let path = thumb?["path"] as? String ?? ""
+            var tags = [String]()
+            tags.append(contentsOf: doc["tags"] as? [String] ?? [])
+            tags.append(contentsOf: doc["categories"] as? [String] ?? [])
+            return ComicListItem(
+                id: id,
+                platform: .picacg,
+                title: doc["title"] as? String ?? "Unknown",
+                subtitle: doc["author"] as? String ?? "Unknown",
+                coverURLString: fileServer.isEmpty || path.isEmpty ? "" : "\(fileServer)/static/\(path)",
+                tags: tags,
+                pageCount: doc.intValue(for: "pagesCount"),
+                likesCount: doc.intValue(for: "likesCount") ?? doc.intValue(for: "totalLikes"),
+                favoriteDate: favoriteDate
+            )
+        }
+    }
+
+    func loadPicacgCategories(account: PlatformAccount?) async throws -> [ComicCategoryItem] {
+        let token = try await picacgToken(account: account)
+        let json = try await picacgJSON(path: "categories", token: token)
+        guard let categories = json.value(at: ["data", "categories"]) as? [[String: Any]] else {
+            throw ComicContentError.invalidResponse("PicACG 分类响应缺少 categories。")
+        }
+
+        return categories.compactMap { category in
+            guard category["isWeb"] as? Bool != true,
+                  let title = category["title"] as? String,
+                  !title.isEmpty else {
+                return nil
+            }
+
+            let thumb = category["thumb"] as? [String: Any]
+            let fileServer = thumb?["fileServer"] as? String ?? ""
+            let path = thumb?["path"] as? String ?? ""
+            let coverURLString = fileServer.isEmpty || path.isEmpty ? nil : "\(fileServer)/static/\(path)"
+
+            return ComicCategoryItem(
+                title: title,
+                query: "category:\(title)",
+                platform: .picacg,
+                subtitle: "PicACG 分类",
+                coverURLString: coverURLString
+            )
+        }
+    }
+
+    func loadPicacgCategoryComics(category: String, page: Int, account: PlatformAccount?) async throws -> [ComicListItem] {
+        let token = try await picacgToken(account: account)
+        let encodedCategory = category.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? category
+        let sort = PlatformFeatureSettings.picacgDefaultSort()
+        let json = try await picacgJSON(path: "comics?page=\(page)&c=\(encodedCategory)&s=\(sort)", token: token)
+        return try picacgItems(from: json, arrayPath: ["data", "comics", "docs"])
+    }
+
+    func loadPicacgComments(item: ComicListItem, account: PlatformAccount?, page: Int) async throws -> [ComicComment] {
+        let token = try await picacgToken(account: account)
+        let json = try await picacgJSON(path: "comics/\(item.id)/comments?page=\(page)", token: token)
+        guard let docs = json.value(at: ["data", "comments", "docs"]) as? [[String: Any]] else {
+            throw ComicContentError.invalidResponse("PicACG 评论响应缺少 comments。")
+        }
+        return docs.map { picacgComment(from: $0) }
+    }
+
+    func loadPicacgChapterComments(item: ComicListItem, chapter: ComicChapter, account: PlatformAccount?, page: Int) async throws -> [ComicComment] {
+        try await loadPicacgComments(item: item, account: account, page: page)
+    }
+
+    func picacgComment(from doc: [String: Any]) -> ComicComment {
+        let user = doc["_user"] as? [String: Any]
+        return ComicComment(
+            id: doc["_id"] as? String ?? UUID().uuidString,
+            author: user?["name"] as? String ?? "Unknown",
+            content: doc["content"] as? String ?? "",
+            timeText: doc["created_at"] as? String,
+            avatarURLString: picacgImageURL(from: user?["avatar"] as? [String: Any]),
+            likesCount: doc.intValue(for: "likesCount"),
+            replyCount: doc.intValue(for: "commentsCount"),
+            replies: [],
+            frameURLString: (user?["character"] as? String)?.nilIfEmpty
+        )
+    }
+
+    func postPicacgComment(item: ComicListItem, content: String, account: PlatformAccount?) async throws {
+        let token = try await picacgToken(account: account)
+        let body = try JSONSerialization.data(withJSONObject: ["content": content])
+        _ = try await picacgJSON(path: "comics/\(item.id)/comments", method: "POST", token: token, body: body)
+    }
+
+    func searchPicacg(keyword: String, page: Int, account: PlatformAccount?, sort: String? = nil) async throws -> [ComicListItem] {
+        let token = try await picacgToken(account: account)
+        let resolvedSort = sort ?? PlatformFeatureSettings.picacgDefaultSort()
+        let body = try JSONSerialization.data(withJSONObject: [
+            "keyword": keyword,
+            "sort": resolvedSort
+        ])
+        let json = try await picacgJSON(path: "comics/advanced-search?page=\(page)", method: "POST", token: token, body: body)
+        return try picacgItems(from: json, arrayPath: ["data", "comics", "docs"])
+    }
+
+    func loadPicacgDetail(item: ComicListItem, account: PlatformAccount?) async throws -> ComicDetailInfo {
+        let token = try await picacgToken(account: account)
+        let json = try await picacgJSON(path: "comics/\(item.id)", token: token)
+        guard let doc = json.value(at: ["data", "comic"]) as? [String: Any] else {
+            throw ComicContentError.invalidResponse("PicACG 详情响应缺少 comic。")
+        }
+
+        let detailItem = picacgItems(from: [doc]).first ?? item
+        let eps = try await loadPicacgChapters(comicID: item.id, token: token)
+        let relatedDocs = json.value(at: ["data", "recommendation"]) as? [[String: Any]] ?? []
+        let related = picacgItems(from: relatedDocs)
+        let categories = doc["categories"] as? [String] ?? []
+        let tags = doc["tags"] as? [String] ?? []
+        let tagGroups = [
+            ComicTagGroup(title: "分类", tags: tagRefs(categories, platform: .picacg)),
+            ComicTagGroup(title: "标签", tags: tagRefs(tags, platform: .picacg))
+        ].filter { !$0.tags.isEmpty }
+
+        return ComicDetailInfo(
+            item: detailItem,
+            description: doc["description"] as? String ?? "",
+            tagGroups: tagGroups,
+            chapters: eps.map { chapter in
+                ComicChapter(id: chapter.id, title: chapter.title, subtitle: chapter.order)
+            },
+            related: related,
+            updatedText: doc["updated_at"] as? String,
+            isLiked: doc["isLiked"] as? Bool
+        )
+    }
+
+    func loadPicacgChapters(comicID: String, token: String) async throws -> [PicacgChapterInfo] {
+        var page = 1
+        var result = [(id: String?, title: String, order: Int?)]()
+        while true {
+            let json = try await picacgJSON(path: "comics/\(comicID)/eps?page=\(page)", token: token)
+            guard let eps = json.value(at: ["data", "eps"]) as? [String: Any],
+                  let docs = eps["docs"] as? [[String: Any]] else {
+                throw ComicContentError.invalidResponse("PicACG 章节响应缺少 eps。")
+            }
+            result.append(contentsOf: docs.compactMap { doc in
+                guard let title = doc["title"] as? String else { return nil }
+                return (id: doc["_id"] as? String, title: title, order: doc.intValue(for: "order"))
+            })
+            let pages = eps.intValue(for: "pages") ?? page
+            if page >= pages { break }
+            page += 1
+        }
+        return result.reversed().enumerated().map { index, chapter in
+            let order = chapter.order.map(String.init) ?? "\(index + 1)"
+            return PicacgChapterInfo(id: chapter.id ?? order, title: chapter.title, order: order)
+        }
+    }
+
+    func loadPicacgChapterImages(item: ComicListItem, chapter: ComicChapter, account: PlatformAccount?) async throws -> [String] {
+        let token = try await picacgToken(account: account)
+        var page = 1
+        var result = [String]()
+        let order = chapter.subtitle?.nilIfEmpty ?? chapter.id
+        while true {
+            let json = try await picacgJSON(path: "comics/\(item.id)/order/\(order)/pages?page=\(page)", token: token)
+            guard let pages = json.value(at: ["data", "pages"]) as? [String: Any],
+                  let docs = pages["docs"] as? [[String: Any]] else {
+                throw ComicContentError.invalidResponse("PicACG 图片响应缺少 pages。")
+            }
+            result.append(contentsOf: docs.compactMap { doc in
+                guard let media = doc["media"] as? [String: Any] else { return nil }
+                let fileServer = media["fileServer"] as? String ?? ""
+                let path = media["path"] as? String ?? ""
+                return fileServer.isEmpty || path.isEmpty ? nil : "\(fileServer)/static/\(path)"
+            })
+            let pagesCount = pages.intValue(for: "pages") ?? page
+            if page >= pagesCount { break }
+            page += 1
+        }
+        return result
+    }
+
+    func picacgHeaders(path: String, method: String, token: String) -> [String: String] {
+        let apiKey = "C69BAF41DA5ABD1FFEDC6D2FEA56B"
+        let nonce = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let time = "\(Int(Date().timeIntervalSince1970))"
+        let signatureInput = (path + time + nonce + method.uppercased() + apiKey).lowercased()
+        let secret = #"~d}$Q7$eIni=V)9\RK/P.RM4;9[7|@/CA}b~OW!3?EV`:<>M7pddUBL5n|0/*Cn"#
+        let key = SymmetricKey(data: Data(secret.utf8))
+        let signature = HMAC<SHA256>.authenticationCode(for: Data(signatureInput.utf8), using: key).map { String(format: "%02x", $0) }.joined()
+
+        return [
+            "api-key": apiKey,
+            "accept": "application/vnd.picacomic.com.v1+json",
+            "app-channel": PlatformFeatureSettings.picacgAppChannel(),
+            "authorization": token,
+            "time": time,
+            "nonce": nonce,
+            "app-version": "2.2.1.3.3.4",
+            "app-uuid": "defaultUuid",
+            "image-quality": AppNetworkSettings.picacgImageQuality,
+            "app-platform": "android",
+            "app-build-version": "45",
+            "Content-Type": "application/json; charset=UTF-8",
+            "user-agent": "okhttp/3.8.1",
+            "version": "v1.4.1",
+            "Host": "picaapi.picacomic.com",
+            "signature": signature
+        ]
+    }
+
+    func picacgImageURL(from data: [String: Any]?) -> String? {
+        let fileServer = data?["fileServer"] as? String ?? ""
+        let path = data?["path"] as? String ?? ""
+        return fileServer.isEmpty || path.isEmpty ? nil : "\(fileServer)/static/\(path)"
+    }
+}
+
+private extension ComicContentService {
+    func loadNhentaiExplore(entry: ComicExploreEntry, page: Int) async throws -> [ComicListItem] {
+        let sort: String
+        switch entry {
+        case .latest:
+            sort = "date"
+        case .ranking:
+            sort = "popular-today"
+        case .random:
+            throw ComicContentError.unsupported("NHentai 参考项目没有随机漫画列表接口；随机只用于收藏随机详情。")
+        case .search:
+            throw ComicContentError.unsupported("NHentai 搜索接口需要关键词和筛选条件，当前入口页还没有筛选表单。")
+        }
+        let query = " ".addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "%20"
+        guard let url = URL(string: "https://nhentai.net/api/v2/search?query=\(query)&page=\(page)&sort=\(sort)") else {
+            throw ComicContentError.invalidURL("nhentai search")
+        }
+        let json = try await requestJSON(url: url, headers: webHeaders(referer: "https://nhentai.net/"))
+        return try nhentaiItems(from: json)
+    }
+
+    func searchNhentai(query: String, page: Int, sort: String = "date") async throws -> [ComicListItem] {
+        let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
+        guard let url = URL(string: "https://nhentai.net/api/v2/search?query=\(encoded)&page=\(page)&sort=\(sort)") else {
+            throw ComicContentError.invalidURL("nhentai tag \(query)")
+        }
+        let json = try await requestJSON(url: url, headers: webHeaders(referer: "https://nhentai.net/"))
+        return try nhentaiItems(from: json)
+    }
+
+    func nhentaiItems(from json: [String: Any]) throws -> [ComicListItem] {
+        guard let result = json["result"] as? [[String: Any]] else {
+            throw ComicContentError.invalidResponse("NHentai 响应缺少 result。")
+        }
+        return result.map { doc in
+            let id = "\(doc.intValue(for: "id") ?? 0)"
+            let thumbnail = doc["thumbnail"] as? String ?? ""
+            return ComicListItem(
+                id: id,
+                platform: .nhentai,
+                title: doc["english_title"] as? String ?? doc["japanese_title"] as? String ?? id,
+                subtitle: id,
+                coverURLString: absoluteNhentaiThumbnail(thumbnail),
+                tags: (doc["tag_ids"] as? [Int] ?? []).prefix(6).map { "tag:\($0)" },
+                pageCount: doc.intValue(for: "num_pages"),
+                likesCount: nil,
+                favoriteDate: nil
+            )
+        }
+    }
+
+    func loadNhentaiDetail(item: ComicListItem) async throws -> ComicDetailInfo {
+        guard let url = URL(string: "https://nhentai.net/api/v2/galleries/\(item.id)") else {
+            throw ComicContentError.invalidURL("nhentai detail \(item.id)")
+        }
+        let json = try await requestJSON(url: url, headers: webHeaders(referer: "https://nhentai.net/"))
+        let title = json.value(at: ["title", "english"]) as? String ??
+            json.value(at: ["title", "japanese"]) as? String ??
+            item.title
+        let subtitle = json.value(at: ["title", "japanese"]) as? String ?? json["scanlator"] as? String ?? item.subtitle
+        let coverPath = json.value(at: ["cover", "path"]) as? String ?? json.value(at: ["thumbnail", "path"]) as? String ?? item.coverURLString
+        let tags = json["tags"] as? [[String: Any]] ?? []
+        let grouped = Dictionary(grouping: tags) { tag in
+            tag["type"] as? String ?? "tag"
+        }
+        let tagGroups = grouped.keys.sorted().map { key in
+            ComicTagGroup(
+                title: nhentaiTagGroupTitle(key),
+                tags: tagRefs(grouped[key]?.compactMap { $0["name"] as? String } ?? [], platform: .nhentai)
+            )
+        }.filter { !$0.tags.isEmpty }
+        let detailItem = ComicListItem(
+            id: item.id,
+            platform: .nhentai,
+            title: title,
+            subtitle: subtitle,
+            coverURLString: absoluteNhentaiThumbnail(coverPath),
+            tags: tagGroups.flatMap { $0.tags.map(\.title) },
+            pageCount: json.intValue(for: "num_pages"),
+            likesCount: json.intValue(for: "num_favorites"),
+            favoriteDate: item.favoriteDate
+        )
+        return ComicDetailInfo(
+            item: detailItem,
+            description: subtitle == title ? "" : subtitle,
+            tagGroups: tagGroups,
+            chapters: singleReaderChapter(),
+            related: [],
+            updatedText: (json.intValue(for: "upload_date")).map { Date(timeIntervalSince1970: TimeInterval($0)).formatted(date: .abbreviated, time: .omitted) }
+        )
+    }
+
+    func nhentaiTagGroupTitle(_ key: String) -> String {
+        switch key {
+        case "tag": "标签"
+        case "artist": "作者"
+        case "group": "社团"
+        case "parody": "原作"
+        case "character": "角色"
+        case "language": "语言"
+        case "category": "分类"
+        default: key
+        }
+    }
+
+    func absoluteNhentaiThumbnail(_ path: String) -> String {
+        if path.hasPrefix("http") { return path }
+        if path.hasPrefix("/") { return "https://t.nhentai.net\(path)" }
+        return "https://t.nhentai.net/\(path)"
+    }
+
+    func absoluteNhentaiImage(_ path: String) -> String {
+        if path.hasPrefix("http") { return path }
+        if path.hasPrefix("/") { return "https://i.nhentai.net\(path)" }
+        return "https://i.nhentai.net/\(path)"
+    }
+
+    func loadNhentaiImages(item: ComicListItem) async throws -> [String] {
+        guard let url = URL(string: "https://nhentai.net/api/v2/galleries/\(item.id)") else {
+            throw ComicContentError.invalidURL("nhentai images \(item.id)")
+        }
+        let json = try await requestJSON(url: url, headers: webHeaders(referer: "https://nhentai.net/"))
+        let pages = json["pages"] as? [[String: Any]] ?? []
+        return pages.compactMap { page in
+            guard let path = page["path"] as? String, !path.isEmpty else { return nil }
+            return absoluteNhentaiImage(path)
+        }
+    }
+
+    func loadNhentaiComments(item: ComicListItem) async throws -> [ComicComment] {
+        guard let url = URL(string: "https://nhentai.net/api/v2/galleries/\(item.id)/comments") else {
+            throw ComicContentError.invalidURL("nhentai comments \(item.id)")
+        }
+        let data = try await requestData(url: url, headers: webHeaders(referer: "https://nhentai.net/"))
+        guard let docs = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            throw ComicContentError.invalidResponse("NHentai 评论响应不是数组。")
+        }
+        return docs.map { doc in
+            let poster = doc["poster"] as? [String: Any]
+            let avatarPath = poster?["avatar_url"] as? String ?? ""
+            let avatarURL = avatarPath.isEmpty ? nil : "https://i3.nhentai.net/\(avatarPath)"
+            return ComicComment(
+                id: "\(doc.intValue(for: "id") ?? Int.random(in: 0...Int.max))",
+                author: poster?["username"] as? String ?? "Unknown",
+                content: doc["body"] as? String ?? "",
+                timeText: doc["post_date"] as? String,
+                avatarURLString: avatarURL,
+                likesCount: nil,
+                replyCount: nil,
+                replies: []
+            )
+        }
+    }
+}
+
+private extension ComicContentService {
+    var ehentaiBaseURL: String {
+        PlatformFeatureSettings.frontendBaseURL(for: .eHentai)
+    }
+
+    func loadEhentaiExplore(entry: ComicExploreEntry, page: Int) async throws -> [ComicListItem] {
+        let urlString: String
+        let pageIndex = max(0, page - 1)
+        switch entry {
+        case .latest:
+            urlString = pageIndex == 0 ? "\(ehentaiBaseURL)/" : "\(ehentaiBaseURL)/?page=\(pageIndex)"
+        case .ranking:
+            urlString = pageIndex == 0 ? "\(ehentaiBaseURL)/popular" : "\(ehentaiBaseURL)/popular?page=\(pageIndex)"
+        case .random:
+            throw ComicContentError.unsupported("E-Hentai 参考项目没有随机漫画列表接口。")
+        case .search:
+            throw ComicContentError.unsupported("E-Hentai 搜索接口需要关键词和筛选条件，当前入口页还没有筛选表单。")
+        }
+        guard let url = URL(string: urlString) else { throw ComicContentError.invalidURL(urlString) }
+        let html = try await requestString(url: url, headers: webHeaders(referer: ehentaiBaseURL))
+        return parseEhentaiGalleries(html)
+    }
+
+    func searchEhentai(query: String, page: Int) async throws -> [ComicListItem] {
+        let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
+        let pageIndex = max(0, page - 1)
+        let pageQuery = pageIndex == 0 ? "" : "&page=\(pageIndex)"
+        guard let url = URL(string: "\(ehentaiBaseURL)/?f_search=\(encoded)\(pageQuery)") else {
+            throw ComicContentError.invalidURL("ehentai search \(query)")
+        }
+        let html = try await requestString(url: url, headers: webHeaders(referer: ehentaiBaseURL))
+        return parseEhentaiGalleries(html)
+    }
+
+    func loadEhentaiWatched(page: Int) async throws -> [ComicListItem] {
+        let pageIndex = max(0, page - 1)
+        let urlString = pageIndex == 0 ? "\(ehentaiBaseURL)/watched" : "\(ehentaiBaseURL)/watched?page=\(pageIndex)"
+        guard let url = URL(string: urlString) else {
+            throw ComicContentError.invalidURL(urlString)
+        }
+        let html = try await requestString(url: url, headers: webHeaders(referer: ehentaiBaseURL))
+        return parseEhentaiGalleries(html)
+    }
+
+    func parseEhentaiGalleries(_ html: String) -> [ComicListItem] {
+        html.regexMatches(#"<tr class="gtr.*?</tr>"#, options: [.dotMatchesLineSeparators]).compactMap { row in
+            guard let link = row.firstRegexCapture(#"href="(https?://[^"]+/g/[^"]+)""#) else { return nil }
+            let title = row.firstRegexCapture(#"class="glink"[^>]*>(.*?)</"#)?.htmlDecoded ?? link
+            let cover = row.firstRegexCapture(#"data-src="([^"]+)""#) ?? row.firstRegexCapture(#"src="([^"]+)""#) ?? ""
+            let uploader = row.firstRegexCapture(#"<div class="gl4e glname">.*?</div>"#)?.strippingHTML ?? ""
+            return ComicListItem(
+                id: link,
+                platform: .eHentai,
+                title: title,
+                subtitle: uploader,
+                coverURLString: cover,
+                tags: [],
+                pageCount: nil,
+                likesCount: nil,
+                favoriteDate: nil
+            )
+        }
+    }
+
+    func loadEhentaiDetail(item: ComicListItem) async throws -> ComicDetailInfo {
+        guard let url = URL(string: item.id) else {
+            throw ComicContentError.invalidURL(item.id)
+        }
+        let html = try await requestString(url: url, headers: webHeaders(referer: ehentaiBaseURL))
+        if html.contains("Content Warning"), html.contains("Never Warn Me Again") {
+            throw ComicContentError.server("E-Hentai 返回 Content Warning，需要网页登录确认。")
+        }
+
+        let title = html.firstRegexCapture(#"<h1 id="gn"[^>]*>(.*?)</h1>"#)?.htmlDecoded ?? item.title
+        let subtitle = html.firstRegexCapture(#"<h1 id="gj"[^>]*>(.*?)</h1>"#)?.htmlDecoded
+        let prefersJapaneseTitle = UserDefaults.standard.bool(forKey: PlatformFeatureSettingsKey.ehentaiPrefersJapaneseTitle)
+        let displayTitle = prefersJapaneseTitle ? (subtitle?.nilIfEmpty ?? title) : title
+        let displayDescription = prefersJapaneseTitle ? title : (subtitle ?? "")
+        let cover = html.firstRegexCapture(#"<div id="gd1"[^>]*>.*?url\((https?://[^)]+)\)"#) ?? item.coverURLString
+        let uploader = html.firstRegexCapture(#"<div id="gdn"[^>]*>.*?<a[^>]*>(.*?)</a>"#)?.htmlDecoded ?? item.subtitle
+        let pages = html.firstRegexCapture(#"<td class="gdt2">([0-9,]+)\s+pages</td>"#)
+            .map { $0.replacingOccurrences(of: ",", with: "") }
+            .flatMap(Int.init)
+        let time = html.firstRegexCapture(#"<td class="gdt2">([0-9]{4}-[0-9]{2}-[0-9]{2}[^<]*)</td>"#)?.htmlDecoded
+        let tagGroups = parseEhentaiTagGroups(html, platform: .eHentai)
+        let detailItem = ComicListItem(
+            id: item.id,
+            platform: .eHentai,
+            title: displayTitle,
+            subtitle: uploader,
+            coverURLString: cover,
+            tags: tagGroups.flatMap { $0.tags.map(\.title) },
+            pageCount: pages ?? item.pageCount,
+            likesCount: item.likesCount,
+            favoriteDate: item.favoriteDate
+        )
+        return ComicDetailInfo(
+            item: detailItem,
+            description: displayDescription,
+            tagGroups: tagGroups,
+            chapters: singleReaderChapter(),
+            related: [],
+            updatedText: time
+        )
+    }
+
+    func parseEhentaiTagGroups(_ html: String, platform: ComicPlatform) -> [ComicTagGroup] {
+        html.regexMatches(#"<tr>.*?</tr>"#, options: [.dotMatchesLineSeparators]).compactMap { row in
+            guard row.contains(#"class="tc""#) || row.contains(#"id="ta_""#) else { return nil }
+            let title = row.firstRegexCapture(#"<td class="tc">([^<:]+):?</td>"#)?.htmlDecoded ?? "标签"
+            let tags = row.regexMatches(#"<div[^>]+id="ta_[^"]+"[^>]*>.*?</div>"#, options: [.dotMatchesLineSeparators]).compactMap { tagHTML -> ComicTagReference? in
+                guard let value = tagHTML.firstRegexCapture(#"onclick="[^"]*'([^']+)'"#) ?? tagHTML.strippingHTML.nilIfEmpty else {
+                    return nil
+                }
+                let title = tagHTML.strippingHTML
+                return ComicTagReference(title: title.isEmpty ? value : title, query: value, platform: platform, urlString: nil)
+            }
+            return tags.isEmpty ? nil : ComicTagGroup(title: title, tags: tags)
+        }
+    }
+
+    func loadEhentaiComments(item: ComicListItem) async throws -> [ComicComment] {
+        guard let baseURL = URL(string: item.id) else {
+            throw ComicContentError.invalidURL(item.id)
+        }
+        let separator = baseURL.query == nil ? "?" : "&"
+        guard let url = URL(string: "\(item.id)\(separator)hc=1") else {
+            throw ComicContentError.invalidURL("\(item.id)?hc=1")
+        }
+        let html = try await requestString(url: url, headers: webHeaders(referer: ehentaiBaseURL))
+        return parseEhentaiComments(html)
+    }
+
+    func postEhentaiComment(item: ComicListItem, content: String) async throws {
+        guard let url = URL(string: item.id) else {
+            throw ComicContentError.invalidURL(item.id)
+        }
+        let body = "commenttext_new=\(content.urlEncoded)"
+        let data = try await requestData(
+            url: url,
+            method: "POST",
+            headers: webHeaders(referer: item.id).merging(["Content-Type": "application/x-www-form-urlencoded"]) { _, new in new },
+            body: Data(body.utf8)
+        )
+        let html = String(data: data, encoding: .utf8) ?? ""
+        if let message = html.firstRegexCapture(#"<p class="br"[^>]*>(.*?)</p>"#)?.strippingHTML, !message.isEmpty {
+            throw ComicContentError.server(message)
+        }
+    }
+
+    func parseEhentaiComments(_ html: String) -> [ComicComment] {
+        html.regexMatches(#"<div class="c1".*?</div>\s*</div>\s*</div>"#, options: [.dotMatchesLineSeparators])
+            .enumerated()
+            .map { index, row in
+                let id = row.firstRegexCapture(#"name="(?:comment_)?([0-9]+)""#) ?? "\(index)"
+                let author = row.firstRegexCapture(#"<div class="c3"[^>]*>.*?<a[^>]*>(.*?)</a>"#)?.htmlDecoded ?? "未知"
+                let time = row.firstRegexCapture(#"Posted on\s*(.*?)\s*by"#)?.htmlDecoded
+                let content = row.firstRegexCapture(#"<div class="c6"[^>]*>(.*?)</div>"#)?.htmlDecoded ?? row.strippingHTML
+                let score = row.firstRegexCapture(#"<div class="c5"[^>]*>.*?<span[^>]*>(-?[0-9]+)</span>"#).flatMap(Int.init)
+                return ComicComment(
+                    id: id,
+                    author: author,
+                    content: content,
+                    timeText: time,
+                    avatarURLString: nil,
+                    likesCount: score,
+                    replyCount: nil,
+                    replies: []
+                )
+            }
+    }
+}
+
+private extension ComicContentService {
+    var htMangaBaseURL: String {
+        PlatformFeatureSettings.frontendBaseURL(for: .htManga)
+    }
+
+    func loadHtMangaExplore(entry: ComicExploreEntry, page: Int) async throws -> [ComicListItem] {
+        let base = htMangaBaseURL
+        let path: String
+        switch entry {
+        case .ranking:
+            path = "/albums-favorite_ranking-type-day.html"
+        case .latest:
+            path = "/albums.html"
+        case .random:
+            throw ComicContentError.unsupported("HT Manga 参考项目没有随机漫画列表接口。")
+        case .search:
+            throw ComicContentError.unsupported("HT Manga 搜索接口需要关键词，当前入口页还没有搜索表单。")
+        }
+        let urlString = htMangaPagedURL(base + path, page: page)
+        guard let url = URL(string: urlString) else { throw ComicContentError.invalidURL(urlString) }
+        let html = try await requestString(url: url, headers: webHeaders(referer: base))
+        return parseHtMangaList(html, baseURL: base)
+    }
+
+    func loadHtMangaFavorites(account: PlatformAccount) async throws -> [ComicListItem] {
+        let base = htMangaBaseURL
+        let cookies = HTTPCookieStorage()
+        try await htMangaLogin(account: account, baseURL: base, cookies: cookies)
+        guard let url = URL(string: "\(base)/users-users_fav-page-1-c-0.html") else {
+            throw ComicContentError.invalidURL("htmanga favorites")
+        }
+        let html = try await requestString(url: url, headers: webHeaders(referer: base), cookies: cookies)
+        return parseHtMangaList(html, baseURL: base, favoriteDate: Date())
+    }
+
+    func loadHtMangaFavoriteFolders(account: PlatformAccount?) async throws -> [PlatformFavoriteFolder] {
+        guard let account else {
+            throw ComicContentError.loginRequired("HT Manga 收藏需要先登录平台账号。")
+        }
+        let base = htMangaBaseURL
+        let cookies = HTTPCookieStorage()
+        try await htMangaLogin(account: account, baseURL: base, cookies: cookies)
+        guard let url = URL(string: "\(base)/users-addfav-id-210814.html") else {
+            throw ComicContentError.invalidURL("htmanga folders")
+        }
+        let html = try await requestString(url: url, headers: webHeaders(referer: base), cookies: cookies)
+        let folders = html.regexMatches(#"<option[^>]+value="([^"]+)"[^>]*>.*?</option>"#, options: [.dotMatchesLineSeparators]).compactMap { row -> PlatformFavoriteFolder? in
+            guard let id = row.firstRegexCapture(#"value="([^"]+)""#), !id.isEmpty else { return nil }
+            let title = row.strippingHTML
+            return PlatformFavoriteFolder(id: id, title: title.isEmpty ? "云端收藏夹" : title, subtitle: "HT Manga 收藏夹", platform: .htManga)
+        }
+        return folders.isEmpty ? [PlatformFavoriteFolder(id: "0", title: "云端收藏夹", subtitle: "HT Manga 默认收藏", platform: .htManga)] : folders
+    }
+
+    func addHtMangaFavorite(item: ComicListItem, folderID: String, account: PlatformAccount?) async throws {
+        guard let account else {
+            throw ComicContentError.loginRequired("HT Manga 收藏需要先登录平台账号。")
+        }
+        let base = htMangaBaseURL
+        let cookies = HTTPCookieStorage()
+        try await htMangaLogin(account: account, baseURL: base, cookies: cookies)
+        guard let url = URL(string: "\(base)/users-save_fav-id-\(item.id).html") else {
+            throw ComicContentError.invalidURL("htmanga favorite \(item.id)")
+        }
+        let body = "favc_id=\(folderID.urlEncoded)"
+        _ = try await requestData(
+            url: url,
+            method: "POST",
+            headers: webHeaders(referer: base).merging(["Content-Type": "application/x-www-form-urlencoded"]) { _, new in new },
+            body: Data(body.utf8),
+            cookies: cookies
+        )
+    }
+
+    func htMangaLogin(account: PlatformAccount, baseURL: String, cookies: HTTPCookieStorage) async throws {
+        guard let url = URL(string: "\(baseURL)/users-check_login.html") else {
+            throw ComicContentError.invalidURL("htmanga login")
+        }
+        let bodyString = "login_name=\(account.username.urlEncoded)&login_pass=\(account.password.urlEncoded)"
+        let data = try await requestData(
+            url: url,
+            method: "POST",
+            headers: webHeaders(referer: baseURL).merging(["Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"]) { _, new in new },
+            body: Data(bodyString.utf8),
+            cookies: cookies
+        )
+        guard let text = String(data: data, encoding: .utf8), text.contains("登錄成功") || text.contains("登录成功") else {
+            throw ComicContentError.loginRequired("HT Manga 登录失败。")
+        }
+    }
+
+    func parseHtMangaList(_ html: String, baseURL: String, favoriteDate: Date? = nil) -> [ComicListItem] {
+        let rows = html.regexMatches(#"<li>.*?</li>"#, options: [.dotMatchesLineSeparators]) +
+            html.regexMatches(#"<div class="asTB".*?</div>\s*</div>"#, options: [.dotMatchesLineSeparators])
+        return rows.compactMap { row in
+            guard let link = row.firstRegexCapture(#"href="([^"]*aid-[0-9]+[^"]*)""#),
+                  let id = link.firstRegexCapture(#"aid-([0-9]+)"#) else {
+                return nil
+            }
+            let title = row.firstRegexCapture(#"title="([^"]+)""#)?.htmlDecoded ??
+                row.firstRegexCapture(#"<p class="l_title">\s*<a[^>]*>(.*?)</a>"#)?.htmlDecoded ??
+                row.firstRegexCapture(#"<div class="title">\s*<a[^>]*>(.*?)</a>"#)?.htmlDecoded ??
+                id
+            let image = row.firstRegexCapture(#"<img[^>]+src="([^"]+)""#) ?? ""
+            let pages = row.firstRegexCapture(#"(?:頁數|页数|页)：?([0-9]+)"#).flatMap(Int.init)
+            return ComicListItem(
+                id: id,
+                platform: .htManga,
+                title: title,
+                subtitle: id,
+                coverURLString: absoluteURL(image, baseURL: baseURL),
+                tags: [],
+                pageCount: pages,
+                likesCount: nil,
+                favoriteDate: favoriteDate
+            )
+        }
+    }
+
+    func loadEhentaiImages(item: ComicListItem) async throws -> [String] {
+        guard let url = URL(string: item.id) else {
+            throw ComicContentError.invalidURL(item.id)
+        }
+        let html = try await requestString(url: url, headers: webHeaders(referer: ehentaiBaseURL))
+        let pageLinks = html.regexMatches(#"<div class="gdt[ml][^"]*"[^>]*>.*?</div>\s*</a>"#, options: [.dotMatchesLineSeparators])
+            .compactMap { row in row.firstRegexCapture(#"<a[^>]+href="([^"]+)""#) }
+        var images = [String]()
+        for link in pageLinks {
+            guard let pageURL = URL(string: link) else { continue }
+            let pageHTML = try await requestString(url: pageURL, headers: webHeaders(referer: item.id))
+            let image = pageHTML.firstRegexCapture(#"<img[^>]+id="img"[^>]+src="([^"]+)""#) ??
+                pageHTML.firstRegexCapture(#"<img[^>]+src="([^"]+)"[^>]+id="img""#)
+            let originalImage = pageHTML.regexMatches(#"<a[^>]+href="([^"]+)"[^>]*>.*?</a>"#, options: [.dotMatchesLineSeparators])
+                .first { $0.strippingHTML.lowercased().contains("original") }
+                .flatMap { $0.firstRegexCapture(#"href="([^"]+)""#) }
+            if UserDefaults.standard.bool(forKey: PlatformFeatureSettingsKey.ehentaiPrefersOriginalImage),
+               let originalImage,
+               URL(string: originalImage) != nil {
+                images.append(originalImage)
+            } else if let image {
+                images.append(image)
+            }
+        }
+        return images
+    }
+
+    func loadHtMangaDetail(item: ComicListItem) async throws -> ComicDetailInfo {
+        let base = htMangaBaseURL
+        guard let url = URL(string: "\(base)/photos-index-page-1-aid-\(item.id).html") else {
+            throw ComicContentError.invalidURL("htmanga detail \(item.id)")
+        }
+        let html = try await requestString(url: url, headers: webHeaders(referer: base))
+        let title = html.firstRegexCapture(#"<div class="userwrap"[^>]*>.*?<h2[^>]*>(.*?)</h2>"#)?.htmlDecoded ?? item.title
+        let cover = html.firstRegexCapture(#"<div class="asTBcell uwthumb"[^>]*>.*?<img[^>]+src="([^"]+)""#).map { absoluteURL($0, baseURL: base) } ?? item.coverURLString
+        let labels = html.regexMatches(#"<label[^>]*>.*?</label>"#, options: [.dotMatchesLineSeparators]).map(\.htmlDecoded)
+        let category = labels.first { $0.contains("分類") || $0.contains("分类") }?.components(separatedBy: "：").last ?? ""
+        let pages = labels.first { $0.contains("頁數") || $0.contains("页数") }?.firstRegexCapture(#"([0-9]+)"#).flatMap(Int.init)
+        let description = html.firstRegexCapture(#"<div class="asTBcell uwconn"[^>]*>.*?<p[^>]*>(.*?)</p>"#)?.htmlDecoded ?? ""
+        let uploader = html.firstRegexCapture(#"<div class="asTBcell uwuinfo"[^>]*>.*?<a[^>]*>\s*<p[^>]*>(.*?)</p>"#)?.htmlDecoded ?? item.subtitle
+        let tags = html.regexMatches(#"<a class="tagshow"[^>]*href="([^"]+)"[^>]*>.*?</a>"#, options: [.dotMatchesLineSeparators]).compactMap { row -> ComicTagReference? in
+            guard let link = row.firstRegexCapture(#"href="([^"]+)""#) else { return nil }
+            let title = row.strippingHTML
+            return ComicTagReference(title: title, query: title, platform: .htManga, urlString: absoluteURL(link, baseURL: base))
+        }
+        let tagGroups = [
+            ComicTagGroup(title: "分类", tags: category.isEmpty ? [] : tagRefs([category], platform: .htManga)),
+            ComicTagGroup(title: "标签", tags: tags)
+        ].filter { !$0.tags.isEmpty }
+        let detailItem = ComicListItem(
+            id: item.id,
+            platform: .htManga,
+            title: title,
+            subtitle: uploader,
+            coverURLString: cover,
+            tags: tagGroups.flatMap { $0.tags.map(\.title) },
+            pageCount: pages ?? item.pageCount,
+            likesCount: nil,
+            favoriteDate: item.favoriteDate
+        )
+        return ComicDetailInfo(
+            item: detailItem,
+            description: description,
+            tagGroups: tagGroups,
+            chapters: singleReaderChapter(),
+            related: [],
+            updatedText: nil
+        )
+    }
+
+    func loadHtMangaImages(item: ComicListItem) async throws -> [String] {
+        let base = htMangaBaseURL
+        guard let url = URL(string: "\(base)/photos-gallery-aid-\(item.id).html") else {
+            throw ComicContentError.invalidURL("htmanga images \(item.id)")
+        }
+        let html = try await requestString(url: url, headers: webHeaders(referer: base))
+        return html.regexMatches(#"(?<=//)[\w./\[\]()-]+"#).map { "https://\($0)" }
+    }
+
+    func searchHtManga(tag: ComicTagReference, page: Int) async throws -> [ComicListItem] {
+        let base = htMangaBaseURL
+        let urlString: String
+        if let tagURL = tag.urlString, !tagURL.isEmpty {
+            urlString = htMangaPagedURL(tagURL, page: page)
+        } else {
+            let encoded = tag.query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? tag.query
+            urlString = htMangaPagedURL("\(base)/search/?q=\(encoded)&f=_all&s=create_time_DESC&syn=yes", page: page)
+        }
+        guard let url = URL(string: urlString) else {
+            throw ComicContentError.invalidURL("htmanga tag \(tag.query)")
+        }
+        let html = try await requestString(url: url, headers: webHeaders(referer: base))
+        return parseHtMangaList(html, baseURL: base)
+    }
+
+    func htMangaPagedURL(_ rawURL: String, page: Int) -> String {
+        guard page > 1 else { return rawURL }
+        if rawURL.contains("/search/") {
+            return rawURL.contains("?") ? "\(rawURL)&p=\(page)" : "\(rawURL)?p=\(page)"
+        }
+        if rawURL.contains("ranking") {
+            return rawURL.replacingOccurrences(of: "ranking", with: "ranking-page-\(page)")
+        }
+        if rawURL.contains("index-page-") {
+            return rawURL.replacingOccurrences(of: #"index-page-\d+"#, with: "index-page-\(page)", options: .regularExpression)
+        }
+        if rawURL.hasSuffix("/albums.html") {
+            return rawURL.replacingOccurrences(of: "/albums.html", with: "/albums-index-page-\(page).html")
+        }
+        return rawURL.replacingOccurrences(of: "index", with: "index-page-\(page)")
+    }
+}
+
+private extension ComicContentService {
+    var jmBaseURLs: [String] {
+        let configuredBaseURLs = PlatformFeatureSettings.jmAPIBaseURLs()
+        let fallbackBaseURLs = JmAPIEndpoint.fallbackBaseURLs
+        let endpointID = UserDefaults.standard.string(forKey: PlatformFeatureSettingsKey.jmAPIEndpoint) ?? JmAPIEndpoint.auto.rawValue
+        let autoSelect = UserDefaults.standard.object(forKey: PlatformFeatureSettingsKey.jmAutoSelectAPIEndpoint) == nil
+            ? true
+            : UserDefaults.standard.bool(forKey: PlatformFeatureSettingsKey.jmAutoSelectAPIEndpoint)
+        guard let endpoint = JmAPIEndpoint(rawValue: endpointID) else {
+            return uniqueBaseURLs(configuredBaseURLs + fallbackBaseURLs)
+        }
+        if endpoint == .auto || autoSelect {
+            return uniqueBaseURLs(configuredBaseURLs + fallbackBaseURLs)
+        }
+        let selectedBaseURL = endpoint.dynamicIndex.flatMap { index in
+            configuredBaseURLs.indices.contains(index) ? configuredBaseURLs[index] : nil
+        } ?? endpoint.baseURLString
+        guard let selectedBaseURL else {
+            return uniqueBaseURLs(configuredBaseURLs + fallbackBaseURLs)
+        }
+        return uniqueBaseURLs([selectedBaseURL] + configuredBaseURLs + fallbackBaseURLs)
+    }
+
+    var jmImageBaseURL: String {
+        let endpointID = UserDefaults.standard.string(forKey: PlatformFeatureSettingsKey.jmImageEndpoint) ?? JmImageEndpoint.mspProxy3.rawValue
+        let endpoint = JmImageEndpoint(rawValue: endpointID) ?? .mspProxy3
+        if let baseURL = endpoint.baseURLString {
+            return baseURL
+        }
+        let customBaseURL = UserDefaults.standard.string(forKey: PlatformFeatureSettingsKey.jmCustomImageBaseURL) ?? ""
+        return PlatformFeatureSettings.normalizedBaseURL(customBaseURL, fallback: JmImageEndpoint.defaultBaseURL)
+    }
+
+    var jmAppVersion: String {
+        let value = UserDefaults.standard.string(forKey: PlatformFeatureSettingsKey.jmAppVersion) ?? ""
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "2.0.11" : trimmed
+    }
+    var jmSecret: String { "185Hcomic3PAPP7R" }
+    var jmAuthKey: String { "18comicAPPContent" }
+    var jmDomainDecryptSecret: String { "diosfjckwpqpdfjkvnqQjsik" }
+    var jmRemoteDomainURLs: [String] {
+        [
+            "https://rup4a04-c02.tos-cn-hongkong.bytepluses.com/newsvr-2025.txt",
+            "https://rup4a04-c01.tos-ap-southeast-1.bytepluses.com/newsvr-2025.txt"
+        ]
+    }
+
+    func loadJmComicExplore(entry: ComicExploreEntry, page: Int) async throws -> [ComicListItem] {
+        switch entry {
+        case .latest, .search:
+            return try await jmComicItems(from: jmJSON(path: "latest?page=\(page)"))
+        case .ranking:
+            return try await jmComicItems(from: jmJSON(path: "categories/filter?o=mv&c=0&page=\(page)"))
+        case .random:
+            var items = try await jmComicItems(from: jmJSON(path: "latest?page=\(page)"))
+            items.shuffle()
+            return items
+        }
+    }
+
+    func loadJmComicFavorites(account: PlatformAccount) async throws -> [ComicListItem] {
+        let cookies = HTTPCookieStorage()
+        let baseURL = try await jmLogin(account: account, cookies: cookies)
+        let sort = PlatformFeatureSettings.jmFavoriteSort()
+        let json = try await jmJSON(path: "favorite?page=1&folder_id=0&o=\(sort)", cookies: cookies, baseURL: baseURL)
+        return try jmComicItems(from: json, favoriteDate: Date())
+    }
+
+    func loadJmComicFavoriteFolders(account: PlatformAccount?) async throws -> [PlatformFavoriteFolder] {
+        guard let account else {
+            throw ComicContentError.loginRequired("JMComic 收藏需要先登录平台账号。")
+        }
+        let cookies = HTTPCookieStorage()
+        let baseURL = try await jmLogin(account: account, cookies: cookies)
+        guard let json = try await jmJSON(path: "favorite", cookies: cookies, baseURL: baseURL) as? [String: Any] else {
+            throw ComicContentError.invalidResponse("JMComic 收藏夹响应不是对象。")
+        }
+        let folders = (json["folder_list"] as? [[String: Any]] ?? []).compactMap { folder -> PlatformFavoriteFolder? in
+            guard let id = jmString(folder["FID"]), !id.isEmpty else { return nil }
+            let title = jmString(folder["name"]) ?? id
+            return PlatformFavoriteFolder(id: id, title: title, subtitle: "JMComic 收藏夹", platform: .jmComic)
+        }
+        return [PlatformFavoriteFolder(id: "0", title: "全部收藏", subtitle: "JMComic 默认收藏", platform: .jmComic)] + folders
+    }
+
+    func addJmComicFavorite(item: ComicListItem, folderID: String, account: PlatformAccount?) async throws {
+        guard let account else {
+            throw ComicContentError.loginRequired("JMComic 收藏需要先登录平台账号。")
+        }
+        let cookies = HTTPCookieStorage()
+        let baseURL = try await jmLogin(account: account, cookies: cookies)
+        let id = jmComicID(from: item.id)
+        let first = try await jmJSON(path: "favorite", method: "POST", body: "aid=\(id.urlEncoded)", cookies: cookies, baseURL: baseURL) as? [String: Any]
+        if jmString(first?["type"]) != "add" {
+            _ = try await jmJSON(path: "favorite", method: "POST", body: "aid=\(id.urlEncoded)", cookies: cookies, baseURL: baseURL)
+        }
+        if folderID != "0" {
+            _ = try await jmJSON(path: "favorite_folder", method: "POST", body: "type=move&folder_id=\(folderID.urlEncoded)&aid=\(id.urlEncoded)", cookies: cookies, baseURL: baseURL)
+        }
+    }
+
+    func likeJmComic(item: ComicListItem) async throws {
+        let id = jmComicID(from: item.id)
+        _ = try await jmJSON(path: "like", method: "POST", body: "id=\(id.urlEncoded)")
+    }
+
+    @discardableResult
+    func jmLogin(account: PlatformAccount, cookies: HTTPCookieStorage) async throws -> String {
+        try await jmLoginInfo(account: account, cookies: cookies).baseURL
+    }
+
+    func jmLoginInfo(account: PlatformAccount, cookies: HTTPCookieStorage) async throws -> JmLoginInfo {
+        let body = "username=\(account.username.urlEncoded)&password=\(account.password.urlEncoded)"
+        var lastError: Error?
+        for baseURL in jmBaseURLs {
+            do {
+                let json = try await jmJSON(path: "login", method: "POST", body: body, cookies: cookies, baseURL: baseURL)
+                guard let dict = json as? [String: Any],
+                      let username = dict["username"] as? String,
+                      !username.isEmpty else {
+                    throw ComicContentError.invalidResponse("JMComic 登录响应缺少用户信息。")
+                }
+                return JmLoginInfo(baseURL: baseURL, userID: jmString(dict["uid"]))
+            } catch {
+                lastError = error
+            }
+        }
+        throw lastError ?? ComicContentError.loginRequired("JMComic 登录失败。")
+    }
+
+    func loadJmComicDetail(item: ComicListItem) async throws -> ComicDetailInfo {
+        let id = jmComicID(from: item.id)
+        guard let json = try await jmJSON(path: "album?id=\(id)") as? [String: Any] else {
+            throw ComicContentError.invalidResponse("JMComic 详情响应不是对象。")
+        }
+
+        let authors = jmStringArray(json["author"])
+        let tags = jmStringArray(json["tags"])
+        let works = jmStringArray(json["works"])
+        let actors = jmStringArray(json["actors"])
+        let series = json["series"] as? [[String: Any]] ?? []
+        let related = try jmComicItems(from: json["related_list"] as? [[String: Any]] ?? [])
+        let likes = jmInt(json["likes"])
+        let views = jmInt(json["total_views"])
+        let comments = jmInt(json["comment_total"])
+        let chapters = jmChapters(series: series, fallbackID: id)
+        let tagGroups = [
+            ComicTagGroup(title: "作者", tags: tagRefs(authors, platform: .jmComic)),
+            ComicTagGroup(title: "标签", tags: tagRefs(tags, platform: .jmComic)),
+            ComicTagGroup(title: "作品", tags: tagRefs(works, platform: .jmComic)),
+            ComicTagGroup(title: "角色", tags: tagRefs(actors, platform: .jmComic))
+        ].filter { !$0.tags.isEmpty }
+
+        let detailItem = ComicListItem(
+            id: id,
+            platform: .jmComic,
+            title: jmString(json["name"]) ?? item.title,
+            subtitle: authors.first ?? item.subtitle,
+            coverURLString: jmCoverURL(id: id),
+            tags: tagGroups.flatMap { $0.tags.map(\.title) },
+            pageCount: nil,
+            likesCount: likes,
+            favoriteDate: item.favoriteDate
+        )
+
+        let infoText = [
+            views.map { "阅读 \($0)" },
+            likes.map { "喜欢 \($0)" },
+            comments.map { "评论 \($0)" }
+        ].compactMap { $0 }.joined(separator: " · ")
+
+        return ComicDetailInfo(
+            item: detailItem,
+            description: jmString(json["description"]) ?? "",
+            tagGroups: tagGroups,
+            chapters: chapters,
+            related: related,
+            updatedText: infoText.isEmpty ? nil : infoText,
+            isLiked: jmBool(json["liked"])
+        )
+    }
+
+    func searchJmComic(query: String, page: Int, sort: String = "mr") async throws -> [ComicListItem] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return try await jmComicItems(from: jmJSON(path: "latest?page=\(page)"))
+        }
+        let encoded = trimmed.urlEncoded.replacingOccurrences(of: "%20", with: "+")
+        let json = try await jmJSON(path: "search?&search_query=\(encoded)&o=\(sort)&page=\(page)")
+        return try jmComicItems(from: json)
+    }
+
+    func loadJmComicComments(item: ComicListItem, page: Int) async throws -> [ComicComment] {
+        let id = jmComicID(from: item.id)
+        guard let json = try await jmJSON(path: "forum?mode=manhua&aid=\(id)&page=\(page)") as? [String: Any] else {
+            throw ComicContentError.invalidResponse("JMComic 评论响应不是对象。")
+        }
+        guard let list = json["list"] as? [[String: Any]] else {
+            throw ComicContentError.invalidResponse("JMComic 评论响应缺少 list。")
+        }
+        return list.map { jmComment(from: $0) }
+    }
+
+    func loadJmComicChapterComments(chapter: ComicChapter, page: Int) async throws -> [ComicComment] {
+        let id = jmComicID(from: chapter.subtitle ?? chapter.id)
+        guard let json = try await jmJSON(path: "forum?mode=manhua&aid=\(id)&page=\(page)") as? [String: Any] else {
+            throw ComicContentError.invalidResponse("JMComic 章节评论响应不是对象。")
+        }
+        guard let list = json["list"] as? [[String: Any]] else {
+            throw ComicContentError.invalidResponse("JMComic 章节评论响应缺少 list。")
+        }
+        return list.map { jmComment(from: $0) }
+    }
+
+    func postJmComicComment(item: ComicListItem, content: String, account: PlatformAccount?) async throws {
+        guard let account else {
+            throw ComicContentError.loginRequired("JMComic 评论需要先登录平台账号。")
+        }
+        let cookies = HTTPCookieStorage()
+        let baseURL = try await jmLogin(account: account, cookies: cookies)
+        let id = jmComicID(from: item.id)
+        _ = try await jmJSON(path: "comment", method: "POST", body: "comment=\(content.urlEncoded)&status=undefined&aid=\(id.urlEncoded)", cookies: cookies, baseURL: baseURL)
+    }
+
+    func jmComment(from doc: [String: Any]) -> ComicComment {
+        let replies = (doc["replys"] as? [[String: Any]] ?? []).map { reply in
+            ComicComment(
+                id: jmString(reply["CID"]) ?? UUID().uuidString,
+                author: jmString(reply["username"]) ?? "Unknown",
+                content: jmCommentContent(reply["content"]),
+                timeText: jmString(reply["addtime"]),
+                avatarURLString: jmAvatarURL(jmString(reply["photo"]) ?? ""),
+                likesCount: nil,
+                replyCount: nil,
+                replies: []
+            )
+        }
+        return ComicComment(
+            id: jmString(doc["CID"]) ?? UUID().uuidString,
+            author: jmString(doc["username"]) ?? "Unknown",
+            content: jmCommentContent(doc["content"]),
+            timeText: jmString(doc["addtime"]),
+            avatarURLString: jmAvatarURL(jmString(doc["photo"]) ?? ""),
+            likesCount: nil,
+            replyCount: replies.isEmpty ? nil : replies.count,
+            replies: replies
+        )
+    }
+
+    func jmCommentContent(_ value: Any?) -> String {
+        (jmString(value) ?? "").strippingHTML
+    }
+
+    func jmAvatarURL(_ imageName: String) -> String? {
+        imageName.isEmpty ? nil : "\(jmImageBaseURL)/media/users/\(imageName)"
+    }
+
+    func jmJSON(path: String, method: String = "GET", body: String? = nil, cookies: HTTPCookieStorage? = nil, baseURL: String? = nil) async throws -> Any {
+        if let baseURL {
+            return try await jmJSON(path: path, method: method, body: body, cookies: cookies, baseURL: baseURL)
+        }
+
+        var lastError: Error?
+        for baseURL in jmBaseURLs {
+            do {
+                return try await jmJSON(path: path, method: method, body: body, cookies: cookies, baseURL: baseURL)
+            } catch {
+                lastError = error
+            }
+        }
+        throw lastError ?? ComicContentError.server("JMComic 请求失败。")
+    }
+
+    func jmJSON(path: String, method: String, body: String?, cookies: HTTPCookieStorage?, baseURL: String) async throws -> Any {
+        let time = Int(Date().timeIntervalSince1970)
+        guard let url = URL(string: "\(baseURL)/\(path)") else {
+            throw ComicContentError.invalidURL("JMComic \(path)")
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        if let body {
+            request.httpBody = Data(body.utf8)
+        }
+        jmHeaders(time: time, post: method.uppercased() == "POST").forEach { request.setValue($0.value, forHTTPHeaderField: $0.key) }
+        if let cookies {
+            let cookieHeader = HTTPCookie.requestHeaderFields(with: cookies.cookies(for: url) ?? [])
+            cookieHeader.forEach { request.setValue($0.value, forHTTPHeaderField: $0.key) }
+        }
+
+        let (data, response) = try await dataResponseWithRetry(for: request, cookies: cookies)
+        if let httpResponse = response as? HTTPURLResponse {
+            if httpResponse.statusCode == 401 {
+                let message = jmPlainErrorMessage(data) ?? "JMComic 登录状态无效。"
+                throw ComicContentError.loginRequired(message)
+            }
+            guard (200..<300).contains(httpResponse.statusCode) else {
+                throw ComicContentError.server("JMComic HTTP \(httpResponse.statusCode)")
+            }
+        }
+
+        guard let envelope = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw ComicContentError.invalidResponse("JMComic 响应不是 JSON 对象。")
+        }
+        guard let encrypted = envelope["data"] as? String, !encrypted.isEmpty else {
+            if let dataList = envelope["data"] as? [Any], dataList.isEmpty {
+                throw ComicContentError.invalidResponse("JMComic 返回空数据。")
+            }
+            throw ComicContentError.invalidResponse("JMComic 响应缺少 data。")
+        }
+        let decoded = try jmDecrypt(encrypted, time: time)
+        guard let decodedData = decoded.data(using: .utf8) else {
+            throw ComicContentError.invalidResponse("JMComic 解密结果无法转为 UTF-8。")
+        }
+        return try JSONSerialization.jsonObject(with: decodedData)
+    }
+
+    func jmDecrypt(_ input: String, time: Int) throws -> String {
+        guard let encrypted = Data(base64Encoded: input) else {
+            throw ComicContentError.invalidResponse("JMComic data 不是有效 Base64。")
+        }
+        let key = Insecure.MD5.hash(data: Data("\(time)\(jmSecret)".utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+        let service = try AESECBService(key: Data(key.utf8), usesPKCS7Padding: false)
+        let decrypted = try service.decrypt(encrypted)
+        let text = String(decoding: decrypted, as: UTF8.self)
+        guard let end = text.lastIndex(where: { $0 == "}" || $0 == "]" }) else {
+            throw ComicContentError.invalidResponse("JMComic 解密结果缺少 JSON 结束符。")
+        }
+        return String(text[...end])
+    }
+
+    func jmDecrypt(_ input: String, secret: String) throws -> String {
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let encrypted = Data(base64Encoded: trimmed) else {
+            throw ComicContentError.invalidResponse("JMComic 域名数据不是有效 Base64。")
+        }
+        let key = Insecure.MD5.hash(data: Data(secret.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+        let service = try AESECBService(key: Data(key.utf8), usesPKCS7Padding: false)
+        let decrypted = try service.decrypt(encrypted)
+        let text = String(decoding: decrypted, as: UTF8.self)
+        guard let end = text.lastIndex(where: { $0 == "}" || $0 == "]" }) else {
+            throw ComicContentError.invalidResponse("JMComic 域名解密结果缺少 JSON 结束符。")
+        }
+        return String(text[...end])
+    }
+
+    func loadRemoteJmAPIBaseURLs() async throws -> [String] {
+        var lastError: Error?
+        for urlString in jmRemoteDomainURLs {
+            do {
+                guard let url = URL(string: urlString) else { continue }
+                let encrypted = try await requestString(url: url, headers: jmRemoteHeaders)
+                let decoded = try jmDecrypt(encrypted, secret: jmDomainDecryptSecret)
+                guard let data = decoded.data(using: .utf8),
+                      let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let domains = json["Server"] as? [String] else {
+                    throw ComicContentError.invalidResponse("JMComic 域名响应缺少 Server。")
+                }
+                let baseURLs = domains.prefix(4).map {
+                    PlatformFeatureSettings.normalizedBaseURL($0, fallback: "")
+                }.filter {
+                    URL(string: $0)?.host != nil
+                }
+                if !baseURLs.isEmpty {
+                    return Array(baseURLs)
+                }
+            } catch {
+                lastError = error
+            }
+        }
+        throw lastError ?? ComicContentError.server("JMComic API 域名更新失败。")
+    }
+
+    func loadRemoteJmAppVersion(baseURLs: [String]) async throws -> String {
+        var lastError: Error?
+        for baseURL in uniqueBaseURLs(baseURLs + jmBaseURLs) {
+            do {
+                guard let url = URL(string: "\(baseURL)/static/jmapp3apk/version.json") else { continue }
+                let data = try await requestData(url: url, headers: jmRemoteHeaders)
+                guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let version = json["version"] as? String,
+                      !version.isEmpty else {
+                    throw ComicContentError.invalidResponse("JMComic App 版本响应缺少 version。")
+                }
+                return version
+            } catch {
+                lastError = error
+            }
+        }
+        throw lastError ?? ComicContentError.server("JMComic App 版本更新失败。")
+    }
+
+    func loadJmComicChapterImages(chapter: ComicChapter) async throws -> [String] {
+        let id = jmComicID(from: chapter.subtitle ?? chapter.id)
+        guard let json = try await jmJSON(path: "chapter?&id=\(id)") as? [String: Any] else {
+            throw ComicContentError.invalidResponse("JMComic 章节响应不是对象。")
+        }
+        let images = jmStringArray(json["images"])
+        return images.map { "\(jmImageBaseURL)/media/photos/\(id)/\($0)" }
+    }
+
+    func jmHeaders(time: Int, post: Bool) -> [String: String] {
+        let token = Insecure.MD5.hash(data: Data("\(time)\(jmAuthKey)".utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+        var headers = [
+            "Accept": "*/*",
+            "Accept-Language": "zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Connection": "keep-alive",
+            "Origin": "https://localhost",
+            "Referer": "https://localhost/",
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "cross-site",
+            "Sec-Fetch-Storage-Access": "active",
+            "X-Requested-With": "com.example.app",
+            "Authorization": "Bearer",
+            "token": token,
+            "tokenparam": "\(time),\(jmAppVersion)",
+            "User-Agent": "Mozilla/5.0 (Linux; Android 10; K; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/138.0.0.0 Mobile Safari/537.36"
+        ]
+        if post {
+            headers["Content-Type"] = "application/x-www-form-urlencoded"
+        }
+        return headers
+    }
+
+    var jmRemoteHeaders: [String: String] {
+        [
+            "Accept": "application/json,text/plain,*/*",
+            "Accept-Language": "zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+            "User-Agent": "Mozilla/5.0 (Linux; Android 10; K; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/138.0.0.0 Mobile Safari/537.36"
+        ]
+    }
+
+    func uniqueBaseURLs(_ values: [String]) -> [String] {
+        var seen = Set<String>()
+        var result = [String]()
+        for value in values {
+            let normalized = PlatformFeatureSettings.normalizedBaseURL(value, fallback: "")
+            guard URL(string: normalized)?.host != nil, !seen.contains(normalized) else { continue }
+            seen.insert(normalized)
+            result.append(normalized)
+        }
+        return result
+    }
+
+    func jmPlainErrorMessage(_ data: Data) -> String? {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return String(data: data, encoding: .utf8)
+        }
+        return json["errorMsg"] as? String ?? json["message"] as? String
+    }
+
+    func jmComicItems(from value: Any, favoriteDate: Date? = nil) throws -> [ComicListItem] {
+        let rows: [[String: Any]]
+        if let list = value as? [[String: Any]] {
+            rows = list
+        } else if let dict = value as? [String: Any],
+                  let content = dict["content"] as? [[String: Any]] {
+            rows = content
+        } else if let dict = value as? [String: Any],
+                  let list = dict["list"] as? [[String: Any]] {
+            rows = list
+        } else {
+            throw ComicContentError.invalidResponse("JMComic 列表响应缺少漫画数组。")
+        }
+        return rows.compactMap { jmComicItem(from: $0, favoriteDate: favoriteDate) }
+    }
+
+    func jmComicItem(from comic: [String: Any], favoriteDate: Date?) -> ComicListItem? {
+        guard let id = jmString(comic["id"]), !id.isEmpty else { return nil }
+        let categoryNames = [
+            jmCategoryName(comic["category"]),
+            jmCategoryName(comic["category_sub"])
+        ].compactMap { $0 }
+        return ComicListItem(
+            id: id,
+            platform: .jmComic,
+            title: jmString(comic["name"]) ?? id,
+            subtitle: jmString(comic["author"]) ?? "Unknown",
+            coverURLString: jmCoverURL(id: id),
+            tags: categoryNames,
+            pageCount: nil,
+            likesCount: nil,
+            favoriteDate: favoriteDate
+        )
+    }
+
+    func jmChapters(series: [[String: Any]], fallbackID: String) -> [ComicChapter] {
+        guard !series.isEmpty else {
+            return [ComicChapter(id: fallbackID, title: "第 1 话", subtitle: fallbackID)]
+        }
+        let orderedChapters: [(order: Int, chapter: ComicChapter)] = series.enumerated().compactMap { index, value in
+            guard let id = jmString(value["id"]) else { return nil }
+            let fallbackTitle = "第 \(jmString(value["sort"]) ?? "\(index + 1)") 话"
+            let title = jmString(value["name"]).flatMap(\.nilIfEmpty) ?? fallbackTitle
+            let order = jmInt(value["sort"]) ?? index + 1
+            return (order, ComicChapter(id: id, title: title, subtitle: id))
+        }
+        return orderedChapters
+            .sorted { $0.order < $1.order }
+            .map(\.chapter)
+    }
+
+    func jmCoverURL(id: String) -> String {
+        "\(jmImageBaseURL)/media/albums/\(id)_3x4.jpg"
+    }
+
+    func jmComicID(from rawValue: String) -> String {
+        rawValue.replacingOccurrences(of: "jm", with: "", options: [.caseInsensitive])
+    }
+
+    func jmCategoryName(_ value: Any?) -> String? {
+        guard let dict = value as? [String: Any] else { return nil }
+        return jmString(dict["title"]) ?? jmString(dict["name"])
+    }
+
+    func jmStringArray(_ value: Any?) -> [String] {
+        if let values = value as? [String] {
+            return values.filter { !$0.isEmpty }
+        }
+        if let values = value as? [Any] {
+            return values.compactMap(jmString).filter { !$0.isEmpty }
+        }
+        return jmString(value).map { [$0] } ?? []
+    }
+
+    func jmString(_ value: Any?) -> String? {
+        if let string = value as? String {
+            return string.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if let int = value as? Int {
+            return "\(int)"
+        }
+        if let double = value as? Double {
+            return "\(Int(double))"
+        }
+        return nil
+    }
+
+    func jmInt(_ value: Any?) -> Int? {
+        if let int = value as? Int { return int }
+        if let string = value as? String { return Int(string) }
+        if let double = value as? Double { return Int(double) }
+        return nil
+    }
+
+    func jmBool(_ value: Any?) -> Bool? {
+        if let bool = value as? Bool { return bool }
+        if let int = value as? Int { return int != 0 }
+        if let string = value as? String {
+            switch string.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+            case "true", "1", "yes":
+                return true
+            case "false", "0", "no":
+                return false
+            default:
+                return nil
+            }
+        }
+        return nil
+    }
+}
+
+private extension ComicContentService {
+    var hitomiDataDomain: String {
+        let value = UserDefaults.standard.string(forKey: PlatformFeatureSettingsKey.hitomiDataDomain) ?? ""
+        return PlatformFeatureSettings.normalizedDomain(value, fallback: "gold-usergeneratedcontent.net")
+    }
+
+    var hitomiPublicBaseURL: String {
+        PlatformFeatureSettings.frontendBaseURL(for: .hitomi)
+    }
+
+    func loadHitomiExplore(entry: ComicExploreEntry, page: Int) async throws -> [ComicListItem] {
+        let path: String
+        switch entry {
+        case .latest:
+            path = "index-all.nozomi"
+        case .ranking:
+            path = "popular/today-all.nozomi"
+        case .random:
+            path = "index-all.nozomi"
+        case .search:
+            throw ComicContentError.unsupported("Hitomi 搜索入口需要关键词；标签页已接入二进制索引。")
+        }
+
+        let pageSize = 24
+        var ids = try await hitomiIDsFromNozomi(path: path, maxIDs: page * pageSize + pageSize)
+        if entry == .random {
+            ids.shuffle()
+        }
+        let start = max(0, (page - 1) * pageSize)
+        guard start < ids.count else { return [] }
+        return try await hitomiItems(for: Array(ids.dropFirst(start)), limit: pageSize)
+    }
+
+    func loadHitomiDetail(item: ComicListItem) async throws -> ComicDetailInfo {
+        let id = try hitomiID(from: item.id)
+        let brief = try await hitomiBrief(id: id)
+        let jsURL = try hitomiURL(path: "galleries/\(id).js")
+        let script = try await requestString(url: jsURL, headers: hitomiHeaders(referer: hitomiPublicBaseURL))
+        guard let start = script.firstIndex(of: "{"), let end = script.lastIndex(of: "}") else {
+            throw ComicContentError.invalidResponse("Hitomi galleries.js 缺少 JSON 数据。")
+        }
+        let jsonData = Data(script[start...end].utf8)
+        guard let json = try JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else {
+            throw ComicContentError.invalidResponse("Hitomi 详情 JSON 无法解析。")
+        }
+
+        let files = json["files"] as? [[String: Any]] ?? []
+        let artists = hitomiNamedTags(json["artists"], key: "artist", namespace: "artist")
+        let groups = hitomiNamedTags(json["groups"], key: "group", namespace: "group")
+        let parodys = hitomiNamedTags(json["parodys"], key: "parody", namespace: "parody")
+        let characters = hitomiNamedTags(json["characters"], key: "character", namespace: "character")
+        let tags = hitomiGalleryTags(json["tags"])
+        let type = (json["type"] as? String ?? brief.type).trimmingCharacters(in: .whitespacesAndNewlines)
+        let language = (json["language"] as? String ?? brief.language).trimmingCharacters(in: .whitespacesAndNewlines)
+        let typeTags = type.isEmpty ? [] : [ComicTagReference(title: type, query: type.lowercased(), platform: .hitomi, urlString: nil)]
+        let languageTags = language.isEmpty ? [] : [ComicTagReference(title: language, query: "language:\(language.lowercased())", platform: .hitomi, urlString: nil)]
+        let tagGroups = [
+            ComicTagGroup(title: "类型", tags: typeTags),
+            ComicTagGroup(title: "语言", tags: languageTags),
+            ComicTagGroup(title: "作者", tags: artists),
+            ComicTagGroup(title: "分组", tags: groups),
+            ComicTagGroup(title: "原作", tags: parodys),
+            ComicTagGroup(title: "角色", tags: characters),
+            ComicTagGroup(title: "标签", tags: tags.isEmpty ? brief.tags : tags)
+        ].filter { !$0.tags.isEmpty }
+
+        let detailItem = ComicListItem(
+            id: brief.item.id,
+            platform: .hitomi,
+            title: json["title"] as? String ?? brief.item.title,
+            subtitle: artists.first?.title ?? brief.item.subtitle,
+            coverURLString: brief.item.coverURLString.isEmpty ? item.coverURLString : brief.item.coverURLString,
+            tags: tagGroups.flatMap { $0.tags.map(\.title) },
+            pageCount: files.count,
+            likesCount: nil,
+            favoriteDate: item.favoriteDate
+        )
+
+        var relatedItems = [ComicListItem]()
+        for relatedID in hitomiRelatedIDs(json["related"]).prefix(6) {
+            if let related = try? await hitomiBrief(id: "\(relatedID)") {
+                relatedItems.append(related.item)
+            }
+        }
+
+        return ComicDetailInfo(
+            item: detailItem,
+            description: "",
+            tagGroups: tagGroups,
+            chapters: singleReaderChapter(),
+            related: relatedItems,
+            updatedText: json["date"] as? String ?? brief.updatedText
+        )
+    }
+
+    func searchHitomi(tag: ComicTagReference, page: Int) async throws -> [ComicListItem] {
+        let ids = try await hitomiSearchIDs(query: tag.query)
+        let pageSize = 24
+        let start = max(0, (page - 1) * pageSize)
+        guard start < ids.count else { return [] }
+        return try await hitomiItems(for: Array(ids.dropFirst(start)), limit: pageSize)
+    }
+
+    func hitomiItems(for ids: [Int], limit: Int) async throws -> [ComicListItem] {
+        var items = [ComicListItem]()
+        for id in ids.prefix(limit * 2) {
+            if let brief = try? await hitomiBrief(id: "\(id)") {
+                items.append(brief.item)
+            }
+            if items.count >= limit {
+                break
+            }
+        }
+        guard !items.isEmpty else {
+            throw ComicContentError.invalidResponse("Hitomi 没有返回可展示的漫画。")
+        }
+        return items
+    }
+
+    func hitomiBrief(id: String) async throws -> HitomiBrief {
+        let url = try hitomiURL(path: "galleryblock/\(id).html")
+        let html = try await requestString(url: url, headers: hitomiHeaders(referer: hitomiPublicBaseURL))
+        let title = html.firstRegexCapture(#"<h1[^>]*class="[^"]*lillie[^"]*"[^>]*>\s*<a[^>]*>(.*?)</a>"#)?.htmlDecoded ?? id
+        let linkPath = html.firstRegexCapture(#"<h1[^>]*class="[^"]*lillie[^"]*"[^>]*>\s*<a[^>]+href="([^"]+)""#) ?? "/galleries/\(id).html"
+        let artist = html.firstRegexCapture(#"<div[^>]*class="[^"]*artist-list[^"]*"[^>]*>.*?<a[^>]*>(.*?)</a>"#)?.htmlDecoded ?? "N/A"
+        let coverSource = html.firstRegexCapture(#"<div[^>]*class="[^"]*(?:dj-img1|cg-img1)[^"]*"[^>]*>.*?<source[^>]+data-srcset="([^"]+)""#)
+        let tags = hitomiBriefTags(html)
+        let item = ComicListItem(
+            id: absoluteURL(linkPath, baseURL: hitomiPublicBaseURL),
+            platform: .hitomi,
+            title: title,
+            subtitle: artist,
+            coverURLString: hitomiCoverURL(from: coverSource),
+            tags: tags.map(\.title),
+            pageCount: nil,
+            likesCount: nil,
+            favoriteDate: nil
+        )
+        return HitomiBrief(
+            item: item,
+            type: hitomiTableValue(html, label: "Type"),
+            language: hitomiTableValue(html, label: "Language"),
+            tags: tags,
+            updatedText: html.firstRegexCapture(#"<div[^>]*class="[^"]*dj-content[^"]*"[^>]*>.*?<p[^>]*>(.*?)</p>"#)?.htmlDecoded
+        )
+    }
+
+    func hitomiSearchIDs(query: String) async throws -> [Int] {
+        let normalized = query.lowercased().trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "_", with: " ")
+        guard !normalized.isEmpty else {
+            return try await hitomiIDsFromNozomi(path: "index-all.nozomi", maxIDs: 80)
+        }
+        if normalized.contains(":") {
+            return try await hitomiIDsForNamespacedQuery(normalized)
+        }
+
+        let version = try await hitomiIndexVersion()
+        let key = Array(SHA256.hash(data: Data(normalized.utf8)).prefix(4))
+        let node = try await hitomiIndexNode(field: "galleries", address: 0, version: version)
+        guard let dataRange = try await hitomiBSearch(field: "galleries", key: key, node: node, version: version) else {
+            return []
+        }
+        return try await hitomiIDsFromIndexData(offset: dataRange.offset, length: dataRange.length, version: version)
+    }
+
+    func hitomiIDsForNamespacedQuery(_ query: String) async throws -> [Int] {
+        let parts = query.split(separator: ":", maxSplits: 1).map(String.init)
+        guard parts.count == 2 else { return [] }
+        let namespace = parts[0]
+        let value = parts[1]
+        if namespace == "language" {
+            return try await hitomiIDsFromNozomi(path: "n/index-\(value).nozomi", maxIDs: 120)
+        }
+        let area: String
+        let tag: String
+        if namespace == "female" || namespace == "male" {
+            area = "tag"
+            tag = query
+        } else {
+            area = namespace
+            tag = value
+        }
+        return try await hitomiIDsFromNozomi(path: "n/\(area)/\(tag)-all.nozomi", maxIDs: 120)
+    }
+
+    func hitomiIDsFromNozomi(path: String, maxIDs: Int) async throws -> [Int] {
+        let url = try hitomiURL(path: path)
+        let end = max(3, maxIDs * 4 - 1)
+        let data = try await requestData(url: url, headers: hitomiHeaders(referer: hitomiPublicBaseURL).merging(["Range": "bytes=0-\(end)"]) { _, new in new })
+        return hitomiIDs(fromBigEndianData: data)
+    }
+
+    func hitomiIndexVersion() async throws -> String {
+        let url = try hitomiURL(path: "galleriesindex/version?_=\(Int(Date().timeIntervalSince1970))")
+        return try await requestString(url: url, headers: hitomiHeaders(referer: "\(hitomiPublicBaseURL)/search.html"))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    func hitomiIndexNode(field: String, address: Int, version: String) async throws -> HitomiIndexNode {
+        let url = try hitomiURL(path: "galleriesindex/\(field).\(version).index")
+        let data = try await requestData(url: url, headers: hitomiHeaders(referer: "\(hitomiPublicBaseURL)/search.html").merging(["Range": "bytes=\(address)-\(address + 463)"]) { _, new in new })
+        guard let node = hitomiDecodeNode(data) else {
+            throw ComicContentError.invalidResponse("Hitomi 索引节点无法解析。")
+        }
+        return node
+    }
+
+    func hitomiBSearch(field: String, key: [UInt8], node: HitomiIndexNode, version: String) async throws -> (offset: Int, length: Int)? {
+        let (found, index) = hitomiLocateKey(key, in: node)
+        if found {
+            guard index < node.data.count else { return nil }
+            return node.data[index]
+        }
+        guard !node.subnodeAddresses.allSatisfy({ $0 == 0 }),
+              index < node.subnodeAddresses.count,
+              node.subnodeAddresses[index] > 0 else {
+            return nil
+        }
+        let next = try await hitomiIndexNode(field: field, address: node.subnodeAddresses[index], version: version)
+        return try await hitomiBSearch(field: field, key: key, node: next, version: version)
+    }
+
+    func hitomiIDsFromIndexData(offset: Int, length: Int, version: String) async throws -> [Int] {
+        guard length > 4 else { return [] }
+        let url = try hitomiURL(path: "galleriesindex/galleries.\(version).data")
+        let data = try await requestData(url: url, headers: hitomiHeaders(referer: "\(hitomiPublicBaseURL)/search.html").merging(["Range": "bytes=\(offset)-\(offset + length - 1)"]) { _, new in new })
+        let bytes = [UInt8](data)
+        guard let count = hitomiInt32BE(bytes, at: 0), count > 0, bytes.count >= count * 4 + 4 else {
+            return []
+        }
+        return stride(from: 0, to: count, by: 1).compactMap { index in
+            hitomiInt32BE(bytes, at: 4 + index * 4)
+        }
+    }
+
+    func hitomiDecodeNode(_ data: Data) -> HitomiIndexNode? {
+        let bytes = [UInt8](data)
+        var position = 0
+        guard let numberOfKeys = hitomiInt32BE(bytes, at: position), numberOfKeys >= 0, numberOfKeys <= 32 else { return nil }
+        position += 4
+
+        var keys = [[UInt8]]()
+        for _ in 0..<numberOfKeys {
+            guard let keySize = hitomiInt32BE(bytes, at: position), keySize > 0, keySize <= 32, position + 4 + keySize <= bytes.count else {
+                return nil
+            }
+            position += 4
+            keys.append(Array(bytes[position..<(position + keySize)]))
+            position += keySize
+        }
+
+        guard let numberOfData = hitomiInt32BE(bytes, at: position), numberOfData >= 0, numberOfData <= 32 else { return nil }
+        position += 4
+        var dataRanges = [(offset: Int, length: Int)]()
+        for _ in 0..<numberOfData {
+            guard let offset = hitomiUInt64BE(bytes, at: position), let length = hitomiInt32BE(bytes, at: position + 8) else {
+                return nil
+            }
+            position += 12
+            dataRanges.append((offset: Int(offset), length: length))
+        }
+
+        var subnodeAddresses = [Int]()
+        for _ in 0..<17 {
+            guard let address = hitomiUInt64BE(bytes, at: position) else { return nil }
+            position += 8
+            subnodeAddresses.append(Int(address))
+        }
+        return HitomiIndexNode(keys: keys, data: dataRanges, subnodeAddresses: subnodeAddresses)
+    }
+
+    func hitomiLocateKey(_ key: [UInt8], in node: HitomiIndexNode) -> (found: Bool, index: Int) {
+        var compareResult = -1
+        var index = 0
+        while index < node.keys.count {
+            compareResult = hitomiCompare(key, node.keys[index])
+            if compareResult <= 0 {
+                break
+            }
+            index += 1
+        }
+        return (compareResult == 0, index)
+    }
+
+    func hitomiCompare(_ lhs: [UInt8], _ rhs: [UInt8]) -> Int {
+        for index in 0..<min(lhs.count, rhs.count) {
+            if lhs[index] < rhs[index] { return -1 }
+            if lhs[index] > rhs[index] { return 1 }
+        }
+        return 0
+    }
+
+    func hitomiIDs(fromBigEndianData data: Data) -> [Int] {
+        let bytes = [UInt8](data)
+        return stride(from: 0, to: bytes.count - (bytes.count % 4), by: 4).compactMap { offset in
+            hitomiInt32BE(bytes, at: offset)
+        }
+    }
+
+    func hitomiInt32BE(_ bytes: [UInt8], at offset: Int) -> Int? {
+        guard offset >= 0, offset + 4 <= bytes.count else { return nil }
+        let value = UInt32(bytes[offset]) << 24 | UInt32(bytes[offset + 1]) << 16 | UInt32(bytes[offset + 2]) << 8 | UInt32(bytes[offset + 3])
+        return Int(Int32(bitPattern: value))
+    }
+
+    func hitomiUInt64BE(_ bytes: [UInt8], at offset: Int) -> UInt64? {
+        guard offset >= 0, offset + 8 <= bytes.count else { return nil }
+        return bytes[offset..<(offset + 8)].reduce(UInt64(0)) { ($0 << 8) | UInt64($1) }
+    }
+
+    func hitomiID(from target: String) throws -> String {
+        if Int(target) != nil {
+            return target
+        }
+        if let id = target.firstRegexCapture(#"([0-9]+)(?=\.html)"#) ?? target.firstRegexCapture(#"([0-9]+)"#) {
+            return id
+        }
+        throw ComicContentError.invalidURL("Hitomi ID \(target)")
+    }
+
+    func hitomiURL(path: String) throws -> URL {
+        var rawPath = path.hasPrefix("/") ? path : "/\(path)"
+        if rawPath.contains("?") {
+            let parts = rawPath.split(separator: "?", maxSplits: 1).map(String.init)
+            rawPath = (parts.first ?? rawPath).addingPercentEncoding(withAllowedCharacters: .urlPathAllowed).map { "\($0)?\(parts.dropFirst().first ?? "")" } ?? rawPath
+        } else {
+            rawPath = rawPath.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? rawPath
+        }
+        guard let url = URL(string: "https://ltn.\(hitomiDataDomain)\(rawPath)") else {
+            throw ComicContentError.invalidURL("Hitomi \(path)")
+        }
+        return url
+    }
+
+    func hitomiHeaders(referer: String) -> [String: String] {
+        webHeaders(referer: referer).merging(["Origin": hitomiPublicBaseURL]) { _, new in new }
+    }
+
+    func hitomiCoverURL(from source: String?) -> String {
+        guard var cover = source?.trimmingCharacters(in: .whitespacesAndNewlines), !cover.isEmpty else {
+            return ""
+        }
+        if cover.hasPrefix("//") {
+            cover = String(cover.dropFirst(2))
+            if let slash = cover.firstIndex(of: "/") {
+                cover = String(cover[slash...])
+            }
+        }
+        if let range = cover.range(of: #"2x.*"#, options: .regularExpression) {
+            cover.removeSubrange(range)
+        }
+        cover = cover.replacingOccurrences(of: " ", with: "")
+            .replacingOccurrences(of: "avifbigtn", with: "webpbigtn")
+            .replacingOccurrences(of: ".avif", with: ".webp")
+        return cover.hasPrefix("http") ? cover : "https://atn.\(hitomiDataDomain)\(cover)"
+    }
+
+    func hitomiTableValue(_ html: String, label: String) -> String {
+        let escaped = NSRegularExpression.escapedPattern(for: label)
+        let pattern = #"<tr>\s*<td>\s*"# + escaped + #"\s*</td>\s*<td[^>]*>(.*?)</td>"#
+        return html.firstRegexCapture(pattern)?.htmlDecoded ?? ""
+    }
+
+    func hitomiBriefTags(_ html: String) -> [ComicTagReference] {
+        let rows = html.regexMatches(#"<td[^>]*class="[^"]*(?:series-list|relatedtags)[^"]*"[^>]*>.*?</td>"#, options: [.dotMatchesLineSeparators])
+        return rows.flatMap { row in
+            row.regexMatches(#"<a[^>]+href="([^"]+)"[^>]*>.*?</a>"#, options: [.dotMatchesLineSeparators]).compactMap { linkHTML -> ComicTagReference? in
+                guard let link = linkHTML.firstRegexCapture(#"href="([^"]+)""#) else { return nil }
+                let title = linkHTML.strippingHTML
+                guard !title.isEmpty, title != "N/A" else { return nil }
+                return ComicTagReference(title: title, query: hitomiQuery(title: title, link: link), platform: .hitomi, urlString: absoluteURL(link, baseURL: hitomiPublicBaseURL))
+            }
+        }
+    }
+
+    func hitomiNamedTags(_ value: Any?, key: String, namespace: String) -> [ComicTagReference] {
+        (value as? [[String: Any]] ?? []).compactMap { item in
+            guard let title = (item[key] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty else {
+                return nil
+            }
+            let url = (item["url"] as? String).map { absoluteURL($0, baseURL: "https://ltn.\(hitomiDataDomain)") }
+            return ComicTagReference(title: title, query: "\(namespace):\(title.lowercased())", platform: .hitomi, urlString: url)
+        }
+    }
+
+    func hitomiGalleryTags(_ value: Any?) -> [ComicTagReference] {
+        (value as? [[String: Any]] ?? []).compactMap { item in
+            guard let name = (item["tag"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty else {
+                return nil
+            }
+            let isFemale = hitomiBool(item["female"])
+            let isMale = hitomiBool(item["male"])
+            let title = name + (isFemale ? " ♀" : isMale ? " ♂" : "")
+            let namespace = isFemale ? "female" : isMale ? "male" : "tag"
+            let url = (item["url"] as? String).map { absoluteURL($0, baseURL: "https://ltn.\(hitomiDataDomain)") }
+            return ComicTagReference(title: title, query: "\(namespace):\(name.lowercased())", platform: .hitomi, urlString: url)
+        }
+    }
+
+    func hitomiQuery(title: String, link: String) -> String {
+        let decoded = (link.removingPercentEncoding ?? link).lowercased()
+        for namespace in ["artist", "group", "series", "character", "tag", "language"] {
+            guard let range = decoded.range(of: "/\(namespace)/") else { continue }
+            var value = String(decoded[range.upperBound...])
+            if let end = value.range(of: "-all")?.lowerBound ?? value.range(of: ".html")?.lowerBound {
+                value = String(value[..<end])
+            }
+            return namespace == "tag" ? value : "\(namespace):\(value)"
+        }
+        return title.lowercased()
+    }
+
+    func hitomiRelatedIDs(_ value: Any?) -> [Int] {
+        if let values = value as? [Int] {
+            return values
+        }
+        if let values = value as? [String] {
+            return values.compactMap(Int.init)
+        }
+        return []
+    }
+
+    func hitomiBool(_ value: Any?) -> Bool {
+        if let bool = value as? Bool { return bool }
+        if let int = value as? Int { return int == 1 }
+        if let string = value as? String { return string == "1" || string.lowercased() == "true" }
+        return false
+    }
+
+    func loadHitomiImages(item: ComicListItem) async throws -> [String] {
+        let id = try hitomiID(from: item.id)
+        let jsURL = try hitomiURL(path: "galleries/\(id).js")
+        let script = try await requestString(url: jsURL, headers: hitomiHeaders(referer: hitomiPublicBaseURL))
+        guard let start = script.firstIndex(of: "{"), let end = script.lastIndex(of: "}") else {
+            throw ComicContentError.invalidResponse("Hitomi galleries.js 缺少 JSON 数据。")
+        }
+        let jsonData = Data(script[start...end].utf8)
+        guard let json = try JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else {
+            throw ComicContentError.invalidResponse("Hitomi 详情 JSON 无法解析。")
+        }
+        let gg = try await hitomiGG(galleryID: id)
+        let files = json["files"] as? [[String: Any]] ?? []
+        return files.compactMap { file in
+            guard let hash = file["hash"] as? String, !hash.isEmpty else { return nil }
+            let name = file["name"] as? String ?? "\(hash).webp"
+            let ext = (file.intValue(for: "haswebp") == 1) ? "webp" : (name.components(separatedBy: ".").last ?? "jpg")
+            return hitomiImageURL(hash: hash, ext: ext, gg: gg)
+        }
+    }
+
+    func hitomiGG(galleryID: String) async throws -> HitomiGGData {
+        let url = try hitomiURL(path: "gg.js?_=1683939645979")
+        let js = try await requestString(url: url, headers: hitomiHeaders(referer: "\(hitomiPublicBaseURL)/reader/\(galleryID).html"))
+        let numbers = js.regexMatches(#"(?<=case )\d+"#)
+        let b = js.firstRegexCapture(#"b: '(\d+)"#) ?? "0"
+        let initialG = js.firstRegexCapture(#"var o = ([0-9]+)"#).flatMap(Int.init) ?? 1
+        return HitomiGGData(numbers: Set(numbers), b: b, initialG: initialG)
+    }
+
+    func hitomiImageURL(hash: String, ext: String, gg: HitomiGGData) -> String {
+        let path = "\(gg.b)/\(hitomiHashSuffix(hash))/\(hash)"
+        let raw = "https://\(hitomiDataDomain)/\(path).\(ext)"
+        return raw.replacingOccurrences(of: "https://", with: "https://\(hitomiSubdomain(from: raw, base: "w", gg: gg)).")
+    }
+
+    func hitomiHashSuffix(_ hash: String) -> String {
+        guard hash.count >= 3 else { return "" }
+        let lastTwoStart = hash.index(hash.endIndex, offsetBy: -3)
+        let pairStart = hash.index(hash.endIndex, offsetBy: -2)
+        let pair = String(hash[pairStart...])
+        let single = String(hash[lastTwoStart])
+        return Int(single + pair, radix: 16).map(String.init) ?? ""
+    }
+
+    func hitomiSubdomain(from url: String, base: String, gg: HitomiGGData) -> String {
+        let pattern = #"/[0-9a-f]{61}([0-9a-f]{2})([0-9a-f])"#
+        guard let match = url.firstRegexCapturePair(pattern),
+              let value = Int(match.1 + match.0, radix: 16) else {
+            return "a"
+        }
+        let bit = gg.numbers.contains("\(value)") ? (~gg.initialG & 1) : gg.initialG
+        let character = bit == 0 ? "a" : "b"
+        if base == "w" {
+            return character == "a" ? "w1" : "w2"
+        }
+        return "\(character)\(base)"
+    }
+}
+
+private extension ComicContentService {
+    func requestJSON(url: URL, method: String = "GET", headers: [String: String] = [:], body: Data? = nil) async throws -> [String: Any] {
+        let data = try await requestData(url: url, method: method, headers: headers, body: body)
+        let object = try JSONSerialization.jsonObject(with: data)
+        guard let json = object as? [String: Any] else {
+            throw ComicContentError.invalidResponse("接口返回不是 JSON 对象。")
+        }
+        if let message = json["message"] as? String, message != "success" {
+            throw ComicContentError.server(message)
+        }
+        return json
+    }
+
+    func requestString(url: URL, headers: [String: String] = [:], cookies: HTTPCookieStorage? = nil) async throws -> String {
+        let data = try await requestData(url: url, headers: headers, cookies: cookies)
+        guard let text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) else {
+            throw ComicContentError.invalidResponse("接口返回无法按文本解析。")
+        }
+        return text
+    }
+
+    func requestData(url: URL, method: String = "GET", headers: [String: String] = [:], body: Data? = nil, cookies: HTTPCookieStorage? = nil) async throws -> Data {
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        request.httpBody = body
+        headers.forEach { request.setValue($0.value, forHTTPHeaderField: $0.key) }
+        if let cookies {
+            let cookieHeader = HTTPCookie.requestHeaderFields(with: cookies.cookies(for: url) ?? [])
+            cookieHeader.forEach { request.setValue($0.value, forHTTPHeaderField: $0.key) }
+        }
+        let (data, response) = try await dataResponseWithRetry(for: request, cookies: cookies)
+        if let httpResponse = response as? HTTPURLResponse {
+            guard (200..<300).contains(httpResponse.statusCode) else {
+                throw ComicContentError.server("HTTP \(httpResponse.statusCode)")
+            }
+        }
+        return data
+    }
+
+    func dataResponseWithRetry(for request: URLRequest, cookies: HTTPCookieStorage?) async throws -> (Data, URLResponse) {
+        var lastError: Error?
+        let attempts = AppNetworkSettings.retryAttempts
+
+        for attempt in 0..<attempts {
+            do {
+                let (data, response) = try await session.data(for: request)
+                saveCookies(from: response, requestURL: request.url, cookies: cookies)
+
+                if let httpResponse = response as? HTTPURLResponse,
+                   shouldRetry(statusCode: httpResponse.statusCode),
+                   attempt < attempts - 1 {
+                    lastError = ComicContentError.server("HTTP \(httpResponse.statusCode)")
+                    continue
+                }
+
+                return (data, response)
+            } catch {
+                lastError = error
+                if attempt >= attempts - 1 {
+                    break
+                }
+            }
+        }
+
+        throw lastError ?? ComicContentError.server("请求失败。")
+    }
+
+    func shouldRetry(statusCode: Int) -> Bool {
+        statusCode == 408 || statusCode == 429 || (500..<600).contains(statusCode)
+    }
+
+    func saveCookies(from response: URLResponse, requestURL: URL?, cookies: HTTPCookieStorage?) {
+        guard let cookies,
+              let url = requestURL,
+              let httpResponse = response as? HTTPURLResponse else {
+            return
+        }
+
+        let fields = httpResponse.allHeaderFields.reduce(into: [String: String]()) { result, element in
+            guard let key = element.key as? String else { return }
+            result[key] = "\(element.value)"
+        }
+        let responseCookies = HTTPCookie.cookies(withResponseHeaderFields: fields, for: url)
+        cookies.setCookies(responseCookies, for: url, mainDocumentURL: url)
+    }
+
+    func defaultCategories(platform: ComicPlatform) -> [ComicCategoryItem] {
+        switch platform {
+        case .picacg:
+            return []
+        case .jmComic:
+            return [
+                category("最新A漫", platform, query: "最新A漫"),
+                category("同人", platform),
+                category("單本", platform),
+                category("短篇", platform),
+                category("韓漫", platform),
+                category("美漫", platform),
+                category("Cosplay", platform),
+                category("3D", platform),
+                category("禁漫漢化組", platform),
+                category("全彩", platform),
+                category("纯爱", platform),
+                category("人妻", platform),
+                category("NTR", platform),
+                category("百合", platform),
+                category("教师", platform),
+                category("御姐", platform),
+                category("巨乳", platform)
+            ]
+        case .nhentai:
+            return [
+                category("中文", platform, query: "language:chinese"),
+                category("日本語", platform, query: "language:japanese"),
+                category("English", platform, query: "language:english"),
+                category("full color", platform),
+                category("cosplay", platform),
+                category("artist cg", platform),
+                category("doujinshi", platform),
+                category("manga", platform),
+                category("group", platform),
+                category("parody", platform)
+            ]
+        case .hitomi:
+            return [
+                category("中文", platform, query: "language:chinese"),
+                category("日本語", platform, query: "language:japanese"),
+                category("English", platform, query: "language:english"),
+                category("doujinshi", platform),
+                category("manga", platform),
+                category("artistcg", platform),
+                category("gamecg", platform),
+                category("imageset", platform),
+                category("cosplay", platform)
+            ]
+        case .htManga:
+            return [
+                category("Cosplay", platform),
+                category("3D", platform),
+                category("同人", platform),
+                category("單行本", platform),
+                category("短篇", platform),
+                category("全彩", platform)
+            ]
+        case .eHentai:
+            return [
+                category("中文", platform, query: "chinese"),
+                category("full color", platform),
+                category("artist cg", platform),
+                category("doujinshi", platform),
+                category("manga", platform),
+                category("cosplay", platform)
+            ]
+        }
+    }
+
+    func category(_ title: String, _ platform: ComicPlatform, query: String? = nil) -> ComicCategoryItem {
+        let value = query ?? title
+        return ComicCategoryItem(
+            title: title,
+            query: value,
+            platform: platform,
+            subtitle: value == title ? "按 \(title) 浏览" : value,
+            coverURLString: nil
+        )
+    }
+
+    func webHeaders(referer: String) -> [String: String] {
+        var headers = [
+            "Accept": "text/html,application/json;q=0.9,*/*;q=0.8",
+            "Accept-Language": "zh-CN,zh-TW;q=0.9,zh;q=0.8,en-US;q=0.7,en;q=0.6",
+            "Referer": referer,
+            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Safari/604"
+        ]
+        if referer.contains("e-hentai.org") || referer.contains("exhentai.org") {
+            var cookies = ["nw=\(UserDefaults.standard.bool(forKey: PlatformFeatureSettingsKey.ehentaiIgnoresContentWarning) ? "1" : "0")"]
+            let profile = (UserDefaults.standard.string(forKey: PlatformFeatureSettingsKey.ehentaiProfile) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if !profile.isEmpty {
+                cookies.append("sp=\(profile)")
+            }
+            headers["Cookie"] = cookies.joined(separator: "; ")
+        }
+        return headers
+    }
+
+    func absoluteURL(_ value: String, baseURL: String) -> String {
+        if value.hasPrefix("http") { return value }
+        if value.hasPrefix("//") { return "https:\(value)" }
+        if value.hasPrefix("/") { return baseURL + value }
+        return value.isEmpty ? "" : "\(baseURL)/\(value)"
+    }
+
+    func tagRefs(_ values: [String], platform: ComicPlatform) -> [ComicTagReference] {
+        values
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .map { ComicTagReference(title: $0, query: $0, platform: platform, urlString: nil) }
+    }
+}
+
+struct LocalFavoritesStore {
+    nonisolated init() {}
+
+    var folders: [LocalFavoriteFolder] {
+        [
+            LocalFavoriteFolder(id: "default", title: "本地收藏", subtitle: "保存在当前设备")
+        ]
+    }
+
+    func items(folderID: String) -> [ComicListItem] {
+        guard let data = UserDefaults.standard.data(forKey: "picax.localFavorites.\(folderID)"),
+              let values = try? JSONDecoder().decode([StoredLocalFavorite].self, from: data) else {
+            return []
+        }
+        return values.map(\.item)
+    }
+
+    func add(item: ComicListItem, folderID: String) {
+        let key = "picax.localFavorites.\(folderID)"
+        var values: [StoredLocalFavorite]
+        if let data = UserDefaults.standard.data(forKey: key),
+           let decoded = try? JSONDecoder().decode([StoredLocalFavorite].self, from: data) {
+            values = decoded
+        } else {
+            values = []
+        }
+
+        let stored = StoredLocalFavorite(item: item, favoriteDate: Date())
+        values.removeAll { $0.id == item.id && $0.platform == item.platform }
+        values.insert(stored, at: 0)
+
+        guard let data = try? JSONEncoder().encode(values) else { return }
+        UserDefaults.standard.set(data, forKey: key)
+    }
+}
+
+private struct StoredLocalFavorite: Codable {
+    let id: String
+    let platform: ComicPlatform
+    let title: String
+    let subtitle: String
+    let coverURLString: String
+    let tags: [String]
+    let pageCount: Int?
+    let likesCount: Int?
+    let favoriteDate: Date?
+
+    init(item: ComicListItem, favoriteDate: Date?) {
+        id = item.id
+        platform = item.platform
+        title = item.title
+        subtitle = item.subtitle
+        coverURLString = item.coverURLString
+        tags = item.tags
+        pageCount = item.pageCount
+        likesCount = item.likesCount
+        self.favoriteDate = favoriteDate
+    }
+
+    var item: ComicListItem {
+        ComicListItem(
+            id: id,
+            platform: platform,
+            title: title,
+            subtitle: subtitle,
+            coverURLString: coverURLString,
+            tags: tags,
+            pageCount: pageCount,
+            likesCount: likesCount,
+            favoriteDate: favoriteDate
+        )
+    }
+}
+
+private struct HitomiBrief {
+    let item: ComicListItem
+    let type: String
+    let language: String
+    let tags: [ComicTagReference]
+    let updatedText: String?
+}
+
+private struct HitomiIndexNode {
+    let keys: [[UInt8]]
+    let data: [(offset: Int, length: Int)]
+    let subnodeAddresses: [Int]
+}
+
+private struct HitomiGGData {
+    let numbers: Set<String>
+    let b: String
+    let initialG: Int
+}
+
+enum ComicContentError: LocalizedError {
+    case invalidURL(String)
+    case invalidResponse(String)
+    case loginRequired(String)
+    case unsupported(String)
+    case server(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidURL(let value):
+            "接口地址无效：\(value)"
+        case .invalidResponse(let message), .loginRequired(let message), .unsupported(let message), .server(let message):
+            message
+        }
+    }
+}
+
+private extension Dictionary where Key == String, Value == Any {
+    func value(at path: [String]) -> Any? {
+        var current: Any? = self
+        for key in path {
+            current = (current as? [String: Any])?[key]
+        }
+        return current
+    }
+
+    func intValue(for key: String) -> Int? {
+        if let value = self[key] as? Int { return value }
+        if let value = self[key] as? String { return Int(value) }
+        if let value = self[key] as? Double { return Int(value) }
+        return nil
+    }
+}
+
+private extension Dictionary {
+    func compactMapKeys<T: Hashable>(_ transform: (Key) -> T?) -> [T: Value] {
+        var result = [T: Value]()
+        for (key, value) in self {
+            if let transformed = transform(key) {
+                result[transformed] = value
+            }
+        }
+        return result
+    }
+}
+
+private extension String {
+    var urlEncoded: String {
+        addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? self
+    }
+
+    var htmlDecoded: String {
+        replacingOccurrences(of: "&amp;", with: "&")
+            .replacingOccurrences(of: "&quot;", with: "\"")
+            .replacingOccurrences(of: "&#39;", with: "'")
+            .replacingOccurrences(of: "&lt;", with: "<")
+            .replacingOccurrences(of: "&gt;", with: ">")
+            .strippingHTML
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var strippingHTML: String {
+        replacingOccurrences(of: #"<[^>]+>"#, with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var nilIfEmpty: String? {
+        isEmpty ? nil : self
+    }
+
+    func removingPrefix(_ prefix: String) -> String? {
+        guard hasPrefix(prefix) else { return nil }
+        return String(dropFirst(prefix.count))
+    }
+
+    func regexMatches(_ pattern: String, options: NSRegularExpression.Options = []) -> [String] {
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: options) else { return [] }
+        let range = NSRange(startIndex..., in: self)
+        return regex.matches(in: self, range: range).compactMap { match in
+            Range(match.range, in: self).map { String(self[$0]) }
+        }
+    }
+
+    func firstRegexCapture(_ pattern: String, options: NSRegularExpression.Options = [.dotMatchesLineSeparators]) -> String? {
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: options) else { return nil }
+        let range = NSRange(startIndex..., in: self)
+        guard let match = regex.firstMatch(in: self, range: range), match.numberOfRanges > 1,
+              let captureRange = Range(match.range(at: 1), in: self) else {
+            return nil
+        }
+        return String(self[captureRange])
+    }
+
+    func firstRegexCapturePair(_ pattern: String, options: NSRegularExpression.Options = [.dotMatchesLineSeparators]) -> (String, String)? {
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: options) else { return nil }
+        let range = NSRange(startIndex..., in: self)
+        guard let match = regex.firstMatch(in: self, range: range), match.numberOfRanges > 2,
+              let firstRange = Range(match.range(at: 1), in: self),
+              let secondRange = Range(match.range(at: 2), in: self) else {
+            return nil
+        }
+        return (String(self[firstRange]), String(self[secondRange]))
+    }
+}

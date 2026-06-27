@@ -1,0 +1,1241 @@
+import Combine
+import SwiftUI
+
+struct ComicListSection: View {
+    @EnvironmentObject private var readingHistory: ReadingHistoryService
+    @EnvironmentObject private var blockingKeywords: BlockingKeywordService
+    @AppStorage(ReadFilterSettingsKey.hidesReadComicsInLists) private var hidesReadComicsInLists = false
+    @AppStorage(ReadFilterSettingsKey.hiddenProgressThreshold) private var hiddenProgressThreshold = 100
+    @AppStorage(ComicListSettingsKey.showsReadingProgress) private var showsListReadingProgress = true
+    @AppStorage(ComicListSettingsKey.showsFavoriteState) private var showsListFavoriteState = true
+    @AppStorage(ComicListSettingsKey.showsTags) private var showsListTags = true
+    @AppStorage(ComicListSettingsKey.maxVisibleTags) private var maxVisibleTags = 5
+    @AppStorage(ComicListSettingsKey.showsPopularity) private var showsListPopularity = true
+
+    let comics: [ComicListItem]
+    let service: ComicContentService
+    var isLoadingMore = false
+    var hasMore = false
+    var appliesBlocking = true
+    var appliesReadProgressFilter = true
+    var loadMore: (() -> Void)?
+    @State private var detailRequest: ComicListDetailRequest?
+    @State private var readerRequest: ComicListReaderRequest?
+
+    var body: some View {
+        Group {
+            comicList
+        }
+        .navigationDestination(item: $detailRequest) { request in
+            ComicDetailPage(item: request.item, service: service)
+        }
+        .navigationDestination(item: $readerRequest) { request in
+            ComicReaderPage(
+                detail: request.detail,
+                initialChapterIndex: 0,
+                ignoresHistoryProgress: request.ignoresHistoryProgress,
+                service: service
+            )
+        }
+    }
+
+    private var comicList: some View {
+        let snapshot = makeRenderSnapshot()
+
+        return List {
+            Section {
+                if snapshot.visibleComics.isEmpty, !comics.isEmpty {
+                    ContentUnavailableView("已隐藏全部结果", systemImage: "eye.slash", description: Text("当前列表内容命中了屏蔽词或阅读进度过滤，可在设置中调整。"))
+                        .listRowBackground(Color.clear)
+                }
+
+                ForEach(snapshot.visibleComics, id: \.readingHistoryID) { comic in
+                    ComicListActionLink(
+                        item: comic,
+                        service: service,
+                        hasReadingProgress: snapshot.readingProgressIDs.contains(comic.readingHistoryID),
+                        readingProgressText: snapshot.readingProgressTextByID[comic.readingHistoryID],
+                        showsFavoriteState: showsListFavoriteState,
+                        showsTags: showsListTags,
+                        maxVisibleTags: maxVisibleTags,
+                        showsPopularity: showsListPopularity,
+                        openDetail: { detailRequest = ComicListDetailRequest(item: $0) },
+                        openReader: { readerRequest = $0 }
+                    ) {
+                        if comic.readingHistoryID == snapshot.lastVisibleComicID {
+                            loadMore?()
+                        }
+                    }
+                    .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 12))
+                }
+
+                if isLoadingMore {
+                    LoadingMoreRow()
+                } else if hasMore {
+                    Color.clear
+                        .frame(height: 1)
+                        .onAppear {
+                            loadMore?()
+                        }
+                }
+            }
+        }
+        .picaxInsetGroupedListStyle()
+    }
+
+    private func makeRenderSnapshot() -> ComicListRenderSnapshot {
+        let readingRecordsByID = readingHistory.records.reduce(into: [String: ReadingHistoryRecord]()) { result, record in
+            guard record.isReadingRecord, result[record.id] == nil else { return }
+            result[record.id] = record
+        }
+        var readingProgressIDs = Set<String>()
+        var readingProgressTextByID: [String: String] = [:]
+        readingProgressIDs.reserveCapacity(readingRecordsByID.count)
+        if showsListReadingProgress {
+            readingProgressTextByID.reserveCapacity(readingRecordsByID.count)
+        }
+        for record in readingRecordsByID.values {
+            readingProgressIDs.insert(record.id)
+            if showsListReadingProgress {
+                readingProgressTextByID[record.id] = record.progressText
+            }
+        }
+
+        var visibleComics: [ComicListItem] = []
+        visibleComics.reserveCapacity(comics.count)
+        for comic in comics {
+            if appliesBlocking, blockingKeywords.blockedKeyword(for: comic) != nil {
+                continue
+            }
+            if appliesReadProgressFilter, shouldHideReadComic(comic, record: readingRecordsByID[comic.readingHistoryID]) {
+                continue
+            }
+            visibleComics.append(comic)
+        }
+
+        return ComicListRenderSnapshot(
+            visibleComics: visibleComics,
+            readingProgressIDs: readingProgressIDs,
+            readingProgressTextByID: readingProgressTextByID,
+            lastVisibleComicID: visibleComics.last?.readingHistoryID
+        )
+    }
+
+    private func shouldHideReadComic(_ comic: ComicListItem, record: ReadingHistoryRecord?) -> Bool {
+        guard hidesReadComicsInLists else { return false }
+        guard let progress = record?.progress,
+              progress.status != .viewed else {
+            return false
+        }
+
+        let threshold = min(max(hiddenProgressThreshold, 0), 100)
+        let progressPercent: Int
+        if progress.status == .finished {
+            progressPercent = 100
+        } else if progress.totalPages > 0 {
+            let currentPage = min(max(progress.pageIndex + 1, 0), progress.totalPages)
+            progressPercent = min(max(Int((Double(currentPage) / Double(progress.totalPages) * 100).rounded()), 0), 100)
+        } else {
+            progressPercent = progress.pageIndex > 0 ? 100 : 0
+        }
+        return progressPercent >= threshold
+    }
+}
+
+private struct LoadingMoreRow: View {
+    var body: some View {
+        HStack(spacing: 10) {
+            ProgressView()
+            Text("正在加载更多")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 12)
+        .listRowBackground(Color.clear)
+    }
+}
+
+struct ComicListActionLink: View {
+    @EnvironmentObject private var platformAccounts: PlatformAccountService
+
+    let item: ComicListItem
+    let service: ComicContentService
+    var hasReadingProgress = false
+    var readingProgressText: String?
+    var showsFavoriteState = true
+    var showsTags = true
+    var maxVisibleTags = 5
+    var showsPopularity = true
+    let openDetail: (ComicListItem) -> Void
+    let openReader: (ComicListReaderRequest) -> Void
+    var onAppear: (() -> Void)?
+
+    @State private var favoriteContext: ComicListFavoriteContext?
+    @State private var isPreparingReader = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        NavigationLink {
+            ComicDetailPage(item: item, service: service)
+        } label: {
+            ComicListRow(
+                item: item,
+                readingProgressText: readingProgressText,
+                showsFavoriteState: showsFavoriteState,
+                showsTags: showsTags,
+                maxVisibleTags: maxVisibleTags,
+                showsPopularity: showsPopularity
+            )
+        }
+        .contextMenu {
+            Button {
+                openDetail(item)
+            } label: {
+                Label("查看详情", systemImage: "info.circle")
+            }
+
+            Button {
+                prepareReader(ignoresHistoryProgress: !hasReadingProgress)
+            } label: {
+                Label(readActionTitle, systemImage: "book")
+            }
+
+            if hasReadingProgress {
+                Button {
+                    prepareReader(ignoresHistoryProgress: true)
+                } label: {
+                    Label("从头阅读", systemImage: "arrow.counterclockwise")
+                }
+            }
+
+            Button {
+                favoriteContext = ComicListFavoriteContext(item: item)
+            } label: {
+                Label("收藏", systemImage: "heart")
+            }
+        }
+        .onAppear {
+            onAppear?()
+        }
+        .sheet(item: $favoriteContext) { context in
+            FavoriteSelectionSheet(
+                item: context.item,
+                service: service,
+                account: platformAccounts.account(for: context.item.platform)
+            )
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+        }
+        .alert("打开失败", isPresented: readerErrorBinding) {
+            Button("好", role: .cancel) {}
+        } message: {
+            Text(errorMessage ?? "")
+        }
+        .disabled(isPreparingReader)
+    }
+
+    private var readActionTitle: String {
+        hasReadingProgress ? "继续阅读" : "从头阅读"
+    }
+
+    private var readerErrorBinding: Binding<Bool> {
+        Binding {
+            errorMessage != nil
+        } set: { isPresented in
+            if !isPresented {
+                errorMessage = nil
+            }
+        }
+    }
+
+    @MainActor
+    private func prepareReader(ignoresHistoryProgress: Bool) {
+        guard !isPreparingReader else { return }
+        isPreparingReader = true
+        errorMessage = nil
+        let account = platformAccounts.account(for: item.platform)
+        Task { @MainActor in
+            defer { isPreparingReader = false }
+            do {
+                let detail = try await service.loadDetail(item: item, account: account)
+                openReader(ComicListReaderRequest(detail: detail, ignoresHistoryProgress: ignoresHistoryProgress))
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+}
+
+private struct ComicListFavoriteContext: Identifiable {
+    let item: ComicListItem
+    var id: String { "\(item.platform.id)-\(item.id)" }
+}
+
+struct ComicListDetailRequest: Identifiable, Hashable {
+    let id = UUID()
+    let item: ComicListItem
+
+    static func == (lhs: ComicListDetailRequest, rhs: ComicListDetailRequest) -> Bool {
+        lhs.id == rhs.id
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+    }
+}
+
+struct ComicListReaderRequest: Identifiable, Hashable {
+    let id = UUID()
+    let detail: ComicDetailInfo
+    let ignoresHistoryProgress: Bool
+
+    static func == (lhs: ComicListReaderRequest, rhs: ComicListReaderRequest) -> Bool {
+        lhs.id == rhs.id
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+    }
+}
+
+struct ComicListRow: View {
+    let item: ComicListItem
+    var readingProgressText: String?
+    var showsFavoriteState = true
+    var showsTags = true
+    var maxVisibleTags = 5
+    var showsPopularity = true
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 14) {
+            ComicCoverView(url: item.coverURL, accentColor: item.accentColor)
+                .frame(width: 82, height: 112)
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(item.title)
+                        .font(.headline)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Spacer(minLength: 8)
+
+                    Text(item.platformTitle)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(item.accentColor, in: Capsule())
+                }
+
+                if !item.subtitle.isEmpty {
+                    Text(item.subtitle)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                HStack(spacing: 8) {
+                    if let pageText = item.pageText {
+                        ComicListMetaPill(text: pageText)
+                    }
+                    if let readingProgressText {
+                        ComicListMetaPill(text: readingProgressText, systemImage: "book")
+                    }
+                    if showsPopularity, item.likesCount != nil {
+                        ComicListMetaPill(text: item.metadataText)
+                    }
+                    if showsFavoriteState, item.favoriteDate != nil {
+                        ComicListMetaPill(text: item.favoriteDateText, systemImage: "star.fill")
+                    }
+                }
+
+                if showsTags, !item.tags.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 6) {
+                            ForEach(Array(item.tags.prefix(visibleTagLimit).enumerated()), id: \.offset) { _, tag in
+                                Text(tag)
+                                    .font(.caption2.weight(.medium))
+                                    .foregroundStyle(item.accentColor)
+                                    .lineLimit(1)
+                                    .padding(.horizontal, 7)
+                                    .padding(.vertical, 4)
+                                    .background(item.accentColor.opacity(0.12), in: Capsule())
+                            }
+                        }
+                    }
+                    .clipped()
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 112, alignment: .topLeading)
+        }
+        .padding(.vertical, 8)
+        .padding(.horizontal, 10)
+        .background(AppColor.secondaryGroupedBackground, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    private var visibleTagLimit: Int {
+        min(max(maxVisibleTags, 1), 10)
+    }
+}
+
+private struct ComicListRenderSnapshot {
+    let visibleComics: [ComicListItem]
+    let readingProgressIDs: Set<String>
+    let readingProgressTextByID: [String: String]
+    let lastVisibleComicID: String?
+}
+
+private struct ComicListMetaPill: View {
+    let text: String
+    var systemImage: String?
+
+    var body: some View {
+        HStack(spacing: 4) {
+            if let systemImage {
+                Image(systemName: systemImage)
+                    .font(.caption2.weight(.semibold))
+            }
+            Text(text)
+                .lineLimit(1)
+        }
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 4)
+        .background(.background.opacity(0.65), in: Capsule())
+    }
+}
+
+struct ComicCoverView: View {
+    let url: URL?
+    let accentColor: Color
+    var storesInCache = true
+
+    var body: some View {
+        CachedRemoteImageView(url: url, accentColor: accentColor, contentMode: .fill, storesInCache: storesInCache, maxPixelSize: 512)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .clipped()
+        .background(AppColor.secondaryGroupedBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(.quaternary, lineWidth: 0.5)
+        }
+        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .clipped()
+    }
+}
+
+struct LoadingComicListView: View {
+    let accentColor: Color
+
+    var body: some View {
+        LoadingStateView(title: "正在加载漫画", showsBackground: false)
+    }
+}
+
+enum ComicSearchTarget: Hashable, Identifiable {
+    case aggregate([ComicPlatform])
+    case platform(ComicPlatform)
+
+    static var defaultAggregate: ComicSearchTarget {
+        .aggregate(ComicPlatform.allCases)
+    }
+
+    var id: String {
+        switch self {
+        case .aggregate(let platforms):
+            "aggregate-\(Self.normalizedPlatforms(platforms).map(\.id).joined(separator: "-"))"
+        case .platform(let platform):
+            platform.id
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .aggregate(let platforms):
+            let normalized = Self.normalizedPlatforms(platforms)
+            if normalized.count == ComicPlatform.allCases.count {
+                return "多平台聚合"
+            }
+            return "\(normalized.count) 个平台聚合"
+        case .platform(let platform):
+            return platform.title
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .aggregate:
+            "square.grid.2x2"
+        case .platform(let platform):
+            platform.systemImage
+        }
+    }
+
+    var accentColor: Color {
+        switch self {
+        case .aggregate:
+            .blue
+        case .platform(let platform):
+            platform.accentColor
+        }
+    }
+
+    var platforms: [ComicPlatform] {
+        switch self {
+        case .aggregate(let platforms):
+            Self.normalizedPlatforms(platforms)
+        case .platform(let platform):
+            [platform]
+        }
+    }
+
+    var isAggregate: Bool {
+        if case .aggregate = self { return true }
+        return false
+    }
+
+    var platformSummary: String {
+        switch self {
+        case .aggregate(let platforms):
+            Self.normalizedPlatforms(platforms).map(\.title).joined(separator: "、")
+        case .platform(let platform):
+            platform.title
+        }
+    }
+
+    private static func normalizedPlatforms(_ platforms: [ComicPlatform]) -> [ComicPlatform] {
+        let selected = Set(platforms)
+        let normalized = ComicPlatform.allCases.filter { selected.contains($0) }
+        return normalized.isEmpty ? ComicPlatform.allCases : normalized
+    }
+
+    static func configuredDefault(defaults: UserDefaults = .standard) -> ComicSearchTarget {
+        let mode = SearchDefaultTargetMode(rawValue: defaults.string(forKey: SearchSettingsKey.defaultTargetMode) ?? "") ?? .platform
+        switch mode {
+        case .platform:
+            let platformID = defaults.string(forKey: SearchSettingsKey.defaultPlatform) ?? ComicPlatform.picacg.rawValue
+            return .platform(ComicPlatform(rawValue: platformID) ?? .picacg)
+        case .aggregate:
+            let platformIDs = defaults.string(forKey: SearchSettingsKey.defaultAggregatePlatforms) ?? Self.defaultAggregatePlatformIDs
+            let platforms = platformIDs
+                .split(separator: ",")
+                .compactMap { ComicPlatform(rawValue: String($0)) }
+            return .aggregate(platforms)
+        }
+    }
+
+    private static var defaultAggregatePlatformIDs: String {
+        ComicPlatform.allCases.map(\.rawValue).joined(separator: ",")
+    }
+}
+
+struct ComicSearchPage: View {
+    @EnvironmentObject private var platformAccounts: PlatformAccountService
+    @EnvironmentObject private var searchHistory: SearchHistoryService
+    @AppStorage(SearchSettingsKey.focusesSearchFieldOnOpen) private var focusesSearchFieldOnOpen = false
+    @AppStorage(SearchSettingsKey.defaultTargetMode) private var defaultTargetMode = SearchDefaultTargetMode.platform.rawValue
+    @AppStorage(SearchSettingsKey.defaultPlatform) private var defaultSearchPlatformID = ComicPlatform.picacg.rawValue
+    @AppStorage(SearchSettingsKey.defaultAggregatePlatforms) private var defaultAggregatePlatformIDs = ComicPlatform.allCases.map(\.rawValue).joined(separator: ",")
+    let service: ComicContentService
+    private let usesConfiguredDefaultTarget: Bool
+    @StateObject private var viewModel: ComicSearchViewModel
+    @State private var query: String
+    @State private var selectedSearchTarget: ComicSearchTarget
+    @State private var aggregatePlatforms = Set(ComicPlatform.allCases)
+    @State private var searchOptions = ComicSearchAdvancedOptions()
+    @State private var showsAdvancedOptions = false
+    @FocusState private var isSearchFocused: Bool
+
+    init(initialQuery: String = "", platform: ComicPlatform? = nil, service: ComicContentService = ComicContentService()) {
+        self.service = service
+        self.usesConfiguredDefaultTarget = platform == nil
+        let initialTarget = platform.map(ComicSearchTarget.platform) ?? ComicSearchTarget.configuredDefault()
+        _query = State(initialValue: initialQuery)
+        _selectedSearchTarget = State(initialValue: initialTarget)
+        if case .aggregate = initialTarget {
+            let platforms = initialTarget.platforms
+            _aggregatePlatforms = State(initialValue: Set(platforms))
+        }
+        _viewModel = StateObject(wrappedValue: ComicSearchViewModel(service: service))
+    }
+
+    var body: some View {
+        Group {
+            switch viewModel.state {
+            case .idle:
+                if searchHistory.isEnabled, !searchHistory.records.isEmpty {
+                    SearchHistoryListView(
+                        records: searchHistory.records,
+                        onSelect: applyHistory,
+                        onDelete: { offsets, records in
+                            searchHistory.remove(at: offsets, displayedRecords: records)
+                        }
+                    )
+                } else {
+                    ContentUnavailableView("搜索漫画", systemImage: "magnifyingglass", description: Text("输入关键词、作者或标签开始搜索"))
+                }
+            case .loading:
+                LoadingComicListView(accentColor: selectedSearchTarget.accentColor)
+            case .loaded(let comics):
+                if comics.isEmpty {
+                    ContentUnavailableView("暂无结果", systemImage: "magnifyingglass", description: Text("换个关键词或平台试试"))
+                } else {
+                    ComicListSection(
+                        comics: comics,
+                        service: service,
+                        isLoadingMore: viewModel.isLoadingMore,
+                        hasMore: viewModel.hasMore
+                    ) {
+                        Task {
+                            await loadMore()
+                        }
+                    }
+                }
+            case .failed(let message):
+                ContentUnavailableView {
+                    Label("搜索失败", systemImage: "exclamationmark.triangle")
+                } description: {
+                    Text(message)
+                } actions: {
+                    Button("重试") {
+                        Task { await search(force: true) }
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+            }
+        }
+        .navigationTitle("搜索")
+        .picaxNavigationBarTitleDisplayModeInline()
+        .picaxHidesTabBar()
+        .searchable(
+            text: $query,
+            placement: .picaxNavigationSearch,
+            prompt: "搜索漫画、作者、标签"
+        )
+        .searchFocused($isSearchFocused)
+        .onSubmit(of: .search) {
+            Task { await search(force: true) }
+        }
+        .onChange(of: selectedSearchTarget) { _, _ in
+            guard viewModel.hasSearched else { return }
+            Task { await search(force: true) }
+        }
+        .toolbar {
+            ToolbarItemGroup(placement: .picaxTopBarTrailing) {
+                Button {
+                    showsAdvancedOptions = true
+                } label: {
+                    Image(systemName: "slider.horizontal.3")
+                }
+                .foregroundStyle(isSearchOptionsCustomized ? selectedSearchTarget.accentColor : .primary)
+                .accessibilityLabel("高级选项")
+
+                Menu {
+                    Section("聚合搜索") {
+                        Button {
+                            selectedSearchTarget = aggregateSearchTarget
+                        } label: {
+                            if selectedSearchTarget.isAggregate {
+                                Label(aggregateSearchTarget.title, systemImage: "checkmark")
+                            } else {
+                                Label(aggregateSearchTarget.title, systemImage: aggregateSearchTarget.systemImage)
+                            }
+                        }
+
+                        ForEach(ComicPlatform.allCases) { platform in
+                            Button {
+                                toggleAggregatePlatform(platform)
+                            } label: {
+                                Label(
+                                    platform.title,
+                                    systemImage: aggregatePlatforms.contains(platform) ? "checkmark.circle.fill" : "circle"
+                                )
+                            }
+                        }
+                    }
+
+                    Divider()
+
+                    Section("单平台") {
+                        ForEach(ComicPlatform.allCases) { platform in
+                            let target = ComicSearchTarget.platform(platform)
+                            Button {
+                                selectedSearchTarget = target
+                            } label: {
+                                if selectedSearchTarget == target {
+                                    Label(platform.title, systemImage: "checkmark")
+                                } else {
+                                    Label(platform.title, systemImage: platform.systemImage)
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    Image(systemName: selectedSearchTarget.systemImage)
+                }
+                .accessibilityLabel("选择平台")
+
+                Button {
+                    Task { await search(force: true) }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .disabled(viewModel.trimmedKeyword(query).isEmpty)
+                .accessibilityLabel("刷新")
+            }
+        }
+        .sheet(isPresented: $showsAdvancedOptions) {
+            ComicSearchAdvancedOptionsSheet(target: selectedSearchTarget, options: $searchOptions) {
+                guard viewModel.hasSearched else { return }
+                Task { await search(force: true) }
+            }
+        }
+        .task {
+            applyConfiguredDefaultTargetIfNeeded()
+            if focusesSearchFieldOnOpen, viewModel.trimmedKeyword(query).isEmpty {
+                isSearchFocused = true
+            }
+            guard !viewModel.hasSearched, !viewModel.trimmedKeyword(query).isEmpty else { return }
+            await search(force: true)
+        }
+    }
+
+    private func search(force: Bool = false) async {
+        let trimmedKeyword = viewModel.trimmedKeyword(query)
+        guard !trimmedKeyword.isEmpty else { return }
+        query = trimmedKeyword
+        isSearchFocused = false
+        searchHistory.record(keyword: trimmedKeyword, target: selectedSearchTarget)
+        await viewModel.search(
+            target: selectedSearchTarget,
+            keyword: trimmedKeyword,
+            accounts: searchAccounts,
+            options: searchOptions,
+            force: force
+        )
+    }
+
+    private func loadMore() async {
+        await viewModel.loadMore(accounts: searchAccounts)
+    }
+
+    private var aggregateSearchTarget: ComicSearchTarget {
+        .aggregate(ComicPlatform.allCases.filter { aggregatePlatforms.contains($0) })
+    }
+
+    private var searchAccounts: [ComicPlatform: PlatformAccount] {
+        Dictionary(uniqueKeysWithValues: ComicPlatform.allCases.compactMap { platform in
+            platformAccounts.account(for: platform).map { (platform, $0) }
+        })
+    }
+
+    private var isSearchOptionsCustomized: Bool {
+        selectedSearchTarget.platforms.contains { searchOptions.isCustomized(for: $0) }
+    }
+
+    private var configuredDefaultSearchTarget: ComicSearchTarget {
+        switch SearchDefaultTargetMode(rawValue: defaultTargetMode) ?? .platform {
+        case .platform:
+            .platform(ComicPlatform(rawValue: defaultSearchPlatformID) ?? .picacg)
+        case .aggregate:
+            .aggregate(
+                defaultAggregatePlatformIDs
+                    .split(separator: ",")
+                    .compactMap { ComicPlatform(rawValue: String($0)) }
+            )
+        }
+    }
+
+    private func applyConfiguredDefaultTargetIfNeeded() {
+        guard usesConfiguredDefaultTarget, !viewModel.hasSearched else { return }
+        let target = configuredDefaultSearchTarget
+        selectedSearchTarget = target
+        if case .aggregate = target {
+            let platforms = target.platforms
+            aggregatePlatforms = Set(platforms)
+        }
+    }
+
+    private func toggleAggregatePlatform(_ platform: ComicPlatform) {
+        var nextPlatforms = aggregatePlatforms
+        if nextPlatforms.contains(platform) {
+            guard nextPlatforms.count > 1 else { return }
+            nextPlatforms.remove(platform)
+        } else {
+            nextPlatforms.insert(platform)
+        }
+
+        aggregatePlatforms = nextPlatforms
+        selectedSearchTarget = .aggregate(ComicPlatform.allCases.filter { nextPlatforms.contains($0) })
+    }
+
+    private func applyHistory(_ record: SearchHistoryRecord) {
+        query = record.keyword
+        selectedSearchTarget = record.target.searchTarget
+        if let aggregatePlatformSet = record.target.aggregatePlatformSet {
+            aggregatePlatforms = aggregatePlatformSet
+        }
+        Task {
+            await search(force: true)
+        }
+    }
+}
+
+private struct SearchHistoryListView: View {
+    let records: [SearchHistoryRecord]
+    let onSelect: (SearchHistoryRecord) -> Void
+    let onDelete: (IndexSet, [SearchHistoryRecord]) -> Void
+
+    var body: some View {
+        List {
+            Section("搜索历史") {
+                ForEach(records) { record in
+                    Button {
+                        onSelect(record)
+                    } label: {
+                        SearchHistoryRow(record: record)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .onDelete { offsets in
+                    onDelete(offsets, records)
+                }
+            }
+        }
+        .picaxInsetGroupedListStyle()
+    }
+}
+
+private struct SearchHistoryRow: View {
+    let record: SearchHistoryRecord
+
+    var body: some View {
+        Label {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(record.keyword)
+                    .font(.headline)
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+
+                Text("\(record.subtitle) · \(record.searchedAtText)")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+        } icon: {
+            Image(systemName: record.target.systemImage)
+                .font(.title3)
+                .foregroundStyle(.secondary)
+                .frame(width: 34, height: 34)
+                .background(.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+private struct ComicSearchAdvancedOptionsSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let target: ComicSearchTarget
+    @Binding var options: ComicSearchAdvancedOptions
+    let onApply: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                if configurablePlatforms.isEmpty {
+                    ContentUnavailableView("暂无高级选项", systemImage: "slider.horizontal.3", description: Text("\(target.title) 当前没有可用的搜索筛选项"))
+                } else {
+                    if target.isAggregate {
+                        Section {
+                            Text("聚合搜索会使用已选平台各自的搜索选项，并把结果合并展示。当前平台：\(target.platformSummary)。")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    ForEach(configurablePlatforms) { platform in
+                        searchOptionsSection(for: platform)
+                    }
+                }
+            }
+            .navigationTitle("高级选项")
+            .picaxNavigationBarTitleDisplayModeInline()
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("重置") {
+                        resetTargetPlatforms()
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("完成") {
+                        onApply()
+                        dismiss()
+                    }
+                }
+            }
+        }
+    }
+
+    private var configurablePlatforms: [ComicPlatform] {
+        target.platforms.filter { !$0.searchSortChoices.isEmpty || $0 == .nhentai }
+    }
+
+    private func searchOptionsSection(for platform: ComicPlatform) -> some View {
+        Section(platform.title) {
+            if !platform.searchSortChoices.isEmpty {
+                Picker("排序", selection: sortSelection(for: platform)) {
+                    ForEach(platform.searchSortChoices) { choice in
+                        Text(choice.title).tag(choice.value)
+                    }
+                }
+                .pickerStyle(.inline)
+            }
+
+            if platform == .nhentai {
+                Picker("语言", selection: $options.nhentaiLanguage) {
+                    Text("不限").tag(ComicSearchLanguage?.none)
+                    ForEach(ComicSearchLanguage.allCases) { language in
+                        Text(language.title).tag(Optional(language))
+                    }
+                }
+                .pickerStyle(.inline)
+            }
+        }
+    }
+
+    private func sortSelection(for platform: ComicPlatform) -> Binding<String> {
+        Binding {
+            options.sortValue(for: platform)
+        } set: { value in
+            options.setSortValue(value, for: platform)
+        }
+    }
+
+    private func resetTargetPlatforms() {
+        for platform in target.platforms {
+            reset(platform)
+        }
+    }
+
+    private func reset(_ platform: ComicPlatform) {
+        switch platform {
+        case .picacg:
+            options.picacgSort = "dd"
+        case .nhentai:
+            options.nhentaiSort = "date"
+            options.nhentaiLanguage = nil
+        case .jmComic:
+            options.jmComicSort = "mr"
+        case .eHentai, .htManga, .hitomi:
+            break
+        }
+    }
+}
+
+struct ComicTagComicsPage: View {
+    @EnvironmentObject private var platformAccounts: PlatformAccountService
+    let tag: ComicTagReference
+    let service: ComicContentService
+    @StateObject private var viewModel: ComicTagComicsViewModel
+
+    init(tag: ComicTagReference, service: ComicContentService = ComicContentService()) {
+        self.tag = tag
+        self.service = service
+        _viewModel = StateObject(wrappedValue: ComicTagComicsViewModel(tag: tag, service: service))
+    }
+
+    var body: some View {
+        Group {
+            switch viewModel.state {
+            case .idle, .loading:
+                LoadingComicListView(accentColor: tag.platform.accentColor)
+            case .loaded(let comics):
+                if comics.isEmpty {
+                    ContentUnavailableView("暂无漫画", systemImage: "tag", description: Text("这个标签没有返回漫画"))
+                } else {
+                    ComicListSection(
+                        comics: comics,
+                        service: service,
+                        isLoadingMore: viewModel.isLoadingMore,
+                        hasMore: viewModel.hasMore
+                    ) {
+                        Task {
+                            await loadMore()
+                        }
+                    }
+                }
+            case .failed(let message):
+                ContentUnavailableView {
+                    Label("加载失败", systemImage: "exclamationmark.triangle")
+                } description: {
+                    Text(message)
+                } actions: {
+                    Button("重试") {
+                        Task { await load(force: true) }
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+            }
+        }
+        .navigationTitle(tag.title)
+        .picaxNavigationBarTitleDisplayModeInline()
+        .picaxHidesTabBar()
+        .toolbar {
+            ToolbarItem(placement: .picaxTopBarTrailing) {
+                Button {
+                    Task {
+                        await load(force: true)
+                    }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .accessibilityLabel("刷新")
+            }
+        }
+        .task {
+            await load()
+        }
+    }
+
+    private func load(force: Bool = false) async {
+        await viewModel.load(account: platformAccounts.account(for: tag.platform), force: force)
+    }
+
+    private func loadMore() async {
+        await viewModel.loadMore(account: platformAccounts.account(for: tag.platform))
+    }
+}
+
+@MainActor
+private final class ComicTagComicsViewModel: ObservableObject {
+    @Published private(set) var state: ComicTagComicsLoadState = .idle
+    @Published private(set) var isLoadingMore = false
+    @Published private(set) var hasMore = false
+
+    private let tag: ComicTagReference
+    private let service: ComicContentService
+    private var currentPage = 0
+    private var loadedIDs = Set<String>()
+
+    init(tag: ComicTagReference, service: ComicContentService) {
+        self.tag = tag
+        self.service = service
+    }
+
+    func load(account: PlatformAccount?, force: Bool = false) async {
+        if case .loaded = state, !force {
+            return
+        }
+
+        state = .loading
+        currentPage = 0
+        loadedIDs.removeAll()
+        hasMore = false
+        isLoadingMore = false
+        do {
+            let comics = try await service.loadTagComics(tag: tag, account: account, page: 1)
+            currentPage = 1
+            loadedIDs = Set(comics.map(\.id))
+            hasMore = !comics.isEmpty
+            state = .loaded(comics)
+        } catch {
+            state = .failed(error.localizedDescription)
+        }
+    }
+
+    func loadMore(account: PlatformAccount?) async {
+        guard hasMore, !isLoadingMore, case .loaded(let comics) = state else {
+            return
+        }
+
+        isLoadingMore = true
+        defer { isLoadingMore = false }
+
+        do {
+            let nextPage = currentPage + 1
+            let newComics = try await service.loadTagComics(tag: tag, account: account, page: nextPage)
+            currentPage = nextPage
+            let uniqueComics = newComics.filter { loadedIDs.insert($0.id).inserted }
+            hasMore = !newComics.isEmpty && !uniqueComics.isEmpty
+            guard !uniqueComics.isEmpty else { return }
+            state = .loaded(comics + uniqueComics)
+        } catch {
+            hasMore = false
+        }
+    }
+}
+
+private enum ComicTagComicsLoadState {
+    case idle
+    case loading
+    case loaded([ComicListItem])
+    case failed(String)
+}
+
+@MainActor
+private final class ComicSearchViewModel: ObservableObject {
+    @Published private(set) var state: ComicSearchLoadState = .idle
+    @Published private(set) var isLoadingMore = false
+    @Published private(set) var hasMore = false
+    @Published private(set) var hasSearched = false
+
+    private let service: ComicContentService
+    private var currentPage = 0
+    private var currentPages: [ComicPlatform: Int] = [:]
+    private var platformHasMore: [ComicPlatform: Bool] = [:]
+    private var loadedIDs = Set<String>()
+    private var currentTarget: ComicSearchTarget?
+    private var currentKeyword = ""
+    private var currentOptions = ComicSearchAdvancedOptions()
+
+    init(service: ComicContentService) {
+        self.service = service
+    }
+
+    func trimmedKeyword(_ keyword: String) -> String {
+        keyword.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    func search(
+        target: ComicSearchTarget,
+        keyword: String,
+        accounts: [ComicPlatform: PlatformAccount],
+        options: ComicSearchAdvancedOptions,
+        force: Bool = false
+    ) async {
+        let trimmed = trimmedKeyword(keyword)
+        guard !trimmed.isEmpty else {
+            reset()
+            return
+        }
+        if case .loaded = state, !force, currentTarget == target, currentKeyword == trimmed, currentOptions == options {
+            return
+        }
+
+        state = .loading
+        hasSearched = true
+        hasMore = false
+        isLoadingMore = false
+        currentPage = 0
+        currentPages.removeAll()
+        platformHasMore.removeAll()
+        loadedIDs.removeAll()
+        currentTarget = target
+        currentKeyword = trimmed
+        currentOptions = options
+
+        var groups: [[ComicListItem]] = []
+        var failures: [String] = []
+        for platform in target.platforms {
+            do {
+                let comics = try await service.searchComics(
+                    platform: platform,
+                    keyword: trimmed,
+                    account: accounts[platform],
+                    page: 1,
+                    options: options
+                )
+                currentPages[platform] = 1
+                platformHasMore[platform] = !comics.isEmpty
+                groups.append(comics)
+            } catch {
+                currentPages[platform] = 0
+                platformHasMore[platform] = false
+                failures.append("\(platform.title): \(error.localizedDescription)")
+            }
+        }
+
+        currentPage = 1
+        let comics = uniqueComics(from: interleaved(groups))
+        hasMore = platformHasMore.values.contains(true)
+        if !comics.isEmpty || failures.count < target.platforms.count {
+            state = .loaded(comics)
+        } else {
+            state = .failed(failures.joined(separator: "\n"))
+        }
+    }
+
+    func loadMore(accounts: [ComicPlatform: PlatformAccount]) async {
+        guard hasMore, !isLoadingMore, case .loaded(let comics) = state, let target = currentTarget, !currentKeyword.isEmpty else {
+            return
+        }
+
+        isLoadingMore = true
+        defer { isLoadingMore = false }
+
+        var groups: [[ComicListItem]] = []
+        for platform in target.platforms where platformHasMore[platform] == true {
+            do {
+                let nextPage = (currentPages[platform] ?? currentPage) + 1
+                let newComics = try await service.searchComics(
+                    platform: platform,
+                    keyword: currentKeyword,
+                    account: accounts[platform],
+                    page: nextPage,
+                    options: currentOptions
+                )
+                currentPages[platform] = nextPage
+                platformHasMore[platform] = !newComics.isEmpty
+                groups.append(newComics)
+            } catch {
+                platformHasMore[platform] = false
+            }
+        }
+
+        currentPage += 1
+        let uniqueComics = uniqueComics(from: interleaved(groups))
+        hasMore = platformHasMore.values.contains(true)
+        guard !uniqueComics.isEmpty else {
+            if !hasMore {
+                state = .loaded(comics)
+            }
+            return
+        }
+        state = .loaded(comics + uniqueComics)
+    }
+
+    private func reset() {
+        state = .idle
+        isLoadingMore = false
+        hasMore = false
+        currentPage = 0
+        currentPages.removeAll()
+        platformHasMore.removeAll()
+        loadedIDs.removeAll()
+        currentTarget = nil
+        currentKeyword = ""
+        currentOptions = ComicSearchAdvancedOptions()
+    }
+
+    private func interleaved(_ groups: [[ComicListItem]]) -> [ComicListItem] {
+        let maxCount = groups.map(\.count).max() ?? 0
+        guard maxCount > 0 else { return [] }
+        var result: [ComicListItem] = []
+        result.reserveCapacity(groups.reduce(0) { $0 + $1.count })
+        for index in 0..<maxCount {
+            for group in groups where group.indices.contains(index) {
+                result.append(group[index])
+            }
+        }
+        return result
+    }
+
+    private func uniqueComics(from comics: [ComicListItem]) -> [ComicListItem] {
+        comics.filter { loadedIDs.insert(itemKey($0)).inserted }
+    }
+
+    private func itemKey(_ item: ComicListItem) -> String {
+        "\(item.platform.id)-\(item.id)"
+    }
+}
+
+private enum ComicSearchLoadState {
+    case idle
+    case loading
+    case loaded([ComicListItem])
+    case failed(String)
+}

@@ -1,0 +1,7 @@
+.DS_Store
+/.build
+/DerivedData
+.codex
+.vccode
+/PicaX.xcodeproj/xcuserdata
+/PicaX.xcodeproj/project.xcworkspace/xcuserdata
