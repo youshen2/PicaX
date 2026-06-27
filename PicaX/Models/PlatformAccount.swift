@@ -59,9 +59,9 @@ enum ComicPlatform: String, CaseIterable, Codable, Identifiable {
     var loginWebsite: String? {
         switch self {
         case .picacg:
-            PlatformFeatureSettings.frontendBaseURL(for: .picacg)
+            "\(PlatformFeatureSettings.frontendBaseURL(for: .picacg))/web/login"
         case .jmComic:
-            PlatformFeatureSettings.frontendBaseURL(for: .jmComic)
+            nil
         case .nhentai:
             "\(PlatformFeatureSettings.frontendBaseURL(for: .nhentai))/login/"
         case .eHentai:
@@ -111,12 +111,169 @@ enum ComicPlatform: String, CaseIterable, Codable, Identifiable {
 struct PlatformAccount: Codable, Equatable, Identifiable {
     var platform: ComicPlatform
     var username: String
-    var password: String
+    var credential: PlatformCredential
     var loggedInAt: Date
 
     var id: ComicPlatform { platform }
 
     var displayName: String {
-        username.isEmpty ? platform.title : username
+        credential.profile?.displayName ?? (username.isEmpty ? platform.title : username)
+    }
+
+    var hasReusableCredential: Bool {
+        !credential.isEmpty
+    }
+
+    init(platform: ComicPlatform, username: String, credential: PlatformCredential, loggedInAt: Date = Date()) {
+        self.platform = platform
+        self.username = username
+        self.credential = credential
+        self.loggedInAt = loggedInAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case platform
+        case username
+        case credential
+        case loggedInAt
+        case password
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        platform = try container.decode(ComicPlatform.self, forKey: .platform)
+        username = try container.decode(String.self, forKey: .username)
+        loggedInAt = try container.decode(Date.self, forKey: .loggedInAt)
+        var decodedCredential = try container.decodeIfPresent(PlatformCredential.self, forKey: .credential) ?? .empty
+        if platform == .jmComic,
+           decodedCredential.password?.isEmpty ?? true,
+           let legacyPassword = try container.decodeIfPresent(String.self, forKey: .password),
+           !legacyPassword.isEmpty {
+            decodedCredential.password = legacyPassword
+        }
+        credential = decodedCredential
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(platform, forKey: .platform)
+        try container.encode(username, forKey: .username)
+        try container.encode(credential, forKey: .credential)
+        try container.encode(loggedInAt, forKey: .loggedInAt)
+    }
+}
+
+struct PlatformCredential: Codable, Equatable {
+    var token: String?
+    var refreshToken: String?
+    var tokenType: String?
+    var password: String?
+    var cookies: [StoredHTTPCookie]
+    var userAgent: String?
+    var baseURL: String?
+    var source: PlatformCredentialSource
+    var profile: PlatformAccountProfile?
+
+    static let empty = PlatformCredential(
+        token: nil,
+        refreshToken: nil,
+        tokenType: nil,
+        password: nil,
+        cookies: [],
+        userAgent: nil,
+        baseURL: nil,
+        source: .manual,
+        profile: nil
+    )
+
+    var isEmpty: Bool {
+        (token?.isEmpty ?? true) && (refreshToken?.isEmpty ?? true) && (password?.isEmpty ?? true) && cookies.isEmpty
+    }
+
+    var summaryText: String {
+        isEmpty ? "未保存" : "已保存"
+    }
+
+    func cookieStorage() -> HTTPCookieStorage {
+        let storage = HTTPCookieStorage()
+        for cookie in cookies.compactMap(\.httpCookie) {
+            storage.setCookie(cookie)
+        }
+        return storage
+    }
+}
+
+enum PlatformCredentialSource: String, Codable, Equatable {
+    case api
+    case web
+    case manual
+}
+
+struct PlatformAccountProfile: Codable, Equatable {
+    var email: String?
+    var username: String?
+    var nickname: String?
+
+    var displayName: String? {
+        nickname.nonEmptyValue ?? username.nonEmptyValue ?? email.nonEmptyValue
+    }
+}
+
+struct StoredHTTPCookie: Codable, Equatable, Identifiable {
+    var name: String
+    var value: String
+    var domain: String
+    var path: String
+    var expiresDate: Date?
+    var isSecure: Bool
+
+    var id: String {
+        "\(domain)|\(path)|\(name)"
+    }
+
+    nonisolated init(name: String, value: String, domain: String, path: String = "/", expiresDate: Date? = nil, isSecure: Bool = false) {
+        self.name = name
+        self.value = value
+        self.domain = domain
+        self.path = path.isEmpty ? "/" : path
+        self.expiresDate = expiresDate
+        self.isSecure = isSecure
+    }
+
+    nonisolated init(cookie: HTTPCookie) {
+        self.init(
+            name: cookie.name,
+            value: cookie.value,
+            domain: cookie.domain,
+            path: cookie.path,
+            expiresDate: cookie.expiresDate,
+            isSecure: cookie.isSecure
+        )
+    }
+
+    var httpCookie: HTTPCookie? {
+        var properties: [HTTPCookiePropertyKey: Any] = [
+            .name: name,
+            .value: value,
+            .domain: domain,
+            .path: path,
+            .version: "0"
+        ]
+        if let expiresDate {
+            properties[.expires] = expiresDate
+        }
+        if isSecure {
+            properties[.secure] = "TRUE"
+        }
+        return HTTPCookie(properties: properties)
+    }
+}
+
+private extension Optional where Wrapped == String {
+    var nonEmptyValue: String? {
+        guard let value = self?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else {
+            return nil
+        }
+        return value
     }
 }

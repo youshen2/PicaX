@@ -30,7 +30,7 @@ struct HomeComicSourceRow: View {
         case .jmComic:
             return "API、图片分流、签到"
         case .nhentai:
-            return "前端与 Cookie"
+            return "前端与网页登录"
         case .eHentai:
             return "站点、原图、警告、Profile"
         case .hitomi:
@@ -524,9 +524,9 @@ private struct NhentaiSourceFeatureSection: View {
         Section("NHentai") {
             Button {
                 SourceCookieCleaner.clear(hosts: ["nhentai.net", ".nhentai.net"])
-                showMessage("已清除", "NHentai 的网页登录 Cookie 已清除。")
+                showMessage("已清除", "NHentai 的网页登录状态已清除。")
             } label: {
-                Label("清除网页登录 Cookie", systemImage: "trash")
+                Label("清除网页登录状态", systemImage: "trash")
             }
         }
     }
@@ -562,9 +562,9 @@ private struct EhentaiSourceFeatureSection: View {
 
             Button {
                 SourceCookieCleaner.clear(hosts: ["e-hentai.org", ".e-hentai.org", "exhentai.org", ".exhentai.org"])
-                showMessage("已清除", "E-Hentai 的网页登录 Cookie 已清除。")
+                showMessage("已清除", "E-Hentai 的网页登录状态已清除。")
             } label: {
-                Label("清除网页登录 Cookie", systemImage: "trash")
+                Label("清除网页登录状态", systemImage: "trash")
             }
         }
     }

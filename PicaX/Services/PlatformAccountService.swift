@@ -30,25 +30,6 @@ final class PlatformAccountService: ObservableObject {
         accounts[platform] != nil
     }
 
-    func login(platform: ComicPlatform, username: String, password: String) throws {
-        let trimmedUsername = username.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedPassword = password.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedUsername.isEmpty else {
-            throw PlatformAccountError.emptyUsername
-        }
-        guard !trimmedPassword.isEmpty else {
-            throw PlatformAccountError.emptyPassword
-        }
-
-        accounts[platform] = PlatformAccount(
-            platform: platform,
-            username: trimmedUsername,
-            password: trimmedPassword,
-            loggedInAt: Date()
-        )
-        save()
-    }
-
     func saveValidatedAccount(_ account: PlatformAccount) {
         accounts[account.platform] = account
         save()
@@ -81,6 +62,7 @@ final class PlatformAccountService: ObservableObject {
 enum PlatformAccountError: LocalizedError, Equatable {
     case emptyUsername
     case emptyPassword
+    case emptyCredential
 
     var errorDescription: String? {
         switch self {
@@ -88,6 +70,8 @@ enum PlatformAccountError: LocalizedError, Equatable {
             "请输入账号"
         case .emptyPassword:
             "请输入密码"
+        case .emptyCredential:
+            "登录成功后没有取得可保存的登录信息"
         }
     }
 }

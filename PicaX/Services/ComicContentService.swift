@@ -194,28 +194,79 @@ struct ComicContentService {
             throw PlatformAccountError.emptyPassword
         }
 
-        let account = PlatformAccount(platform: platform, username: trimmedUsername, password: trimmedPassword, loggedInAt: Date())
         switch platform {
         case .picacg:
-            _ = try await picacgToken(account: account)
+            let token = try await picacgLoginToken(email: trimmedUsername, password: trimmedPassword)
+            let profile = try await loadPicacgProfile(token: token)
+            let account = PlatformAccount(
+                platform: platform,
+                username: trimmedUsername,
+                credential: PlatformCredential(
+                    token: token,
+                    refreshToken: nil,
+                    tokenType: nil,
+                    password: nil,
+                    cookies: [],
+                    userAgent: nil,
+                    baseURL: "https://picaapi.picacomic.com",
+                    source: .api,
+                    profile: PlatformAccountProfile(email: profile.email, username: profile.id, nickname: profile.name)
+                )
+            )
             if UserDefaults.standard.bool(forKey: PlatformFeatureSettingsKey.picacgAutoPunchIn) {
                 try? await picacgPunchIn(account: account)
             }
+            return account
         case .htManga:
-            try await htMangaLogin(account: account, baseURL: htMangaBaseURL, cookies: HTTPCookieStorage())
+            let cookies = HTTPCookieStorage()
+            try await htMangaLogin(username: trimmedUsername, password: trimmedPassword, baseURL: htMangaBaseURL, cookies: cookies)
+            let account = PlatformAccount(
+                platform: platform,
+                username: trimmedUsername,
+                credential: PlatformCredential(
+                    token: nil,
+                    refreshToken: nil,
+                    tokenType: nil,
+                    password: nil,
+                    cookies: storedCookies(from: cookies, baseURLs: [htMangaBaseURL]),
+                    userAgent: nil,
+                    baseURL: htMangaBaseURL,
+                    source: .api,
+                    profile: PlatformAccountProfile(email: nil, username: trimmedUsername, nickname: nil)
+                )
+            )
+            guard account.hasReusableCredential else { throw PlatformAccountError.emptyCredential }
+            return account
         case .nhentai:
             throw ComicContentError.loginRequired("NHentai 账号校验需要 Web 登录后的 access_token，请通过网页登录。")
         case .eHentai:
             throw ComicContentError.loginRequired("E-Hentai 账号校验需要网页登录 cookie，请通过网页登录。")
         case .jmComic:
-            try await jmLogin(account: account, cookies: HTTPCookieStorage())
+            let cookies = HTTPCookieStorage()
+            let loginInfo = try await jmLoginInfo(username: trimmedUsername, password: trimmedPassword, cookies: cookies)
+            let account = PlatformAccount(
+                platform: platform,
+                username: trimmedUsername,
+                credential: PlatformCredential(
+                    token: nil,
+                    refreshToken: nil,
+                    tokenType: nil,
+                    password: trimmedPassword,
+                    cookies: storedCookies(from: cookies, baseURLs: [loginInfo.baseURL]),
+                    userAgent: nil,
+                    baseURL: loginInfo.baseURL,
+                    source: .api,
+                    profile: PlatformAccountProfile(email: nil, username: loginInfo.userID, nickname: trimmedUsername)
+                )
+            )
+            guard account.hasReusableCredential else { throw PlatformAccountError.emptyCredential }
             if UserDefaults.standard.bool(forKey: PlatformFeatureSettingsKey.jmAutoCheckIn) {
                 _ = try? await jmComicCheckIn(account: account)
             }
+            return account
         case .hitomi:
             throw ComicContentError.unsupported("Hitomi 没有账号密码登录接口。")
         }
-        return account
     }
 
     func loadDetail(item: ComicListItem, account: PlatformAccount?) async throws -> ComicDetailInfo {
@@ -396,6 +447,10 @@ struct ComicContentService {
 
     func loadPicacgProfile(account: PlatformAccount?) async throws -> PicacgUserProfile {
         let token = try await picacgToken(account: account)
+        return try await loadPicacgProfile(token: token)
+    }
+
+    func loadPicacgProfile(token: String) async throws -> PicacgUserProfile {
         let json = try await picacgJSON(path: "users/profile", token: token)
         guard let user = json.value(at: ["data", "user"]) as? [String: Any] else {
             throw ComicContentError.invalidResponse("PicACG 用户资料响应缺少 user。")
@@ -426,8 +481,9 @@ struct ComicContentService {
         guard let account else {
             throw ComicContentError.loginRequired("JMComic 签到需要先登录平台账号。")
         }
-        let cookies = HTTPCookieStorage()
-        let loginInfo = try await jmLoginInfo(account: account, cookies: cookies)
+        let context = try await jmAuthenticatedContext(account: account)
+        let cookies = context.cookies
+        let loginInfo = context.loginInfo
         guard let userID = loginInfo.userID, !userID.isEmpty else {
             throw ComicContentError.invalidResponse("JMComic 登录响应缺少用户 ID。")
         }
@@ -565,15 +621,21 @@ private extension ComicContentService {
         guard let account else {
             throw ComicContentError.loginRequired("PicACG 接口需要先登录平台账号。")
         }
+        if let token = account.credential.token, !token.isEmpty {
+            return token
+        }
+        throw ComicContentError.loginRequired("PicACG 登录状态无效，请重新登录。")
+    }
 
+    func picacgLoginToken(email: String, password: String) async throws -> String {
         let path = "auth/sign-in"
         let body = try JSONSerialization.data(withJSONObject: [
-            "email": account.username,
-            "password": account.password
+            "email": email,
+            "password": password
         ])
         let json = try await picacgJSON(path: path, method: "POST", token: "", body: body)
         guard let token = json.value(at: ["data", "token"]) as? String, !token.isEmpty else {
-            throw ComicContentError.invalidResponse("PicACG 登录响应缺少 token。")
+            throw ComicContentError.invalidResponse("PicACG 登录返回信息不完整。")
         }
         return token
     }
@@ -1201,8 +1263,7 @@ private extension ComicContentService {
 
     func loadHtMangaFavorites(account: PlatformAccount) async throws -> [ComicListItem] {
         let base = htMangaBaseURL
-        let cookies = HTTPCookieStorage()
-        try await htMangaLogin(account: account, baseURL: base, cookies: cookies)
+        let cookies = try htMangaCookieStorage(account: account)
         guard let url = URL(string: "\(base)/users-users_fav-page-1-c-0.html") else {
             throw ComicContentError.invalidURL("htmanga favorites")
         }
@@ -1215,8 +1276,7 @@ private extension ComicContentService {
             throw ComicContentError.loginRequired("HT Manga 收藏需要先登录平台账号。")
         }
         let base = htMangaBaseURL
-        let cookies = HTTPCookieStorage()
-        try await htMangaLogin(account: account, baseURL: base, cookies: cookies)
+        let cookies = try htMangaCookieStorage(account: account)
         guard let url = URL(string: "\(base)/users-addfav-id-210814.html") else {
             throw ComicContentError.invalidURL("htmanga folders")
         }
@@ -1234,8 +1294,7 @@ private extension ComicContentService {
             throw ComicContentError.loginRequired("HT Manga 收藏需要先登录平台账号。")
         }
         let base = htMangaBaseURL
-        let cookies = HTTPCookieStorage()
-        try await htMangaLogin(account: account, baseURL: base, cookies: cookies)
+        let cookies = try htMangaCookieStorage(account: account)
         guard let url = URL(string: "\(base)/users-save_fav-id-\(item.id).html") else {
             throw ComicContentError.invalidURL("htmanga favorite \(item.id)")
         }
@@ -1250,10 +1309,17 @@ private extension ComicContentService {
     }
 
     func htMangaLogin(account: PlatformAccount, baseURL: String, cookies: HTTPCookieStorage) async throws {
+        let storedCookies = try htMangaCookieStorage(account: account)
+        for cookie in storedCookies.cookies ?? [] {
+            cookies.setCookie(cookie)
+        }
+    }
+
+    func htMangaLogin(username: String, password: String, baseURL: String, cookies: HTTPCookieStorage) async throws {
         guard let url = URL(string: "\(baseURL)/users-check_login.html") else {
             throw ComicContentError.invalidURL("htmanga login")
         }
-        let bodyString = "login_name=\(account.username.urlEncoded)&login_pass=\(account.password.urlEncoded)"
+        let bodyString = "login_name=\(username.urlEncoded)&login_pass=\(password.urlEncoded)"
         let data = try await requestData(
             url: url,
             method: "POST",
@@ -1264,6 +1330,13 @@ private extension ComicContentService {
         guard let text = String(data: data, encoding: .utf8), text.contains("登錄成功") || text.contains("登录成功") else {
             throw ComicContentError.loginRequired("HT Manga 登录失败。")
         }
+    }
+
+    func htMangaCookieStorage(account: PlatformAccount) throws -> HTTPCookieStorage {
+        guard !account.credential.cookies.isEmpty else {
+            throw ComicContentError.loginRequired("HT Manga 登录状态无效，请重新登录。")
+        }
+        return account.credential.cookieStorage()
     }
 
     func parseHtMangaList(_ html: String, baseURL: String, favoriteDate: Date? = nil) -> [ComicListItem] {
@@ -1469,8 +1542,9 @@ private extension ComicContentService {
     }
 
     func loadJmComicFavorites(account: PlatformAccount) async throws -> [ComicListItem] {
-        let cookies = HTTPCookieStorage()
-        let baseURL = try await jmLogin(account: account, cookies: cookies)
+        let context = try await jmAuthenticatedContext(account: account)
+        let cookies = context.cookies
+        let baseURL = context.loginInfo.baseURL
         let sort = PlatformFeatureSettings.jmFavoriteSort()
         let json = try await jmJSON(path: "favorite?page=1&folder_id=0&o=\(sort)", cookies: cookies, baseURL: baseURL)
         return try jmComicItems(from: json, favoriteDate: Date())
@@ -1480,8 +1554,9 @@ private extension ComicContentService {
         guard let account else {
             throw ComicContentError.loginRequired("JMComic 收藏需要先登录平台账号。")
         }
-        let cookies = HTTPCookieStorage()
-        let baseURL = try await jmLogin(account: account, cookies: cookies)
+        let context = try await jmAuthenticatedContext(account: account)
+        let cookies = context.cookies
+        let baseURL = context.loginInfo.baseURL
         guard let json = try await jmJSON(path: "favorite", cookies: cookies, baseURL: baseURL) as? [String: Any] else {
             throw ComicContentError.invalidResponse("JMComic 收藏夹响应不是对象。")
         }
@@ -1497,8 +1572,9 @@ private extension ComicContentService {
         guard let account else {
             throw ComicContentError.loginRequired("JMComic 收藏需要先登录平台账号。")
         }
-        let cookies = HTTPCookieStorage()
-        let baseURL = try await jmLogin(account: account, cookies: cookies)
+        let context = try await jmAuthenticatedContext(account: account)
+        let cookies = context.cookies
+        let baseURL = context.loginInfo.baseURL
         let id = jmComicID(from: item.id)
         let first = try await jmJSON(path: "favorite", method: "POST", body: "aid=\(id.urlEncoded)", cookies: cookies, baseURL: baseURL) as? [String: Any]
         if jmString(first?["type"]) != "add" {
@@ -1516,11 +1592,23 @@ private extension ComicContentService {
 
     @discardableResult
     func jmLogin(account: PlatformAccount, cookies: HTTPCookieStorage) async throws -> String {
-        try await jmLoginInfo(account: account, cookies: cookies).baseURL
+        let context = try await jmAuthenticatedContext(account: account)
+        for cookie in context.cookies.cookies ?? [] {
+            cookies.setCookie(cookie)
+        }
+        return context.loginInfo.baseURL
     }
 
     func jmLoginInfo(account: PlatformAccount, cookies: HTTPCookieStorage) async throws -> JmLoginInfo {
-        let body = "username=\(account.username.urlEncoded)&password=\(account.password.urlEncoded)"
+        let context = try await jmAuthenticatedContext(account: account)
+        for cookie in context.cookies.cookies ?? [] {
+            cookies.setCookie(cookie)
+        }
+        return context.loginInfo
+    }
+
+    func jmLoginInfo(username: String, password: String, cookies: HTTPCookieStorage) async throws -> JmLoginInfo {
+        let body = "username=\(username.urlEncoded)&password=\(password.urlEncoded)"
         var lastError: Error?
         for baseURL in jmBaseURLs {
             do {
@@ -1536,6 +1624,25 @@ private extension ComicContentService {
             }
         }
         throw lastError ?? ComicContentError.loginRequired("JMComic 登录失败。")
+    }
+
+    func jmStoredLoginInfo(account: PlatformAccount) throws -> JmLoginInfo {
+        let baseURL = account.credential.baseURL?.nilIfEmpty ?? jmBaseURLs.first ?? "https://18comic.vip"
+        return JmLoginInfo(baseURL: baseURL, userID: account.credential.profile?.username)
+    }
+
+    func jmAuthenticatedContext(account: PlatformAccount) async throws -> (cookies: HTTPCookieStorage, loginInfo: JmLoginInfo) {
+        if !account.credential.cookies.isEmpty {
+            return (account.credential.cookieStorage(), try jmStoredLoginInfo(account: account))
+        }
+
+        guard let password = account.credential.password?.nilIfEmpty else {
+            throw ComicContentError.loginRequired("JMComic 登录信息已失效，请重新登录。")
+        }
+
+        let cookies = HTTPCookieStorage()
+        let loginInfo = try await jmLoginInfo(username: account.username, password: password, cookies: cookies)
+        return (cookies, loginInfo)
     }
 
     func loadJmComicDetail(item: ComicListItem) async throws -> ComicDetailInfo {
@@ -2549,6 +2656,31 @@ private extension ComicContentService {
         }
         let responseCookies = HTTPCookie.cookies(withResponseHeaderFields: fields, for: url)
         cookies.setCookies(responseCookies, for: url, mainDocumentURL: url)
+    }
+
+    func storedCookies(from storage: HTTPCookieStorage, baseURLs: [String]) -> [StoredHTTPCookie] {
+        var values = [StoredHTTPCookie]()
+        var seen = Set<String>()
+        for baseURL in baseURLs {
+            guard let url = URL(string: baseURL) else { continue }
+            for cookie in storage.cookies(for: url) ?? [] {
+                let stored = StoredHTTPCookie(cookie: cookie)
+                guard !stored.value.isEmpty, seen.insert(stored.id).inserted else { continue }
+                values.append(stored)
+            }
+        }
+        return values
+    }
+
+    func storedCookies(from cookies: [HTTPCookie]) -> [StoredHTTPCookie] {
+        var values = [StoredHTTPCookie]()
+        var seen = Set<String>()
+        for cookie in cookies {
+            let stored = StoredHTTPCookie(cookie: cookie)
+            guard !stored.value.isEmpty, seen.insert(stored.id).inserted else { continue }
+            values.append(stored)
+        }
+        return values
     }
 
     func defaultCategories(platform: ComicPlatform) -> [ComicCategoryItem] {

@@ -329,48 +329,58 @@ struct PlatformLoginView: View {
 
     var body: some View {
         List {
-            Section("登录信息") {
-                TextField(platform.loginHint, text: $username)
-                    .textContentType(.username)
-                    .disabled(isLoggingIn)
-                SecureField("密码", text: $password)
-                    .textContentType(.password)
-                    .disabled(isLoggingIn)
+            if supportsPasswordLogin {
+                Section {
+                    TextField(platform.loginHint, text: $username)
+                        .textContentType(.username)
+                        .disabled(isLoggingIn)
+                    SecureField("密码", text: $password)
+                        .textContentType(.password)
+                        .disabled(isLoggingIn)
 
-                if let errorMessage {
-                    Text(errorMessage)
-                        .font(.footnote)
-                        .foregroundStyle(.red)
+                    if let errorMessage {
+                        Text(errorMessage)
+                            .font(.footnote)
+                            .foregroundStyle(.red)
+                    }
+                } header: {
+                    Text("登录信息")
+                } footer: {
+                    Text("应用会保存必要的登录信息，用来下次继续使用。")
                 }
             }
 
             if let account = platformAccounts.account(for: platform) {
                 Section("当前状态") {
                     SettingsValueRow(title: "账号", value: account.displayName)
+                    SettingsValueRow(title: "登录状态", value: account.credential.summaryText)
                     SettingsValueRow(title: "登录时间", value: account.loggedInAt.formatted(date: .abbreviated, time: .shortened))
                 }
             }
 
             Section {
-                Button {
-                    Task {
-                        await login()
-                    }
-                } label: {
-                    if isLoggingIn {
-                        HStack {
-                            ProgressView()
-                            Text("正在验证")
+                if supportsPasswordLogin {
+                    Button {
+                        Task {
+                            await login()
                         }
-                    } else {
-                        Label(platformAccounts.isLoggedIn(platform) ? "重新登录" : "登录", systemImage: "arrow.right.circle")
+                    } label: {
+                        if isLoggingIn {
+                            HStack {
+                                ProgressView()
+                                Text("正在验证")
+                            }
+                        } else {
+                            Label(platformAccounts.isLoggedIn(platform) ? "重新登录" : "登录", systemImage: "arrow.right.circle")
+                        }
                     }
+                    .disabled(isLoggingIn)
                 }
-                .disabled(isLoggingIn)
 
-                if let loginWebsite = platform.loginWebsite,
-                   let url = URL(string: loginWebsite) {
-                    Link(destination: url) {
+                if platform.loginWebsite != nil {
+                    NavigationLink {
+                        PlatformWebLoginPage(platform: platform)
+                    } label: {
                         Label("通过网页登录", systemImage: "safari")
                     }
                 }
@@ -391,8 +401,16 @@ struct PlatformLoginView: View {
         .onAppear {
             if let account = platformAccounts.account(for: platform) {
                 username = account.username
-                password = account.password
             }
+        }
+    }
+
+    private var supportsPasswordLogin: Bool {
+        switch platform {
+        case .picacg, .jmComic, .htManga:
+            true
+        case .nhentai, .eHentai, .hitomi:
+            false
         }
     }
 
@@ -404,6 +422,7 @@ struct PlatformLoginView: View {
         do {
             let account = try await service.validateLogin(platform: platform, username: username, password: password)
             platformAccounts.saveValidatedAccount(account)
+            password = ""
             dismiss()
         } catch {
             errorMessage = error.localizedDescription
