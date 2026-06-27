@@ -303,6 +303,15 @@ enum ComicExploreEntry: String, CaseIterable, Identifiable {
     case ranking
     case search
 
+    nonisolated static func availableEntries(for platform: ComicPlatform) -> [ComicExploreEntry] {
+        switch platform {
+        case .nhentai, .eHentai, .htManga:
+            [.latest, .ranking]
+        case .picacg, .jmComic, .hitomi:
+            [.random, .latest, .ranking]
+        }
+    }
+
     var id: String { rawValue }
 
     var title: String {

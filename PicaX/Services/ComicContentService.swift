@@ -70,6 +70,9 @@ struct ComicContentService {
     }
 
     func loadExplore(platform: ComicPlatform, entry: ComicExploreEntry, account: PlatformAccount?, page: Int = 1) async throws -> [ComicListItem] {
+        guard ComicExploreEntry.availableEntries(for: platform).contains(entry) else {
+            throw ComicContentError.unsupported("\(platform.title) 当前没有\(entry.title)入口。")
+        }
         switch platform {
         case .picacg:
             return try await loadPicacgExplore(entry: entry, page: page, account: account)
@@ -1164,10 +1167,8 @@ private extension ComicContentService {
             urlString = pageIndex == 0 ? "\(ehentaiBaseURL)/" : "\(ehentaiBaseURL)/?page=\(pageIndex)"
         case .ranking:
             urlString = pageIndex == 0 ? "\(ehentaiBaseURL)/popular" : "\(ehentaiBaseURL)/popular?page=\(pageIndex)"
-        case .random:
-            throw ComicContentError.unsupported("E-Hentai 参考项目没有随机漫画列表接口。")
-        case .search:
-            throw ComicContentError.unsupported("E-Hentai 搜索接口需要关键词和筛选条件，当前入口页还没有筛选表单。")
+        case .random, .search:
+            throw ComicContentError.unsupported("E-Hentai 当前入口不可用。")
         }
         guard let url = URL(string: urlString) else { throw ComicContentError.invalidURL(urlString) }
         let html = try await requestString(url: url, headers: webHeaders(referer: ehentaiBaseURL))
@@ -1446,10 +1447,8 @@ private extension ComicContentService {
             path = "/albums-favorite_ranking-type-day.html"
         case .latest:
             path = "/albums.html"
-        case .random:
-            throw ComicContentError.unsupported("HT Manga 参考项目没有随机漫画列表接口。")
-        case .search:
-            throw ComicContentError.unsupported("HT Manga 搜索接口需要关键词，当前入口页还没有搜索表单。")
+        case .random, .search:
+            throw ComicContentError.unsupported("HT Manga 当前入口不可用。")
         }
         let urlString = htMangaPagedURL(base + path, page: page)
         guard let url = URL(string: urlString) else { throw ComicContentError.invalidURL(urlString) }

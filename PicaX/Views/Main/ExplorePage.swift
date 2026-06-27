@@ -8,8 +8,6 @@ struct ExplorePage: View {
     @State private var selectedPlatform: ComicPlatform = .picacg
     @State private var didInitializePlatform = false
 
-    private let entries: [ComicExploreEntry] = [.random, .latest, .ranking]
-
     var body: some View {
         List {
             Section {
@@ -61,8 +59,7 @@ struct ExplorePage: View {
     }
 
     private var availableEntries: [ComicExploreEntry] {
-        guard selectedPlatform == .nhentai else { return entries }
-        return entries.filter { $0 != .random }
+        ComicExploreEntry.availableEntries(for: selectedPlatform)
     }
 
     private var initialPlatform: ComicPlatform {
