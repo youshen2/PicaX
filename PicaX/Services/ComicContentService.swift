@@ -95,9 +95,9 @@ struct ComicContentService {
         case .picacg:
             return try await loadPicacgFavorites(account: account)
         case .nhentai:
-            throw ComicContentError.loginRequired("NHentai 收藏接口需要 Web 登录后的 access_token，当前账号模型还没有保存 cookie/token。")
+            return try await loadNhentaiFavorites(account: account)
         case .eHentai:
-            throw ComicContentError.loginRequired("E-Hentai 收藏接口需要网页登录 cookie，当前账号模型还没有保存 cookie。")
+            return try await loadEhentaiFavorites(account: account)
         case .htManga:
             return try await loadHtMangaFavorites(account: account)
         case .jmComic:
@@ -117,9 +117,9 @@ struct ComicContentService {
 
     func supportsPlatformFavorite(platform: ComicPlatform) -> Bool {
         switch platform {
-        case .picacg, .jmComic, .htManga:
+        case .picacg, .nhentai, .eHentai, .jmComic, .htManga:
             true
-        case .nhentai, .eHentai, .hitomi:
+        case .hitomi:
             false
         }
     }
@@ -162,11 +162,18 @@ struct ComicContentService {
         case .picacg:
             _ = try await picacgToken(account: account)
             return [PlatformFavoriteFolder(id: "default", title: "云端收藏夹", subtitle: "PicACG 默认收藏", platform: .picacg)]
+        case .nhentai:
+            guard account != nil else {
+                throw ComicContentError.loginRequired("NHentai 收藏需要先登录平台账号。")
+            }
+            return [PlatformFavoriteFolder(id: "default", title: "云端收藏夹", subtitle: "NHentai 默认收藏", platform: .nhentai)]
+        case .eHentai:
+            return try await loadEhentaiFavoriteFolders(account: account)
         case .jmComic:
             return try await loadJmComicFavoriteFolders(account: account)
         case .htManga:
             return try await loadHtMangaFavoriteFolders(account: account)
-        case .nhentai, .eHentai, .hitomi:
+        case .hitomi:
             throw ComicContentError.unsupported("\(item.platformTitle) 当前没有可用平台收藏写入接口。")
         }
     }
@@ -175,11 +182,15 @@ struct ComicContentService {
         switch item.platform {
         case .picacg:
             try await addPicacgFavorite(item: item, account: account)
+        case .nhentai:
+            try await addNhentaiFavorite(item: item, account: account)
+        case .eHentai:
+            try await addEhentaiFavorite(item: item, folderID: folder.id, account: account)
         case .jmComic:
             try await addJmComicFavorite(item: item, folderID: folder.id, account: account)
         case .htManga:
             try await addHtMangaFavorite(item: item, folderID: folder.id, account: account)
-        case .nhentai, .eHentai, .hitomi:
+        case .hitomi:
             throw ComicContentError.unsupported("\(item.platformTitle) 当前没有可用平台收藏写入接口。")
         }
     }
@@ -621,6 +632,9 @@ private extension ComicContentService {
         guard let account else {
             throw ComicContentError.loginRequired("PicACG 接口需要先登录平台账号。")
         }
+        if let password = account.credential.password?.trimmingCharacters(in: .whitespacesAndNewlines), !password.isEmpty {
+            return try await picacgLoginToken(email: account.username, password: password)
+        }
         if let token = account.credential.token, !token.isEmpty {
             return token
         }
@@ -939,7 +953,71 @@ private extension ComicContentService {
         return try nhentaiItems(from: json)
     }
 
-    func nhentaiItems(from json: [String: Any]) throws -> [ComicListItem] {
+    func loadNhentaiFavorites(account: PlatformAccount) async throws -> [ComicListItem] {
+        let headers = try nhentaiAuthHeaders(account: account)
+        guard let url = URL(string: "https://nhentai.net/api/v2/favorites?page=1") else {
+            throw ComicContentError.invalidURL("nhentai favorites")
+        }
+        let json: [String: Any]
+        do {
+            json = try await requestJSON(url: url, headers: headers)
+        } catch {
+            guard isUnauthorized(error), let refreshedHeaders = try await refreshedNhentaiAuthHeaders(account: account) else {
+                throw error
+            }
+            json = try await requestJSON(url: url, headers: refreshedHeaders)
+        }
+        return try nhentaiItems(from: json, favoriteDate: Date())
+    }
+
+    func addNhentaiFavorite(item: ComicListItem, account: PlatformAccount?) async throws {
+        guard let account else {
+            throw ComicContentError.loginRequired("NHentai 收藏需要先登录平台账号。")
+        }
+        let headers = try nhentaiAuthHeaders(account: account)
+        guard let url = URL(string: "https://nhentai.net/api/v2/galleries/\(item.id)/favorite") else {
+            throw ComicContentError.invalidURL("nhentai favorite \(item.id)")
+        }
+        do {
+            _ = try await requestData(url: url, method: "POST", headers: headers)
+        } catch {
+            guard isUnauthorized(error), let refreshedHeaders = try await refreshedNhentaiAuthHeaders(account: account) else {
+                throw error
+            }
+            _ = try await requestData(url: url, method: "POST", headers: refreshedHeaders)
+        }
+    }
+
+    func nhentaiAuthHeaders(account: PlatformAccount) throws -> [String: String] {
+        let token = account.credential.token?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ??
+            account.credential.cookies.first { $0.name == "access_token" }?.value.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        guard let token else {
+            throw ComicContentError.loginRequired("NHentai 登录状态无效，请重新登录。")
+        }
+        return webHeaders(referer: "https://nhentai.net/").merging(["Authorization": "User \(token)"]) { _, new in new }
+    }
+
+    func refreshedNhentaiAuthHeaders(account: PlatformAccount) async throws -> [String: String]? {
+        let refreshToken = account.credential.refreshToken?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ??
+            account.credential.cookies.first { $0.name == "refresh_token" }?.value.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        guard let refreshToken else { return nil }
+        guard let url = URL(string: "https://nhentai.net/api/v2/auth/refresh") else {
+            throw ComicContentError.invalidURL("nhentai refresh")
+        }
+        let body = try JSONSerialization.data(withJSONObject: ["refresh_token": refreshToken])
+        let json = try await requestJSON(
+            url: url,
+            method: "POST",
+            headers: webHeaders(referer: "https://nhentai.net/").merging(["Content-Type": "application/json"]) { _, new in new },
+            body: body
+        )
+        guard let token = json["access_token"] as? String, !token.isEmpty else {
+            return nil
+        }
+        return webHeaders(referer: "https://nhentai.net/").merging(["Authorization": "User \(token)"]) { _, new in new }
+    }
+
+    func nhentaiItems(from json: [String: Any], favoriteDate: Date? = nil) throws -> [ComicListItem] {
         guard let result = json["result"] as? [[String: Any]] else {
             throw ComicContentError.invalidResponse("NHentai 响应缺少 result。")
         }
@@ -955,7 +1033,7 @@ private extension ComicContentService {
                 tags: (doc["tag_ids"] as? [Int] ?? []).prefix(6).map { "tag:\($0)" },
                 pageCount: doc.intValue(for: "num_pages"),
                 likesCount: nil,
-                favoriteDate: nil
+                favoriteDate: favoriteDate
             )
         }
     }
@@ -1108,7 +1186,56 @@ private extension ComicContentService {
         return parseEhentaiGalleries(html)
     }
 
-    func parseEhentaiGalleries(_ html: String) -> [ComicListItem] {
+    func loadEhentaiFavorites(account: PlatformAccount) async throws -> [ComicListItem] {
+        let headers = try ehentaiAccountHeaders(account: account, referer: ehentaiBaseURL)
+        guard let url = URL(string: "\(ehentaiBaseURL)/favorites.php") else {
+            throw ComicContentError.invalidURL("ehentai favorites")
+        }
+        let html = try await requestString(url: url, headers: headers)
+        guard !html.contains("You are not currently logged in") else {
+            throw ComicContentError.loginRequired("E-Hentai 登录状态无效，请重新登录。")
+        }
+        return parseEhentaiGalleries(html, favoriteDate: Date())
+    }
+
+    func loadEhentaiFavoriteFolders(account: PlatformAccount?) async throws -> [PlatformFavoriteFolder] {
+        guard let account else {
+            throw ComicContentError.loginRequired("E-Hentai 收藏需要先登录平台账号。")
+        }
+        let headers = try ehentaiAccountHeaders(account: account, referer: ehentaiBaseURL)
+        guard let url = URL(string: "\(ehentaiBaseURL)/favorites.php") else {
+            throw ComicContentError.invalidURL("ehentai favorite folders")
+        }
+        let html = try await requestString(url: url, headers: headers)
+        let names = parseEhentaiFavoriteFolderNames(html)
+        return ([PlatformFavoriteFolder(id: "-1", title: "全部", subtitle: "E-Hentai 收藏夹", platform: .eHentai)] +
+                names.enumerated().map { index, title in
+                    PlatformFavoriteFolder(id: "\(index)", title: title, subtitle: "E-Hentai 收藏夹", platform: .eHentai)
+                })
+    }
+
+    func addEhentaiFavorite(item: ComicListItem, folderID: String, account: PlatformAccount?) async throws {
+        guard let account else {
+            throw ComicContentError.loginRequired("E-Hentai 收藏需要先登录平台账号。")
+        }
+        guard let parts = ehentaiGalleryIDAndToken(from: item.id) else {
+            throw ComicContentError.invalidURL(item.id)
+        }
+        let headers = try ehentaiAccountHeaders(account: account, referer: item.id)
+        let folder = folderID == "-1" ? "0" : folderID
+        guard let url = URL(string: "\(ehentaiBaseURL)/gallerypopups.php?gid=\(parts.gid)&t=\(parts.token)&act=addfav") else {
+            throw ComicContentError.invalidURL("ehentai favorite \(item.id)")
+        }
+        let body = "favcat=\(folder.urlEncoded)&favnote=&apply=Add+to+Favorites&update=1"
+        _ = try await requestData(
+            url: url,
+            method: "POST",
+            headers: headers.merging(["Content-Type": "application/x-www-form-urlencoded"]) { _, new in new },
+            body: Data(body.utf8)
+        )
+    }
+
+    func parseEhentaiGalleries(_ html: String, favoriteDate: Date? = nil) -> [ComicListItem] {
         html.regexMatches(#"<tr class="gtr.*?</tr>"#, options: [.dotMatchesLineSeparators]).compactMap { row in
             guard let link = row.firstRegexCapture(#"href="(https?://[^"]+/g/[^"]+)""#) else { return nil }
             let title = row.firstRegexCapture(#"class="glink"[^>]*>(.*?)</"#)?.htmlDecoded ?? link
@@ -1123,9 +1250,69 @@ private extension ComicContentService {
                 tags: [],
                 pageCount: nil,
                 likesCount: nil,
-                favoriteDate: nil
+                favoriteDate: favoriteDate
             )
         }
+    }
+
+    func parseEhentaiFavoriteFolderNames(_ html: String) -> [String] {
+        let names = html.regexMatches(#"<div class="fp".*?</div>"#, options: [.dotMatchesLineSeparators]).compactMap { row -> String? in
+            let values = row.regexMatches(#"<[^>]+>(.*?)</[^>]+>"#, options: [.dotMatchesLineSeparators])
+                .map(\.strippingHTML)
+                .filter { !$0.isEmpty }
+            guard values.count >= 3 else { return nil }
+            let count = values[0]
+            let name = values[2]
+            return count.isEmpty ? name : "\(name) (\(count))"
+        }
+        if names.count >= 10 {
+            return Array(names.prefix(10))
+        }
+        return names + (names.count..<10).map { "Favorite \($0)" }
+    }
+
+    func ehentaiAccountHeaders(account: PlatformAccount, referer: String) throws -> [String: String] {
+        let names = Set(account.credential.cookies.map(\.name))
+        guard names.contains("ipb_member_id"), names.contains("ipb_pass_hash") else {
+            throw ComicContentError.loginRequired("E-Hentai 登录状态无效，请重新登录。")
+        }
+        let cookieHeader = ehentaiCookieHeader(cookies: account.credential.cookies)
+        guard !cookieHeader.isEmpty else {
+            throw ComicContentError.loginRequired("E-Hentai 登录状态无效，请重新登录。")
+        }
+        return webHeaders(referer: referer).merging(["Cookie": cookieHeader]) { _, new in new }
+    }
+
+    func ehentaiCookieHeader(cookies: [StoredHTTPCookie]) -> String {
+        var values = [String: StoredHTTPCookie]()
+        for cookie in cookies where !cookie.name.isEmpty && !cookie.value.isEmpty {
+            if let current = values[cookie.name] {
+                let currentDomain = current.domain
+                if !cookie.domain.hasPrefix(".") && currentDomain.hasPrefix(".") {
+                    values[cookie.name] = cookie
+                } else if cookie.domain.count > currentDomain.count {
+                    values[cookie.name] = cookie
+                }
+            } else {
+                values[cookie.name] = cookie
+            }
+        }
+        values["nw"] = StoredHTTPCookie(name: "nw", value: UserDefaults.standard.bool(forKey: PlatformFeatureSettingsKey.ehentaiIgnoresContentWarning) ? "1" : "0", domain: ".e-hentai.org")
+        let profile = (UserDefaults.standard.string(forKey: PlatformFeatureSettingsKey.ehentaiProfile) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !profile.isEmpty {
+            values["sp"] = StoredHTTPCookie(name: "sp", value: profile, domain: ".e-hentai.org")
+        }
+        return values.values
+            .sorted { $0.name < $1.name }
+            .map { "\($0.name)=\($0.value)" }
+            .joined(separator: "; ")
+    }
+
+    func ehentaiGalleryIDAndToken(from value: String) -> (gid: String, token: String)? {
+        guard let match = value.firstRegexCapturePair(#"/g/([0-9]+)/([^/?#]+)"#) else {
+            return nil
+        }
+        return (match.0, match.1)
     }
 
     func loadEhentaiDetail(item: ComicListItem) async throws -> ComicDetailInfo {
@@ -2641,6 +2828,13 @@ private extension ComicContentService {
 
     func shouldRetry(statusCode: Int) -> Bool {
         statusCode == 408 || statusCode == 429 || (500..<600).contains(statusCode)
+    }
+
+    func isUnauthorized(_ error: Error) -> Bool {
+        if case ComicContentError.server(let message) = error {
+            return message == "HTTP 401"
+        }
+        return false
     }
 
     func saveCookies(from response: URLResponse, requestURL: URL?, cookies: HTTPCookieStorage?) {

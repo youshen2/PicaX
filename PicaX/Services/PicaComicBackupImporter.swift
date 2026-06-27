@@ -231,7 +231,7 @@ enum PicaComicBackupImporter {
     }
 
     private static func platformAccounts(from entries: [StoredZipEntry], cookieRows: [[String: PicaComicSQLiteValue]]) -> [PlatformAccount] {
-        var accounts: [PlatformAccount] = []
+        var accounts: [ComicPlatform: PlatformAccount] = [:]
         let sourceData = entries
             .filter { $0.path.hasPrefix("comic_source/") && $0.path.hasSuffix(".data") }
             .compactMap { entry -> (String, [String: Any])? in
@@ -247,16 +247,18 @@ enum PicaComicBackupImporter {
             let accountData = json["account"]
             let username = accountUsername(accountData: accountData, json: json, fallback: platform.title)
             let password = (accountData as? [Any])?.element(at: 1) as? String
-            let token = json["token"] as? String
-            let cookies = cookiesForPlatform(platform, rows: cookieRows)
-            guard !(token?.isEmpty ?? true) || !(password?.isEmpty ?? true) || !cookies.isEmpty || accountData != nil else {
+            let cookies = normalizedCookiesForPlatform(platform, cookies: cookiesForPlatform(platform, rows: cookieRows))
+            let token = platformToken(platform: platform, json: json, cookies: cookies)
+            let importedToken = platform == .picacg && password?.nonEmptyValue != nil ? nil : token
+            let refreshToken = platformRefreshToken(platform: platform, cookies: cookies)
+            guard !(token?.isEmpty ?? true) || !(password?.isEmpty ?? true) || !cookies.isEmpty || !(refreshToken?.isEmpty ?? true) else {
                 continue
             }
             let profile = accountProfile(platform: platform, json: json, username: username)
             let credential = PlatformCredential(
-                token: token?.nonEmptyValue,
-                refreshToken: nil,
-                tokenType: nil,
+                token: importedToken?.nonEmptyValue,
+                refreshToken: refreshToken?.nonEmptyValue,
+                tokenType: platformTokenType(platform: platform, token: importedToken),
                 password: password?.nonEmptyValue,
                 cookies: cookies,
                 userAgent: nil,
@@ -264,11 +266,32 @@ enum PicaComicBackupImporter {
                 source: cookies.isEmpty ? .api : .web,
                 profile: profile
             )
-            accounts.append(PlatformAccount(platform: platform, username: username, credential: credential))
+            accounts[platform] = PlatformAccount(platform: platform, username: username, credential: credential)
+        }
+
+        for platform in ComicPlatform.allCases where accounts[platform] == nil {
+            let cookies = normalizedCookiesForPlatform(platform, cookies: cookiesForPlatform(platform, rows: cookieRows))
+            let token = platformToken(platform: platform, json: [:], cookies: cookies)
+            let refreshToken = platformRefreshToken(platform: platform, cookies: cookies)
+            guard !cookies.isEmpty || !(token?.isEmpty ?? true) || !(refreshToken?.isEmpty ?? true) else {
+                continue
+            }
+            let credential = PlatformCredential(
+                token: token?.nonEmptyValue,
+                refreshToken: refreshToken?.nonEmptyValue,
+                tokenType: platformTokenType(platform: platform, token: token),
+                password: nil,
+                cookies: cookies,
+                userAgent: nil,
+                baseURL: PlatformFeatureSettings.defaultFrontendBaseURL(for: platform),
+                source: .web,
+                profile: PlatformAccountProfile(email: nil, username: nil, nickname: platform.title)
+            )
+            accounts[platform] = PlatformAccount(platform: platform, username: platform.title, credential: credential)
         }
 
         return ComicPlatform.allCases.compactMap { platform in
-            accounts.first { $0.platform == platform }
+            accounts[platform]
         }
     }
 
@@ -682,6 +705,49 @@ enum PicaComicBackupImporter {
         return PlatformAccountProfile(email: nil, username: username, nickname: platform.title)
     }
 
+    private static func platformToken(platform: ComicPlatform, json: [String: Any], cookies: [StoredHTTPCookie]) -> String? {
+        switch platform {
+        case .picacg:
+            return firstString(json, keys: ["token", "authorization", "access_token"]) ?? cookieValue(named: "token", in: cookies) ?? cookieValue(named: "access_token", in: cookies)
+        case .nhentai:
+            return cookieValue(named: "access_token", in: cookies)
+        case .jmComic, .eHentai, .hitomi, .htManga:
+            return nil
+        }
+    }
+
+    private static func platformRefreshToken(platform: ComicPlatform, cookies: [StoredHTTPCookie]) -> String? {
+        switch platform {
+        case .nhentai:
+            return cookieValue(named: "refresh_token", in: cookies)
+        case .picacg, .jmComic, .eHentai, .hitomi, .htManga:
+            return nil
+        }
+    }
+
+    private static func platformTokenType(platform: ComicPlatform, token: String?) -> String? {
+        guard token?.nonEmptyValue != nil else { return nil }
+        switch platform {
+        case .nhentai:
+            return "User"
+        case .picacg, .jmComic, .eHentai, .hitomi, .htManga:
+            return nil
+        }
+    }
+
+    private static func firstString(_ json: [String: Any], keys: [String]) -> String? {
+        for key in keys {
+            if let value = json[key] as? String, !value.isEmpty {
+                return value
+            }
+        }
+        return nil
+    }
+
+    private static func cookieValue(named name: String, in cookies: [StoredHTTPCookie]) -> String? {
+        cookies.first { $0.name == name }?.value.nonEmptyValue
+    }
+
     private static func cookiesForPlatform(_ platform: ComicPlatform, rows: [[String: PicaComicSQLiteValue]]) -> [StoredHTTPCookie] {
         let hosts: [String] = switch platform {
         case .nhentai:
@@ -692,26 +758,72 @@ enum PicaComicBackupImporter {
             ["wnacg.com", ".wnacg.com", "www.wnacg.com", ".www.wnacg.com"]
         case .hitomi:
             ["hitomi.la", ".hitomi.la"]
-        case .picacg, .jmComic:
+        case .picacg:
+            ["picacomic.com", ".picacomic.com", "picaapi.picacomic.com", ".picaapi.picacomic.com"]
+        case .jmComic:
             []
         }
         guard !hosts.isEmpty else { return [] }
         return rows.compactMap { row in
             guard let name = row["name"]?.stringValue,
                   let value = row["value"]?.stringValue,
-                  let domain = row["domain"]?.stringValue,
-                  hosts.contains(domain) else {
+                  let domain = row["domain"]?.stringValue else {
                 return nil
             }
-            return StoredHTTPCookie(
-                name: name,
-                value: value,
-                domain: domain,
-                path: row["path"]?.stringValue ?? "/",
-                expiresDate: date(milliseconds: row["expires"]?.intValue),
-                isSecure: row["secure"]?.intValue == 1
-            )
+            if platform == .eHentai,
+               ["ipb_member_id", "ipb_pass_hash", "igneous", "star"].contains(name) {
+                return storedCookie(row: row, name: name, value: value, domain: domain)
+            }
+            guard hosts.contains(where: { cookieDomain(domain, matchesHost: $0) }) else {
+                return nil
+            }
+            return storedCookie(row: row, name: name, value: value, domain: domain)
         }
+    }
+
+    private static func storedCookie(row: [String: PicaComicSQLiteValue], name: String, value: String, domain: String) -> StoredHTTPCookie {
+        StoredHTTPCookie(
+            name: name,
+            value: value,
+            domain: domain,
+            path: row["path"]?.stringValue ?? "/",
+            expiresDate: cookieExpiresDate(row["expires"]?.intValue),
+            isSecure: row["secure"]?.intValue == 1
+        )
+    }
+
+    private static func cookieExpiresDate(_ milliseconds: Int?) -> Date? {
+        guard let milliseconds, milliseconds > 0 else { return nil }
+        return date(milliseconds: milliseconds)
+    }
+
+    private static func normalizedCookiesForPlatform(_ platform: ComicPlatform, cookies: [StoredHTTPCookie]) -> [StoredHTTPCookie] {
+        guard platform == .eHentai else { return cookies }
+        let ehentaiDomains = [".e-hentai.org", ".exhentai.org"]
+        var result = cookies
+        for cookie in cookies where ["ipb_member_id", "ipb_pass_hash", "igneous", "star"].contains(cookie.name) {
+            for domain in ehentaiDomains {
+                var copy = cookie
+                copy.domain = domain
+                result.append(copy)
+            }
+        }
+        return Dictionary(grouping: result, by: \.id)
+            .compactMap { $0.value.first }
+            .sorted { $0.id < $1.id }
+    }
+
+    private static func cookieDomain(_ domain: String, matchesHost host: String) -> Bool {
+        let normalizedDomain = domain
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .trimmingPrefix(".")
+        let normalizedHost = host
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .trimmingPrefix(".")
+        guard !normalizedDomain.isEmpty, !normalizedHost.isEmpty else { return false }
+        return normalizedDomain == normalizedHost || normalizedDomain.hasSuffix(".\(normalizedHost)") || normalizedHost.hasSuffix(".\(normalizedDomain)")
     }
 
     private static func stringSetting(_ settings: [Any], at index: Int) -> String? {
@@ -1037,5 +1149,13 @@ private extension String {
 
     func removingPrefix(_ prefix: String) -> String {
         hasPrefix(prefix) ? String(dropFirst(prefix.count)) : self
+    }
+
+    func trimmingPrefix(_ prefix: String) -> String {
+        var value = self
+        while value.hasPrefix(prefix) {
+            value = String(value.dropFirst(prefix.count))
+        }
+        return value
     }
 }

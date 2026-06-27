@@ -28,7 +28,7 @@ struct FavoritesPage: View {
                         .frame(maxWidth: .infinity)
                         .listRowBackground(Color.clear)
                 } else {
-                    ForEach(platformAccounts.loggedInAccounts) { account in
+                    ForEach(platformAccounts.loggedInAccounts.filter { service.supportsPlatformFavorite(platform: $0.platform) }) { account in
                         NavigationLink {
                             FavoritesCollectionPage(source: .platform(account), service: service)
                         } label: {
