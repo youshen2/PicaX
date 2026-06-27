@@ -639,7 +639,7 @@ private struct BackupSettingsView: View {
     @EnvironmentObject private var blockingKeywords: BlockingKeywordService
     @EnvironmentObject private var searchHistory: SearchHistoryService
 
-    @State private var includesDownloadsInBackup = false
+    @State private var selectedBackupContent = BackupContentKind.defaultSelection
     @State private var isPreparingExport = false
     @State private var isImporting = false
     @State private var exportDocument = PicaXBackupDocument()
@@ -652,8 +652,23 @@ private struct BackupSettingsView: View {
     var body: some View {
         List {
             Section {
-                Toggle("导出已下载漫画", isOn: $includesDownloadsInBackup)
+                ForEach(BackupContentKind.allCases) { content in
+                    Toggle(isOn: backupContentBinding(for: content)) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(content.title)
+                            Text(content.summary)
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            } header: {
+                Text("导出内容")
+            } footer: {
+                Text("选择要放进备份的内容。未选择的内容不会导出，也不会在覆盖导入时被清空。")
+            }
 
+            Section {
                 Button {
                     Task {
                         await prepareExport()
@@ -668,9 +683,9 @@ private struct BackupSettingsView: View {
                         Label("导出备份", systemImage: "square.and.arrow.up")
                     }
                 }
-                .disabled(isPreparingExport || isImporting)
+                .disabled(isPreparingExport || isImporting || selectedBackupContent.isEmpty)
             } footer: {
-                Text("备份会包含账号、本地设置、收藏、阅读历史、搜索历史和屏蔽词。开启后会一并导出已下载漫画文件。")
+                Text(selectedBackupContent.isEmpty ? "至少选择一项内容后才能导出。" : "备份文件会保存为 .picax。")
             }
 
             Section {
@@ -697,7 +712,7 @@ private struct BackupSettingsView: View {
         .fileExporter(
             isPresented: $showsExporter,
             document: exportDocument,
-            contentType: .json,
+            contentType: .picaxBackup,
             defaultFilename: exportFileName
         ) { result in
             switch result {
@@ -707,23 +722,27 @@ private struct BackupSettingsView: View {
                 operationResult = BackupOperationResult(title: "导出失败", message: error.localizedDescription)
             }
         }
-        .fileImporter(isPresented: $showsImporter, allowedContentTypes: [.json], allowsMultipleSelection: false) { result in
+        .fileImporter(isPresented: $showsImporter, allowedContentTypes: [.picaxBackup], allowsMultipleSelection: false) { result in
             handleImporterResult(result)
         }
-        .confirmationDialog("导入备份", isPresented: pendingImportBinding, titleVisibility: .visible) {
-            Button("完全覆盖", role: .destructive) {
-                Task {
-                    await importPendingBackup(mode: .overwrite)
+        .sheet(item: $pendingImport) { preview in
+            BackupImportPreviewSheet(
+                preview: preview,
+                isImporting: isImporting,
+                onCancel: {
+                    pendingImport = nil
+                },
+                onOverwrite: {
+                    Task {
+                        await importBackup(preview, mode: .overwrite)
+                    }
+                },
+                onMerge: {
+                    Task {
+                        await importBackup(preview, mode: .merge)
+                    }
                 }
-            }
-            Button("合并本地") {
-                Task {
-                    await importPendingBackup(mode: .merge)
-                }
-            }
-            Button("取消", role: .cancel) {}
-        } message: {
-            Text(pendingImport.map { "\($0.title)\n\($0.subtitle)" } ?? "")
+            )
         }
         .alert(item: $operationResult) { result in
             Alert(
@@ -734,12 +753,14 @@ private struct BackupSettingsView: View {
         }
     }
 
-    private var pendingImportBinding: Binding<Bool> {
+    private func backupContentBinding(for content: BackupContentKind) -> Binding<Bool> {
         Binding {
-            pendingImport != nil
-        } set: { isPresented in
-            if !isPresented {
-                pendingImport = nil
+            selectedBackupContent.contains(content)
+        } set: { isSelected in
+            if isSelected {
+                selectedBackupContent.insert(content)
+            } else {
+                selectedBackupContent.remove(content)
             }
         }
     }
@@ -751,8 +772,8 @@ private struct BackupSettingsView: View {
         defer { isPreparingExport = false }
 
         do {
-            exportDocument = try await BackupService.makeDocument(includesDownloads: includesDownloadsInBackup)
-            exportFileName = "PicaX-Backup-\(Self.fileNameFormatter.string(from: Date()))"
+            exportDocument = try await BackupService.makeDocument(includedContent: selectedBackupContent)
+            exportFileName = "PicaX-Backup-\(Self.fileNameFormatter.string(from: Date())).picax"
             showsExporter = true
         } catch {
             operationResult = BackupOperationResult(title: "导出失败", message: error.localizedDescription)
@@ -776,8 +797,8 @@ private struct BackupSettingsView: View {
     }
 
     @MainActor
-    private func importPendingBackup(mode: BackupImportMode) async {
-        guard let pendingImport, !isImporting else { return }
+    private func importBackup(_ preview: BackupImportPreview, mode: BackupImportMode) async {
+        guard !isImporting else { return }
         isImporting = true
         defer {
             isImporting = false
@@ -785,7 +806,7 @@ private struct BackupSettingsView: View {
         }
 
         do {
-            try await BackupService.importBackup(pendingImport.backup, mode: mode)
+            try await BackupService.importBackup(preview.backup, mode: mode)
             reloadServicesAfterImport()
             operationResult = BackupOperationResult(title: "导入完成", message: mode == .overwrite ? "备份已覆盖本地数据。" : "备份已与本地数据合并。")
         } catch {
@@ -807,6 +828,91 @@ private struct BackupSettingsView: View {
     private static let fileNameFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyyMMdd-HHmmss"
+        return formatter
+    }()
+}
+
+private struct BackupImportPreviewSheet: View {
+    let preview: BackupImportPreview
+    let isImporting: Bool
+    let onCancel: () -> Void
+    let onOverwrite: () -> Void
+    let onMerge: () -> Void
+
+    private var includedContent: [BackupContentKind] {
+        BackupContentKind.allCases.filter { preview.backup.contentSelection.contains($0) }
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    LabeledContent("创建时间", value: Self.dateFormatter.string(from: preview.backup.createdAt))
+                    LabeledContent("本地数据", value: "\(preview.backup.defaults.count) 项")
+                    LabeledContent("漫画文件", value: "\(preview.backup.downloadFiles.count) 个")
+                }
+
+                Section {
+                    ForEach(includedContent) { content in
+                        Label {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(content.title)
+                                Text(content.summary)
+                                    .font(.footnote)
+                                    .foregroundStyle(.secondary)
+                            }
+                        } icon: {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                        }
+                    }
+                } header: {
+                    Text("包含内容")
+                }
+
+                Section {
+                    Button {
+                        onMerge()
+                    } label: {
+                        if isImporting {
+                            HStack {
+                                ProgressView()
+                                Text("正在导入")
+                            }
+                        } else {
+                            Label("合并导入", systemImage: "plus.circle")
+                        }
+                    }
+                    .disabled(isImporting)
+
+                    Button(role: .destructive) {
+                        onOverwrite()
+                    } label: {
+                        Label("覆盖本地", systemImage: "arrow.triangle.2.circlepath")
+                    }
+                    .disabled(isImporting)
+                } footer: {
+                    Text("合并会保留本地已有内容；覆盖只会替换此备份包含的内容。")
+                }
+            }
+            .navigationTitle("导入备份")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") {
+                        onCancel()
+                    }
+                    .disabled(isImporting)
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    private static let dateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
         return formatter
     }()
 }

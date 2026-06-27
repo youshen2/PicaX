@@ -2,14 +2,18 @@ import Foundation
 import SwiftUI
 import UniformTypeIdentifiers
 
+extension UTType {
+    static let picaxBackup = UTType(filenameExtension: "picax") ?? UTType(exportedAs: "moye.picax.backup", conformingTo: .zip)
+}
+
 enum BackupImportMode {
     case overwrite
     case merge
 }
 
 struct PicaXBackupDocument: FileDocument {
-    static var readableContentTypes: [UTType] { [.json] }
-    static var writableContentTypes: [UTType] { [.json] }
+    static var readableContentTypes: [UTType] { [.picaxBackup] }
+    static var writableContentTypes: [UTType] { [.picaxBackup] }
 
     var data: Data
 
@@ -32,7 +36,7 @@ struct BackupImportPreview: Identifiable {
     let data: Data
 
     var title: String {
-        backup.includesDownloads ? "包含已下载漫画" : "不包含已下载漫画"
+        "PicaX 备份"
     }
 
     var subtitle: String {
@@ -49,9 +53,67 @@ struct BackupOperationResult: Identifiable {
 struct PicaXBackup: Codable {
     var formatVersion: Int
     var createdAt: Date
-    var includesDownloads: Bool
+    var includedContent: [BackupContentKind]
     var defaults: [String: BackupDefaultValue]
     var downloadFiles: [BackupFile]
+
+    var contentSelection: Set<BackupContentKind> {
+        Set(includedContent)
+    }
+}
+
+enum BackupContentKind: String, Codable, CaseIterable, Identifiable, Hashable {
+    case accounts
+    case settings
+    case favorites
+    case readingHistory
+    case searchHistory
+    case blockingKeywords
+    case downloads
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .accounts:
+            "账号和登录状态"
+        case .settings:
+            "应用设置"
+        case .favorites:
+            "本地收藏"
+        case .readingHistory:
+            "阅读历史"
+        case .searchHistory:
+            "搜索历史"
+        case .blockingKeywords:
+            "屏蔽词"
+        case .downloads:
+            "已下载漫画"
+        }
+    }
+
+    var summary: String {
+        switch self {
+        case .accounts:
+            "已登录账号和平台账号"
+        case .settings:
+            "外观、首页、搜索、来源等设置"
+        case .favorites:
+            "本地收藏夹内容"
+        case .readingHistory:
+            "阅读记录和进度"
+        case .searchHistory:
+            "搜索记录"
+        case .blockingKeywords:
+            "通用和平台屏蔽词"
+        case .downloads:
+            "下载记录和本地文件"
+        }
+    }
+
+    static var defaultSelection: Set<BackupContentKind> {
+        Set(allCases.filter { $0 != .downloads })
+    }
 }
 
 struct BackupFile: Codable {
@@ -153,20 +215,24 @@ enum BackupService {
         return decoder
     }()
 
-    static func makeDocument(includesDownloads: Bool, defaults: UserDefaults = .standard) async throws -> PicaXBackupDocument {
+    static func makeDocument(includedContent: Set<BackupContentKind>, defaults: UserDefaults = .standard) async throws -> PicaXBackupDocument {
+        let orderedContent = BackupContentKind.allCases.filter { includedContent.contains($0) }
+        let includesDownloads = includedContent.contains(.downloads)
         let backup = PicaXBackup(
             formatVersion: formatVersion,
             createdAt: Date(),
-            includesDownloads: includesDownloads,
-            defaults: exportDefaults(includesDownloads: includesDownloads, defaults: defaults),
+            includedContent: orderedContent,
+            defaults: exportDefaults(includedContent: includedContent, defaults: defaults),
             downloadFiles: includesDownloads ? try await exportDownloadFiles() : []
         )
-        let data = try encoder.encode(backup)
+        let data = try StoredZipArchive.makeArchive(entries: [
+            StoredZipEntry(path: "backup.json", data: try encoder.encode(backup))
+        ])
         return PicaXBackupDocument(data: data)
     }
 
     static func preview(from data: Data) throws -> BackupImportPreview {
-        let backup = try decoder.decode(PicaXBackup.self, from: data)
+        let backup = try decodeBackup(from: data)
         return BackupImportPreview(backup: backup, data: data)
     }
 
@@ -181,14 +247,21 @@ enum BackupService {
     }
 
     static func importBackup(from data: Data, mode: BackupImportMode, defaults: UserDefaults = .standard) async throws {
-        let backup = try decoder.decode(PicaXBackup.self, from: data)
+        let backup = try decodeBackup(from: data)
         try await importBackup(backup, mode: mode, defaults: defaults)
     }
 
-    private static func exportDefaults(includesDownloads: Bool, defaults: UserDefaults) -> [String: BackupDefaultValue] {
+    private static func decodeBackup(from data: Data) throws -> PicaXBackup {
+        guard let manifest = try StoredZipArchive.extractEntry(named: "backup.json", from: data) else {
+            throw BackupArchiveError.missingManifest
+        }
+        return try decoder.decode(PicaXBackup.self, from: manifest)
+    }
+
+    private static func exportDefaults(includedContent: Set<BackupContentKind>, defaults: UserDefaults) -> [String: BackupDefaultValue] {
         defaults.dictionaryRepresentation().reduce(into: [String: BackupDefaultValue]()) { result, element in
             let key = element.key
-            guard shouldExportKey(key, includesDownloads: includesDownloads),
+            guard shouldExportKey(key, includedContent: includedContent),
                   let value = BackupDefaultValue.from(element.value) else {
                 return
             }
@@ -197,8 +270,9 @@ enum BackupService {
     }
 
     private static func overwrite(with backup: PicaXBackup, defaults: UserDefaults) async throws {
+        let includedContent = backup.contentSelection
         let currentKeys = defaults.dictionaryRepresentation().keys.filter { isManagedKey($0) }
-        for key in currentKeys where backup.defaults[key] == nil && shouldRemoveMissingKey(key, backupIncludesDownloads: backup.includesDownloads) {
+        for key in currentKeys where backup.defaults[key] == nil && shouldRemoveMissingKey(key, includedContent: includedContent) {
             defaults.removeObject(forKey: key)
         }
 
@@ -207,7 +281,7 @@ enum BackupService {
             defaults.set(defaultsValue, forKey: key)
         }
 
-        if backup.includesDownloads {
+        if includedContent.contains(.downloads) {
             try await replaceDownloadFiles(with: backup.downloadFiles)
         }
     }
@@ -219,27 +293,50 @@ enum BackupService {
             }
         }
 
-        if backup.includesDownloads {
+        if backup.contentSelection.contains(.downloads) {
             try await mergeDownloadFiles(backup.downloadFiles)
         }
     }
 
-    private static func shouldExportKey(_ key: String, includesDownloads: Bool) -> Bool {
-        guard isManagedKey(key) else { return false }
+    private static func shouldExportKey(_ key: String, includedContent: Set<BackupContentKind>) -> Bool {
         if key == DownloadSettingsKey.tasks { return false }
-        if !includesDownloads, key == DownloadSettingsKey.records { return false }
-        return true
+        guard let contentKind = contentKind(for: key) else { return false }
+        return includedContent.contains(contentKind)
     }
 
     private static func isManagedKey(_ key: String) -> Bool {
         key.hasPrefix("picax.") || key.hasPrefix("settings.")
     }
 
-    private static func shouldRemoveMissingKey(_ key: String, backupIncludesDownloads: Bool) -> Bool {
-        if !backupIncludesDownloads, key == DownloadSettingsKey.records || key == DownloadSettingsKey.tasks {
-            return false
+    private static func shouldRemoveMissingKey(_ key: String, includedContent: Set<BackupContentKind>) -> Bool {
+        guard key != DownloadSettingsKey.tasks,
+              let contentKind = contentKind(for: key) else { return false }
+        return includedContent.contains(contentKind)
+    }
+
+    private static func contentKind(for key: String) -> BackupContentKind? {
+        if key == "picax.accounts" || key == "picax.session" || key == "picax.platformAccounts" {
+            return .accounts
         }
-        return true
+        if key == DownloadSettingsKey.records {
+            return .downloads
+        }
+        if key == ReadingHistoryService.Key.records {
+            return .readingHistory
+        }
+        if key == SearchHistorySettingsKey.records {
+            return .searchHistory
+        }
+        if key == BlockingKeywordSettingsKey.common || key == BlockingKeywordSettingsKey.jmComic {
+            return .blockingKeywords
+        }
+        if key.hasPrefix("picax.localFavorites.") {
+            return .favorites
+        }
+        if key.hasPrefix("settings.") || key.hasPrefix("picax.") {
+            return .settings
+        }
+        return nil
     }
 
     private static func mergedDefaultValue(key: String, importedValue: BackupDefaultValue, defaults: UserDefaults) -> Any? {
@@ -451,5 +548,209 @@ private struct BackupStoredLocalFavorite: Codable {
 
     var mergeID: String {
         "\(platform.id)-\(id)"
+    }
+}
+
+private struct StoredZipEntry {
+    var path: String
+    var data: Data
+}
+
+private enum StoredZipArchive {
+    static func makeArchive(entries: [StoredZipEntry]) throws -> Data {
+        var archive = Data()
+        var centralDirectory = Data()
+        var centralRecords: [(entry: StoredZipEntry, crc32: UInt32, offset: UInt32)] = []
+
+        for entry in entries {
+            let fileName = try fileNameData(for: entry.path)
+            let fileSize = try uint32Size(entry.data.count)
+            let offset = try uint32Size(archive.count)
+            let crc32 = CRC32.checksum(entry.data)
+
+            archive.appendUInt32LE(0x04034b50)
+            archive.appendUInt16LE(20)
+            archive.appendUInt16LE(0)
+            archive.appendUInt16LE(0)
+            archive.appendUInt16LE(0)
+            archive.appendUInt16LE(0)
+            archive.appendUInt32LE(crc32)
+            archive.appendUInt32LE(fileSize)
+            archive.appendUInt32LE(fileSize)
+            archive.appendUInt16LE(UInt16(fileName.count))
+            archive.appendUInt16LE(0)
+            archive.append(fileName)
+            archive.append(entry.data)
+
+            centralRecords.append((entry, crc32, offset))
+        }
+
+        let centralDirectoryOffset = try uint32Size(archive.count)
+
+        for record in centralRecords {
+            let fileName = try fileNameData(for: record.entry.path)
+            let fileSize = try uint32Size(record.entry.data.count)
+
+            centralDirectory.appendUInt32LE(0x02014b50)
+            centralDirectory.appendUInt16LE(20)
+            centralDirectory.appendUInt16LE(20)
+            centralDirectory.appendUInt16LE(0)
+            centralDirectory.appendUInt16LE(0)
+            centralDirectory.appendUInt16LE(0)
+            centralDirectory.appendUInt16LE(0)
+            centralDirectory.appendUInt32LE(record.crc32)
+            centralDirectory.appendUInt32LE(fileSize)
+            centralDirectory.appendUInt32LE(fileSize)
+            centralDirectory.appendUInt16LE(UInt16(fileName.count))
+            centralDirectory.appendUInt16LE(0)
+            centralDirectory.appendUInt16LE(0)
+            centralDirectory.appendUInt16LE(0)
+            centralDirectory.appendUInt16LE(0)
+            centralDirectory.appendUInt32LE(0)
+            centralDirectory.appendUInt32LE(record.offset)
+            centralDirectory.append(fileName)
+        }
+
+        archive.append(centralDirectory)
+        let centralDirectorySize = try uint32Size(centralDirectory.count)
+        let entryCount = UInt16(centralRecords.count)
+
+        archive.appendUInt32LE(0x06054b50)
+        archive.appendUInt16LE(0)
+        archive.appendUInt16LE(0)
+        archive.appendUInt16LE(entryCount)
+        archive.appendUInt16LE(entryCount)
+        archive.appendUInt32LE(centralDirectorySize)
+        archive.appendUInt32LE(centralDirectoryOffset)
+        archive.appendUInt16LE(0)
+
+        return archive
+    }
+
+    static func extractEntry(named path: String, from archive: Data) throws -> Data? {
+        var offset = 0
+        while offset + 30 <= archive.count {
+            guard let signature = archive.uint32LE(at: offset) else { return nil }
+            if signature != 0x04034b50 {
+                return nil
+            }
+            guard let compression = archive.uint16LE(at: offset + 8),
+                  let compressedSize = archive.uint32LE(at: offset + 18),
+                  let fileNameLength = archive.uint16LE(at: offset + 26),
+                  let extraLength = archive.uint16LE(at: offset + 28) else {
+                return nil
+            }
+            guard compression == 0 else {
+                throw BackupArchiveError.unsupportedCompression
+            }
+
+            let nameStart = offset + 30
+            let nameEnd = nameStart + Int(fileNameLength)
+            let dataStart = nameEnd + Int(extraLength)
+            let dataEnd = dataStart + Int(compressedSize)
+            guard nameEnd <= archive.count, dataEnd <= archive.count else {
+                return nil
+            }
+
+            let fileNameData = archive.subdata(in: nameStart..<nameEnd)
+            let fileName = String(data: fileNameData, encoding: .utf8)
+            if fileName == path {
+                return archive.subdata(in: dataStart..<dataEnd)
+            }
+            offset = dataEnd
+        }
+        return nil
+    }
+
+    private static func fileNameData(for path: String) throws -> Data {
+        guard !path.isEmpty,
+              !path.hasPrefix("/"),
+              !path.split(separator: "/").contains(".."),
+              let data = path.data(using: .utf8),
+              data.count <= Int(UInt16.max) else {
+            throw BackupArchiveError.invalidPath
+        }
+        return data
+    }
+
+    private static func uint32Size(_ value: Int) throws -> UInt32 {
+        guard value <= Int(UInt32.max) else {
+            throw BackupArchiveError.entryTooLarge
+        }
+        return UInt32(value)
+    }
+}
+
+private enum BackupArchiveError: LocalizedError {
+    case invalidPath
+    case entryTooLarge
+    case missingManifest
+    case unsupportedCompression
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidPath:
+            "备份文件路径无效。"
+        case .entryTooLarge:
+            "备份内容过大，无法导出。"
+        case .missingManifest:
+            "这不是可导入的 PicaX 备份。"
+        case .unsupportedCompression:
+            "暂不支持此备份压缩格式。"
+        }
+    }
+}
+
+private enum CRC32 {
+    private static let table: [UInt32] = (0..<256).map { value in
+        var crc = UInt32(value)
+        for _ in 0..<8 {
+            if crc & 1 == 1 {
+                crc = (crc >> 1) ^ 0xedb88320
+            } else {
+                crc >>= 1
+            }
+        }
+        return crc
+    }
+
+    static func checksum(_ data: Data) -> UInt32 {
+        var crc: UInt32 = 0xffffffff
+        for byte in data {
+            let index = Int((crc ^ UInt32(byte)) & 0xff)
+            crc = (crc >> 8) ^ table[index]
+        }
+        return crc ^ 0xffffffff
+    }
+}
+
+private extension Data {
+    mutating func appendUInt16LE(_ value: UInt16) {
+        append(contentsOf: [
+            UInt8(truncatingIfNeeded: value),
+            UInt8(truncatingIfNeeded: value >> 8)
+        ])
+    }
+
+    mutating func appendUInt32LE(_ value: UInt32) {
+        append(contentsOf: [
+            UInt8(truncatingIfNeeded: value),
+            UInt8(truncatingIfNeeded: value >> 8),
+            UInt8(truncatingIfNeeded: value >> 16),
+            UInt8(truncatingIfNeeded: value >> 24)
+        ])
+    }
+
+    func uint16LE(at offset: Int) -> UInt16? {
+        guard offset >= 0, offset + 2 <= count else { return nil }
+        return UInt16(self[offset]) | (UInt16(self[offset + 1]) << 8)
+    }
+
+    func uint32LE(at offset: Int) -> UInt32? {
+        guard offset >= 0, offset + 4 <= count else { return nil }
+        return UInt32(self[offset])
+            | (UInt32(self[offset + 1]) << 8)
+            | (UInt32(self[offset + 2]) << 16)
+            | (UInt32(self[offset + 3]) << 24)
     }
 }
