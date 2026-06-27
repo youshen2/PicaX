@@ -1,9 +1,11 @@
 import Foundation
 import SwiftUI
 import UniformTypeIdentifiers
+import zlib
 
 extension UTType {
     static let picaxBackup = UTType(filenameExtension: "picax") ?? UTType(exportedAs: "moye.picax.backup", conformingTo: .zip)
+    static let picaComicBackup = UTType(filenameExtension: "picadata") ?? UTType(exportedAs: "moye.picacomic.backup", conformingTo: .zip)
 }
 
 enum BackupImportMode {
@@ -34,9 +36,16 @@ struct BackupImportPreview: Identifiable {
     let id = UUID()
     let backup: PicaXBackup
     let data: Data
+    let sourceTitle: String
+
+    init(backup: PicaXBackup, data: Data, sourceTitle: String = "PicaX 备份") {
+        self.backup = backup
+        self.data = data
+        self.sourceTitle = sourceTitle
+    }
 
     var title: String {
-        "PicaX 备份"
+        sourceTitle
     }
 
     var subtitle: String {
@@ -551,12 +560,12 @@ private struct BackupStoredLocalFavorite: Codable {
     }
 }
 
-private struct StoredZipEntry {
+struct StoredZipEntry {
     var path: String
     var data: Data
 }
 
-private enum StoredZipArchive {
+enum StoredZipArchive {
     static func makeArchive(entries: [StoredZipEntry]) throws -> Data {
         var archive = Data()
         var centralDirectory = Data()
@@ -628,38 +637,17 @@ private enum StoredZipArchive {
     }
 
     static func extractEntry(named path: String, from archive: Data) throws -> Data? {
-        var offset = 0
-        while offset + 30 <= archive.count {
-            guard let signature = archive.uint32LE(at: offset) else { return nil }
-            if signature != 0x04034b50 {
-                return nil
-            }
-            guard let compression = archive.uint16LE(at: offset + 8),
-                  let compressedSize = archive.uint32LE(at: offset + 18),
-                  let fileNameLength = archive.uint16LE(at: offset + 26),
-                  let extraLength = archive.uint16LE(at: offset + 28) else {
-                return nil
-            }
-            guard compression == 0 else {
-                throw BackupArchiveError.unsupportedCompression
-            }
+        try extractEntries(from: archive).first { $0.path == path }?.data
+    }
 
-            let nameStart = offset + 30
-            let nameEnd = nameStart + Int(fileNameLength)
-            let dataStart = nameEnd + Int(extraLength)
-            let dataEnd = dataStart + Int(compressedSize)
-            guard nameEnd <= archive.count, dataEnd <= archive.count else {
-                return nil
+    static func extractEntries(from archive: Data) throws -> [StoredZipEntry] {
+        if let records = centralDirectoryRecords(in: archive) {
+            return try records.compactMap { record in
+                guard !record.path.hasSuffix("/") else { return nil }
+                return StoredZipEntry(path: record.path, data: try entryData(record: record, archive: archive))
             }
-
-            let fileNameData = archive.subdata(in: nameStart..<nameEnd)
-            let fileName = String(data: fileNameData, encoding: .utf8)
-            if fileName == path {
-                return archive.subdata(in: dataStart..<dataEnd)
-            }
-            offset = dataEnd
         }
-        return nil
+        return try localEntries(from: archive)
     }
 
     private static func fileNameData(for path: String) throws -> Data {
@@ -679,11 +667,181 @@ private enum StoredZipArchive {
         }
         return UInt32(value)
     }
+
+    private struct CentralDirectoryRecord {
+        var path: String
+        var compression: UInt16
+        var compressedSize: Int
+        var uncompressedSize: Int
+        var localHeaderOffset: Int
+    }
+
+    private static func centralDirectoryRecords(in archive: Data) -> [CentralDirectoryRecord]? {
+        guard let endOffset = endOfCentralDirectoryOffset(in: archive),
+              let entryCount = archive.uint16LE(at: endOffset + 10),
+              let centralDirectoryOffset = archive.uint32LE(at: endOffset + 16) else {
+            return nil
+        }
+
+        var records: [CentralDirectoryRecord] = []
+        var offset = Int(centralDirectoryOffset)
+        for _ in 0..<Int(entryCount) {
+            guard offset + 46 <= archive.count,
+                  archive.uint32LE(at: offset) == 0x02014b50,
+                  let compression = archive.uint16LE(at: offset + 10),
+                  let compressedSize = archive.uint32LE(at: offset + 20),
+                  let uncompressedSize = archive.uint32LE(at: offset + 24),
+                  let fileNameLength = archive.uint16LE(at: offset + 28),
+                  let extraLength = archive.uint16LE(at: offset + 30),
+                  let commentLength = archive.uint16LE(at: offset + 32),
+                  let localHeaderOffset = archive.uint32LE(at: offset + 42) else {
+                return nil
+            }
+            let nameStart = offset + 46
+            let nameEnd = nameStart + Int(fileNameLength)
+            guard nameEnd <= archive.count,
+                  let path = String(data: archive.subdata(in: nameStart..<nameEnd), encoding: .utf8) else {
+                return nil
+            }
+            records.append(CentralDirectoryRecord(
+                path: path,
+                compression: compression,
+                compressedSize: Int(compressedSize),
+                uncompressedSize: Int(uncompressedSize),
+                localHeaderOffset: Int(localHeaderOffset)
+            ))
+            offset = nameEnd + Int(extraLength) + Int(commentLength)
+        }
+        return records
+    }
+
+    private static func endOfCentralDirectoryOffset(in archive: Data) -> Int? {
+        guard archive.count >= 22 else { return nil }
+        let lowerBound = max(0, archive.count - 22 - Int(UInt16.max))
+        var offset = archive.count - 22
+        while offset >= lowerBound {
+            if archive.uint32LE(at: offset) == 0x06054b50 {
+                return offset
+            }
+            offset -= 1
+        }
+        return nil
+    }
+
+    private static func entryData(record: CentralDirectoryRecord, archive: Data) throws -> Data {
+        let offset = record.localHeaderOffset
+        guard offset + 30 <= archive.count,
+              archive.uint32LE(at: offset) == 0x04034b50,
+              let fileNameLength = archive.uint16LE(at: offset + 26),
+              let extraLength = archive.uint16LE(at: offset + 28) else {
+            throw BackupArchiveError.invalidArchive
+        }
+        let dataStart = offset + 30 + Int(fileNameLength) + Int(extraLength)
+        let dataEnd = dataStart + record.compressedSize
+        guard dataEnd <= archive.count else {
+            throw BackupArchiveError.invalidArchive
+        }
+        let compressedData = archive.subdata(in: dataStart..<dataEnd)
+        return try decodedEntryData(
+            compressedData,
+            compression: record.compression,
+            uncompressedSize: record.uncompressedSize
+        )
+    }
+
+    private static func localEntries(from archive: Data) throws -> [StoredZipEntry] {
+        var entries: [StoredZipEntry] = []
+        var offset = 0
+        while offset + 30 <= archive.count {
+            guard let signature = archive.uint32LE(at: offset) else { return entries }
+            if signature != 0x04034b50 {
+                return entries
+            }
+            guard let compression = archive.uint16LE(at: offset + 8),
+                  let compressedSize = archive.uint32LE(at: offset + 18),
+                  let uncompressedSize = archive.uint32LE(at: offset + 22),
+                  let fileNameLength = archive.uint16LE(at: offset + 26),
+                  let extraLength = archive.uint16LE(at: offset + 28) else {
+                throw BackupArchiveError.invalidArchive
+            }
+
+            let nameStart = offset + 30
+            let nameEnd = nameStart + Int(fileNameLength)
+            let dataStart = nameEnd + Int(extraLength)
+            let dataEnd = dataStart + Int(compressedSize)
+            guard nameEnd <= archive.count, dataEnd <= archive.count else {
+                throw BackupArchiveError.invalidArchive
+            }
+
+            if let fileName = String(data: archive.subdata(in: nameStart..<nameEnd), encoding: .utf8),
+               !fileName.hasSuffix("/") {
+                let compressedData = archive.subdata(in: dataStart..<dataEnd)
+                let data = try decodedEntryData(
+                    compressedData,
+                    compression: compression,
+                    uncompressedSize: Int(uncompressedSize)
+                )
+                entries.append(StoredZipEntry(path: fileName, data: data))
+            }
+            offset = dataEnd
+        }
+        return entries
+    }
+
+    private static func decodedEntryData(_ data: Data, compression: UInt16, uncompressedSize: Int) throws -> Data {
+        switch compression {
+        case 0:
+            return data
+        case 8:
+            return try inflateRawDeflate(data, uncompressedSize: uncompressedSize)
+        default:
+            throw BackupArchiveError.unsupportedCompression
+        }
+    }
+
+    private static func inflateRawDeflate(_ data: Data, uncompressedSize: Int) throws -> Data {
+        guard uncompressedSize >= 0 else { throw BackupArchiveError.invalidArchive }
+        if data.isEmpty {
+            return Data()
+        }
+
+        var stream = z_stream()
+        let version = ZLIB_VERSION
+        let initStatus = inflateInit2_(&stream, -MAX_WBITS, version, Int32(MemoryLayout<z_stream>.size))
+        guard initStatus == Z_OK else {
+            throw BackupArchiveError.unsupportedCompression
+        }
+        defer {
+            inflateEnd(&stream)
+        }
+
+        var output = Data(count: uncompressedSize)
+        let outputCapacity = output.count
+        let status = data.withUnsafeBytes { sourceBuffer in
+            output.withUnsafeMutableBytes { destinationBuffer -> Int32 in
+                guard let source = sourceBuffer.bindMemory(to: Bytef.self).baseAddress,
+                      let destination = destinationBuffer.bindMemory(to: Bytef.self).baseAddress else {
+                    return Z_BUF_ERROR
+                }
+                stream.next_in = UnsafeMutablePointer<Bytef>(mutating: source)
+                stream.avail_in = uInt(data.count)
+                stream.next_out = destination
+                stream.avail_out = uInt(outputCapacity)
+                return inflate(&stream, Z_FINISH)
+            }
+        }
+        guard status == Z_STREAM_END else {
+            throw BackupArchiveError.invalidArchive
+        }
+        output.count = Int(stream.total_out)
+        return output
+    }
 }
 
-private enum BackupArchiveError: LocalizedError {
+enum BackupArchiveError: LocalizedError {
     case invalidPath
     case entryTooLarge
+    case invalidArchive
     case missingManifest
     case unsupportedCompression
 
@@ -693,6 +851,8 @@ private enum BackupArchiveError: LocalizedError {
             "备份文件路径无效。"
         case .entryTooLarge:
             "备份内容过大，无法导出。"
+        case .invalidArchive:
+            "备份文件已损坏。"
         case .missingManifest:
             "这不是可导入的 PicaX 备份。"
         case .unsupportedCompression:

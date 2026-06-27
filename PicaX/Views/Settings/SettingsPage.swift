@@ -646,6 +646,7 @@ private struct BackupSettingsView: View {
     @State private var exportFileName = "PicaX-Backup"
     @State private var showsExporter = false
     @State private var showsImporter = false
+    @State private var showsPicaComicImporter = false
     @State private var pendingImport: BackupImportPreview?
     @State private var operationResult: BackupOperationResult?
 
@@ -690,6 +691,13 @@ private struct BackupSettingsView: View {
 
             Section {
                 Button {
+                    showsPicaComicImporter = true
+                } label: {
+                    Label("从 PicaComic 备份导入", systemImage: "tray.and.arrow.down")
+                }
+                .disabled(isPreparingExport || isImporting)
+
+                Button {
                     showsImporter = true
                 } label: {
                     if isImporting {
@@ -724,6 +732,9 @@ private struct BackupSettingsView: View {
         }
         .fileImporter(isPresented: $showsImporter, allowedContentTypes: [.picaxBackup], allowsMultipleSelection: false) { result in
             handleImporterResult(result)
+        }
+        .fileImporter(isPresented: $showsPicaComicImporter, allowedContentTypes: [.picaComicBackup], allowsMultipleSelection: false) { result in
+            handlePicaComicImporterResult(result)
         }
         .sheet(item: $pendingImport) { preview in
             BackupImportPreviewSheet(
@@ -796,6 +807,22 @@ private struct BackupSettingsView: View {
         }
     }
 
+    private func handlePicaComicImporterResult(_ result: Result<[URL], Error>) {
+        do {
+            guard let url = try result.get().first else { return }
+            let didAccess = url.startAccessingSecurityScopedResource()
+            defer {
+                if didAccess {
+                    url.stopAccessingSecurityScopedResource()
+                }
+            }
+            let data = try Data(contentsOf: url)
+            pendingImport = try PicaComicBackupImporter.preview(from: data)
+        } catch {
+            operationResult = BackupOperationResult(title: "读取 PicaComic 备份失败", message: error.localizedDescription)
+        }
+    }
+
     @MainActor
     private func importBackup(_ preview: BackupImportPreview, mode: BackupImportMode) async {
         guard !isImporting else { return }
@@ -847,6 +874,7 @@ private struct BackupImportPreviewSheet: View {
         NavigationStack {
             List {
                 Section {
+                    LabeledContent("来源", value: preview.title)
                     LabeledContent("创建时间", value: Self.dateFormatter.string(from: preview.backup.createdAt))
                     LabeledContent("本地数据", value: "\(preview.backup.defaults.count) 项")
                     LabeledContent("漫画文件", value: "\(preview.backup.downloadFiles.count) 个")
@@ -895,7 +923,7 @@ private struct BackupImportPreviewSheet: View {
                     Text("合并会保留本地已有内容；覆盖只会替换此备份包含的内容。")
                 }
             }
-            .navigationTitle("导入备份")
+            .navigationTitle(preview.title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
