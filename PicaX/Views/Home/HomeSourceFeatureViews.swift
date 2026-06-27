@@ -348,7 +348,7 @@ private struct JmComicSourceFeatureSection: View {
     @AppStorage(PlatformFeatureSettingsKey.jmCustomAPIBaseURLs) private var customAPIBaseURLs = ""
     @AppStorage(PlatformFeatureSettingsKey.jmImageEndpoint) private var imageEndpoint = JmImageEndpoint.mspProxy3.rawValue
     @AppStorage(PlatformFeatureSettingsKey.jmCustomImageBaseURL) private var customImageBaseURL = JmImageEndpoint.defaultBaseURL
-    @AppStorage(PlatformFeatureSettingsKey.jmAppVersion) private var appVersion = "2.0.11"
+    @AppStorage(PlatformFeatureSettingsKey.jmAppVersion) private var appVersion = "2.0.26"
     @AppStorage(PlatformFeatureSettingsKey.jmFavoriteSort) private var favoriteSort = JmFavoriteSort.latest.rawValue
     @AppStorage(PlatformFeatureSettingsKey.jmAutoCheckIn) private var autoCheckIn = false
 
@@ -406,7 +406,7 @@ private struct JmComicSourceFeatureSection: View {
             }
 
             LabeledContent {
-                TextField("2.0.11", text: $appVersion)
+                TextField("2.0.26", text: $appVersion)
                     .multilineTextAlignment(.trailing)
                     .picaxDisablesTextAutocapitalization()
                     .autocorrectionDisabled()

@@ -1516,7 +1516,7 @@ private extension ComicContentService {
     var jmAppVersion: String {
         let value = UserDefaults.standard.string(forKey: PlatformFeatureSettingsKey.jmAppVersion) ?? ""
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? "2.0.11" : trimmed
+        return trimmed.isEmpty ? "2.0.26" : trimmed
     }
     var jmSecret: String { "185Hcomic3PAPP7R" }
     var jmAuthKey: String { "18comicAPPContent" }
