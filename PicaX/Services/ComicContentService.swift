@@ -1120,9 +1120,9 @@ private extension ComicContentService {
         guard let url = URL(string: "https://nhentai.net/api/v2/galleries/\(item.id)/comments") else {
             throw ComicContentError.invalidURL("nhentai comments \(item.id)")
         }
-        let data = try await requestData(url: url, headers: webHeaders(referer: "https://nhentai.net/"))
-        guard let docs = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
-            throw ComicContentError.invalidResponse("NHentai 评论响应不是数组。")
+        let json = try await requestJSON(url: url, headers: nhentaiAPIHeaders())
+        guard let docs = json["result"] as? [[String: Any]] else {
+            throw ComicContentError.invalidResponse("NHentai 评论加载失败。")
         }
         return docs.map { doc in
             let poster = doc["poster"] as? [String: Any]
@@ -1132,13 +1132,22 @@ private extension ComicContentService {
                 id: "\(doc.intValue(for: "id") ?? Int.random(in: 0...Int.max))",
                 author: poster?["username"] as? String ?? "Unknown",
                 content: doc["body"] as? String ?? "",
-                timeText: doc["post_date"] as? String,
+                timeText: doc["post_date"].map { "\($0)" },
                 avatarURLString: avatarURL,
                 likesCount: nil,
                 replyCount: nil,
                 replies: []
             )
         }
+    }
+
+    func nhentaiAPIHeaders() -> [String: String] {
+        [
+            "Accept": "application/json",
+            "Accept-Language": "zh-CN,zh-TW;q=0.9,zh;q=0.8,en-US;q=0.7,en;q=0.6",
+            "Referer": "https://nhentai.net/",
+            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) GSA/300.0.598994205 Mobile/15E148 Safari/604"
+        ]
     }
 }
 
