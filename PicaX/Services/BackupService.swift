@@ -1,7 +1,10 @@
 import Foundation
+import SQLite3
 import SwiftUI
 import UniformTypeIdentifiers
 import zlib
+
+private let backupSQLiteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
 extension UTType {
     static let picaxBackup = UTType(filenameExtension: "picax") ?? UTType(exportedAs: "moye.picax.backup", conformingTo: .zip)
@@ -69,6 +72,37 @@ struct PicaXBackup: Codable {
     var contentSelection: Set<BackupContentKind> {
         Set(includedContent)
     }
+
+    init(
+        formatVersion: Int,
+        createdAt: Date,
+        includedContent: [BackupContentKind],
+        defaults: [String: BackupDefaultValue],
+        downloadFiles: [BackupFile]
+    ) {
+        self.formatVersion = formatVersion
+        self.createdAt = createdAt
+        self.includedContent = includedContent
+        self.defaults = defaults
+        self.downloadFiles = downloadFiles
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case formatVersion
+        case createdAt
+        case includedContent
+        case defaults
+        case downloadFiles
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        formatVersion = try container.decode(Int.self, forKey: .formatVersion)
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        includedContent = try container.decode([BackupContentKind].self, forKey: .includedContent)
+        defaults = try container.decodeIfPresent([String: BackupDefaultValue].self, forKey: .defaults) ?? [:]
+        downloadFiles = try container.decodeIfPresent([BackupFile].self, forKey: .downloadFiles) ?? []
+    }
 }
 
 enum BackupContentKind: String, Codable, CaseIterable, Identifiable, Hashable {
@@ -132,7 +166,7 @@ enum BackupContentKind: String, Codable, CaseIterable, Identifiable, Hashable {
 
 struct BackupFile: Codable {
     var relativePath: String
-    var data: String
+    var data: String? = nil
 }
 
 struct BackupDefaultValue: Codable {
@@ -216,7 +250,7 @@ struct BackupDefaultValue: Codable {
 }
 
 enum BackupService {
-    private static let formatVersion = 1
+    private static let formatVersion = 2
     private static let encoder: JSONEncoder = {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -233,16 +267,24 @@ enum BackupService {
         let orderedContent = BackupContentKind.allCases.filter { includedContent.contains($0) }
         let includesDownloads = includedContent.contains(.downloads)
         let exportedDefaults = exportDefaults(includedContent: includedContent, defaults: defaults)
+        let exportedDownloadFiles = includesDownloads ? try await exportDownloadFiles() : []
+        let downloadFileRecords = exportedDownloadFiles.map { BackupFile(relativePath: $0.relativePath) }
         let backup = PicaXBackup(
             formatVersion: formatVersion,
             createdAt: Date(),
             includedContent: orderedContent,
-            defaults: exportedDefaults,
-            downloadFiles: includesDownloads ? try await exportDownloadFiles() : []
+            defaults: [:],
+            downloadFiles: []
         )
-        let data = try StoredZipArchive.makeArchive(entries: [
-            StoredZipEntry(path: "backup.json", data: try encoder.encode(backup))
-        ])
+        let backupDatabase = try BackupSQLiteArchive.makeDatabase(defaults: exportedDefaults, downloadFiles: downloadFileRecords)
+        var entries = [
+            StoredZipEntry(path: "backup.json", data: try encoder.encode(backup)),
+            StoredZipEntry(path: BackupSQLiteArchive.fileName, data: backupDatabase)
+        ]
+        entries += exportedDownloadFiles.map { file in
+            StoredZipEntry(path: BackupSQLiteArchive.downloadEntryPath(for: file.relativePath), data: file.data)
+        }
+        let data = try StoredZipArchive.makeArchive(entries: entries)
         return PicaXBackupDocument(data: data)
     }
 
@@ -267,10 +309,27 @@ enum BackupService {
     }
 
     private static func decodeBackup(from data: Data) throws -> PicaXBackup {
-        guard let manifest = try StoredZipArchive.extractEntry(named: "backup.json", from: data) else {
+        let entries = try StoredZipArchive.extractEntries(from: data)
+        let entryMap = entries.reduce(into: [String: Data]()) { result, entry in
+            result[entry.path] = result[entry.path] ?? entry.data
+        }
+        guard let manifest = entryMap["backup.json"] else {
             throw BackupArchiveError.missingManifest
         }
-        return try decoder.decode(PicaXBackup.self, from: manifest)
+        var backup = try decoder.decode(PicaXBackup.self, from: manifest)
+        guard let database = entryMap[BackupSQLiteArchive.fileName] else {
+            throw BackupArchiveError.missingManifest
+        }
+        let content = try BackupSQLiteArchive.readDatabase(database)
+        backup.defaults = content.defaults
+        backup.downloadFiles = content.downloadFiles.map { file in
+            var file = file
+            if let data = entryMap[BackupSQLiteArchive.downloadEntryPath(for: file.relativePath)] {
+                file.data = data.base64EncodedString()
+            }
+            return file
+        }
+        return backup
     }
 
     @MainActor
@@ -675,7 +734,7 @@ enum BackupService {
         })
     }
 
-    private static func exportDownloadFiles() async throws -> [BackupFile] {
+    private static func exportDownloadFiles() async throws -> [ExportedBackupFile] {
         try await Task.detached(priority: .utility) {
             let rootURL = try downloadsRootURL()
             guard FileManager.default.fileExists(atPath: rootURL.path),
@@ -687,13 +746,13 @@ enum BackupService {
                 return []
             }
 
-            var files: [BackupFile] = []
+            var files: [ExportedBackupFile] = []
             while let fileURL = enumerator.nextObject() as? URL {
                 let values = try? fileURL.resourceValues(forKeys: [.isRegularFileKey])
                 guard values?.isRegularFile == true else { continue }
                 let relativePath = fileURL.path.replacingOccurrences(of: rootURL.path + "/", with: "")
                 let data = try Data(contentsOf: fileURL)
-                files.append(BackupFile(relativePath: relativePath, data: data.base64EncodedString()))
+                files.append(ExportedBackupFile(relativePath: relativePath, data: data))
             }
             return files.sorted { $0.relativePath.localizedStandardCompare($1.relativePath) == .orderedAscending }
         }.value
@@ -721,7 +780,8 @@ enum BackupService {
     private nonisolated static func writeDownloadFiles(_ files: [BackupFile], rootURL: URL, overwritesExisting: Bool) throws {
         for file in files {
             guard isSafeRelativePath(file.relativePath),
-                  let data = Data(base64Encoded: file.data) else {
+                  let dataValue = file.data,
+                  let data = Data(base64Encoded: dataValue) else {
                 continue
             }
             let fileURL = rootURL.appendingPathComponent(file.relativePath)
@@ -747,6 +807,11 @@ enum BackupService {
     }
 }
 
+private struct ExportedBackupFile {
+    var relativePath: String
+    var data: Data
+}
+
 private struct BackupStoredLocalFavorite: Codable {
     let id: String
     let platform: ComicPlatform
@@ -763,6 +828,160 @@ private struct BackupStoredLocalFavorite: Codable {
     }
 }
 
+private struct BackupSQLiteContent {
+    var defaults: [String: BackupDefaultValue]
+    var downloadFiles: [BackupFile]
+}
+
+private enum BackupSQLiteArchive {
+    static let fileName = "data.sqlite3"
+
+    static func downloadEntryPath(for relativePath: String) -> String {
+        "downloads/\(relativePath)"
+    }
+
+    static func makeDatabase(defaults: [String: BackupDefaultValue], downloadFiles: [BackupFile]) throws -> Data {
+        let url = temporaryDatabaseURL()
+        try? FileManager.default.removeItem(at: url)
+        defer {
+            removeDatabaseFiles(for: url)
+        }
+
+        var db: OpaquePointer?
+        guard sqlite3_open(url.path, &db) == SQLITE_OK else {
+            throw BackupArchiveError.sqliteFailure
+        }
+        defer {
+            sqlite3_close(db)
+        }
+
+        try execute("""
+        CREATE TABLE defaults (
+            key TEXT PRIMARY KEY NOT NULL,
+            value BLOB NOT NULL
+        )
+        """, db: db)
+        try execute("""
+        CREATE TABLE download_files (
+            relative_path TEXT PRIMARY KEY NOT NULL
+        )
+        """, db: db)
+        try execute("BEGIN IMMEDIATE TRANSACTION", db: db)
+        for (key, value) in defaults.sorted(by: { $0.key < $1.key }) {
+            guard let data = try? JSONEncoder().encode(value) else { continue }
+            try execute(
+                "INSERT OR REPLACE INTO defaults(key, value) VALUES(?, ?)",
+                bindings: [.text(key), .data(data)],
+                db: db
+            )
+        }
+        for file in downloadFiles.sorted(by: { $0.relativePath < $1.relativePath }) {
+            try execute(
+                "INSERT OR REPLACE INTO download_files(relative_path) VALUES(?)",
+                bindings: [.text(file.relativePath)],
+                db: db
+            )
+        }
+        try execute("COMMIT", db: db)
+        sqlite3_close(db)
+        db = nil
+        return try Data(contentsOf: url)
+    }
+
+    static func readDatabase(_ data: Data) throws -> BackupSQLiteContent {
+        let url = temporaryDatabaseURL()
+        try? FileManager.default.removeItem(at: url)
+        defer {
+            removeDatabaseFiles(for: url)
+        }
+        try data.write(to: url, options: .atomic)
+
+        var db: OpaquePointer?
+        guard sqlite3_open_v2(url.path, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else {
+            throw BackupArchiveError.invalidArchive
+        }
+        defer {
+            sqlite3_close(db)
+        }
+
+        var defaults: [String: BackupDefaultValue] = [:]
+        try query("SELECT key, value FROM defaults", db: db) { statement in
+            guard let keyPointer = sqlite3_column_text(statement, 0) else { return }
+            let key = String(cString: keyPointer)
+            let byteCount = Int(sqlite3_column_bytes(statement, 1))
+            guard byteCount > 0,
+                  let bytes = sqlite3_column_blob(statement, 1),
+                  let value = try? JSONDecoder().decode(BackupDefaultValue.self, from: Data(bytes: bytes, count: byteCount)) else {
+                return
+            }
+            defaults[key] = value
+        }
+
+        var downloadFiles: [BackupFile] = []
+        try query("SELECT relative_path FROM download_files ORDER BY relative_path", db: db) { statement in
+            guard let pathPointer = sqlite3_column_text(statement, 0) else { return }
+            downloadFiles.append(BackupFile(relativePath: String(cString: pathPointer)))
+        }
+
+        return BackupSQLiteContent(defaults: defaults, downloadFiles: downloadFiles)
+    }
+
+    private static func execute(_ sql: String, bindings: [SQLiteBinding] = [], db: OpaquePointer?) throws {
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw BackupArchiveError.sqliteFailure
+        }
+        defer {
+            sqlite3_finalize(statement)
+        }
+        bind(bindings, to: statement)
+        guard sqlite3_step(statement) == SQLITE_DONE else {
+            throw BackupArchiveError.sqliteFailure
+        }
+    }
+
+    private static func query(_ sql: String, db: OpaquePointer?, row: (OpaquePointer?) throws -> Void) throws {
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw BackupArchiveError.invalidArchive
+        }
+        defer {
+            sqlite3_finalize(statement)
+        }
+        while sqlite3_step(statement) == SQLITE_ROW {
+            try row(statement)
+        }
+    }
+
+    private static func bind(_ bindings: [SQLiteBinding], to statement: OpaquePointer?) {
+        for (index, binding) in bindings.enumerated() {
+            let position = Int32(index + 1)
+            switch binding {
+            case .text(let value):
+                sqlite3_bind_text(statement, position, value, -1, backupSQLiteTransient)
+            case .double(let value):
+                sqlite3_bind_double(statement, position, value)
+            case .data(let value):
+                _ = value.withUnsafeBytes { buffer in
+                    sqlite3_bind_blob(statement, position, buffer.baseAddress, Int32(value.count), backupSQLiteTransient)
+                }
+            }
+        }
+    }
+
+    private static func temporaryDatabaseURL() -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("PicaXBackup-\(UUID().uuidString)")
+            .appendingPathExtension("sqlite3")
+    }
+
+    private static func removeDatabaseFiles(for url: URL) {
+        try? FileManager.default.removeItem(at: url)
+        try? FileManager.default.removeItem(at: URL(fileURLWithPath: url.path + "-wal"))
+        try? FileManager.default.removeItem(at: URL(fileURLWithPath: url.path + "-shm"))
+    }
+}
+
 struct StoredZipEntry {
     var path: String
     var data: Data
@@ -772,47 +991,54 @@ enum StoredZipArchive {
     static func makeArchive(entries: [StoredZipEntry]) throws -> Data {
         var archive = Data()
         var centralDirectory = Data()
-        var centralRecords: [(entry: StoredZipEntry, crc32: UInt32, offset: UInt32)] = []
+        var centralRecords: [CentralDirectoryWriteRecord] = []
 
         for entry in entries {
             let fileName = try fileNameData(for: entry.path)
-            let fileSize = try uint32Size(entry.data.count)
+            let compressedData = try deflateRawDeflate(entry.data)
+            let compressedSize = try uint32Size(compressedData.count)
+            let uncompressedSize = try uint32Size(entry.data.count)
             let offset = try uint32Size(archive.count)
             let crc32 = CRC32.checksum(entry.data)
 
             archive.appendUInt32LE(0x04034b50)
             archive.appendUInt16LE(20)
             archive.appendUInt16LE(0)
-            archive.appendUInt16LE(0)
+            archive.appendUInt16LE(8)
             archive.appendUInt16LE(0)
             archive.appendUInt16LE(0)
             archive.appendUInt32LE(crc32)
-            archive.appendUInt32LE(fileSize)
-            archive.appendUInt32LE(fileSize)
+            archive.appendUInt32LE(compressedSize)
+            archive.appendUInt32LE(uncompressedSize)
             archive.appendUInt16LE(UInt16(fileName.count))
             archive.appendUInt16LE(0)
             archive.append(fileName)
-            archive.append(entry.data)
+            archive.append(compressedData)
 
-            centralRecords.append((entry, crc32, offset))
+            centralRecords.append(CentralDirectoryWriteRecord(
+                entry: entry,
+                crc32: crc32,
+                compressedSize: compressedSize,
+                uncompressedSize: uncompressedSize,
+                offset: offset
+            ))
         }
 
         let centralDirectoryOffset = try uint32Size(archive.count)
 
         for record in centralRecords {
             let fileName = try fileNameData(for: record.entry.path)
-            let fileSize = try uint32Size(record.entry.data.count)
 
             centralDirectory.appendUInt32LE(0x02014b50)
             centralDirectory.appendUInt16LE(20)
             centralDirectory.appendUInt16LE(20)
             centralDirectory.appendUInt16LE(0)
-            centralDirectory.appendUInt16LE(0)
+            centralDirectory.appendUInt16LE(8)
             centralDirectory.appendUInt16LE(0)
             centralDirectory.appendUInt16LE(0)
             centralDirectory.appendUInt32LE(record.crc32)
-            centralDirectory.appendUInt32LE(fileSize)
-            centralDirectory.appendUInt32LE(fileSize)
+            centralDirectory.appendUInt32LE(record.compressedSize)
+            centralDirectory.appendUInt32LE(record.uncompressedSize)
             centralDirectory.appendUInt16LE(UInt16(fileName.count))
             centralDirectory.appendUInt16LE(0)
             centralDirectory.appendUInt16LE(0)
@@ -877,6 +1103,14 @@ enum StoredZipArchive {
         var compressedSize: Int
         var uncompressedSize: Int
         var localHeaderOffset: Int
+    }
+
+    private struct CentralDirectoryWriteRecord {
+        var entry: StoredZipEntry
+        var crc32: UInt32
+        var compressedSize: UInt32
+        var uncompressedSize: UInt32
+        var offset: UInt32
     }
 
     private static func centralDirectoryRecords(in archive: Data) -> [CentralDirectoryRecord]? {
@@ -1039,6 +1273,53 @@ enum StoredZipArchive {
         output.count = Int(stream.total_out)
         return output
     }
+
+    private static func deflateRawDeflate(_ data: Data) throws -> Data {
+        var stream = z_stream()
+        let version = ZLIB_VERSION
+        let initStatus = deflateInit2_(
+            &stream,
+            Z_DEFAULT_COMPRESSION,
+            Z_DEFLATED,
+            -MAX_WBITS,
+            MAX_MEM_LEVEL,
+            Z_DEFAULT_STRATEGY,
+            version,
+            Int32(MemoryLayout<z_stream>.size)
+        )
+        guard initStatus == Z_OK else {
+            throw BackupArchiveError.unsupportedCompression
+        }
+        defer {
+            deflateEnd(&stream)
+        }
+
+        let outputCapacity = Int(deflateBound(&stream, uLong(data.count)))
+        var output = Data(count: max(outputCapacity, 1))
+        let outputCount = output.count
+        let status = data.withUnsafeBytes { sourceBuffer in
+            output.withUnsafeMutableBytes { destinationBuffer -> Int32 in
+                if data.count > 0 {
+                    guard let source = sourceBuffer.bindMemory(to: Bytef.self).baseAddress else {
+                        return Z_BUF_ERROR
+                    }
+                    stream.next_in = UnsafeMutablePointer<Bytef>(mutating: source)
+                }
+                guard let destination = destinationBuffer.bindMemory(to: Bytef.self).baseAddress else {
+                    return Z_BUF_ERROR
+                }
+                stream.avail_in = uInt(data.count)
+                stream.next_out = destination
+                stream.avail_out = uInt(outputCount)
+                return deflate(&stream, Z_FINISH)
+            }
+        }
+        guard status == Z_STREAM_END else {
+            throw BackupArchiveError.unsupportedCompression
+        }
+        output.count = Int(stream.total_out)
+        return output
+    }
 }
 
 enum BackupArchiveError: LocalizedError {
@@ -1047,6 +1328,7 @@ enum BackupArchiveError: LocalizedError {
     case invalidArchive
     case missingManifest
     case unsupportedCompression
+    case sqliteFailure
 
     var errorDescription: String? {
         switch self {
@@ -1060,6 +1342,8 @@ enum BackupArchiveError: LocalizedError {
             "这不是可导入的 PicaX 备份。"
         case .unsupportedCompression:
             "暂不支持此备份压缩格式。"
+        case .sqliteFailure:
+            "备份数据写入失败。"
         }
     }
 }
