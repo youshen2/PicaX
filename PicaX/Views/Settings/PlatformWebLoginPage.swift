@@ -10,25 +10,26 @@ struct PlatformWebLoginPage: View {
     @State private var title = "网页登录"
     @State private var currentURL: URL?
     @State private var latestCookies = [HTTPCookie]()
+    @State private var latestUserAgent: String?
     @State private var message: String?
     @State private var isSaving = false
     @State private var didSave = false
 
     private let service = ComicContentService()
-    private let desktopUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
     var body: some View {
         Group {
             if let initialURL {
                 LoginWebView(
                     initialURL: initialURL,
-                    userAgent: desktopUserAgent,
+                    userAgent: nil,
                     onTitleChanged: { title = $0.isEmpty ? "网页登录" : $0 },
-                    onCookiesChanged: { url, cookies in
+                    onCookiesChanged: { url, cookies, userAgent in
                         currentURL = url
                         latestCookies = cookies
+                        latestUserAgent = userAgent
                         Task {
-                            await saveIfReady(cookies: cookies, currentURL: url, automatic: true)
+                            await saveIfReady(cookies: cookies, currentURL: url, userAgent: userAgent, automatic: true)
                         }
                     }
                 )
@@ -43,7 +44,7 @@ struct PlatformWebLoginPage: View {
             ToolbarItem(placement: .confirmationAction) {
                 Button {
                     Task {
-                        await saveIfReady(cookies: latestCookies, currentURL: currentURL ?? initialURL, automatic: false)
+                        await saveIfReady(cookies: latestCookies, currentURL: currentURL ?? initialURL, userAgent: latestUserAgent, automatic: false)
                     }
                 } label: {
                     if isSaving {
@@ -73,13 +74,13 @@ struct PlatformWebLoginPage: View {
     }
 
     @MainActor
-    private func saveIfReady(cookies: [HTTPCookie], currentURL: URL?, automatic: Bool) async {
+    private func saveIfReady(cookies: [HTTPCookie], currentURL: URL?, userAgent: String?, automatic: Bool) async {
         guard !didSave, !isSaving else { return }
         isSaving = true
         defer { isSaving = false }
 
         do {
-            let account = try await makeAccount(cookies: cookies, currentURL: currentURL, automatic: automatic)
+            let account = try await makeAccount(cookies: cookies, currentURL: currentURL, userAgent: userAgent, automatic: automatic)
             platformAccounts.saveValidatedAccount(account)
             didSave = true
             message = "登录成功"
@@ -93,10 +94,11 @@ struct PlatformWebLoginPage: View {
         }
     }
 
-    private func makeAccount(cookies: [HTTPCookie], currentURL: URL?, automatic: Bool) async throws -> PlatformAccount {
+    private func makeAccount(cookies: [HTTPCookie], currentURL: URL?, userAgent: String?, automatic: Bool) async throws -> PlatformAccount {
         let relevantCookies = cookies.filter { platform.acceptsWebLoginCookie($0) }
         let tokenCookie = relevantCookies.first { platform.tokenCookieNames.contains($0.name) }
         let refreshCookie = relevantCookies.first { platform.refreshTokenCookieNames.contains($0.name) }
+        let accountUserAgent = PlatformWebUserAgent.normalized(userAgent)
 
         switch platform {
         case .picacg:
@@ -113,7 +115,7 @@ struct PlatformWebLoginPage: View {
                     tokenType: nil,
                     password: nil,
                     cookies: relevantCookies.map(StoredHTTPCookie.init(cookie:)),
-                    userAgent: desktopUserAgent,
+                    userAgent: accountUserAgent,
                     baseURL: PlatformFeatureSettings.frontendBaseURL(for: platform),
                     source: .web,
                     profile: PlatformAccountProfile(email: profile.email, username: profile.id, nickname: profile.name)
@@ -133,7 +135,7 @@ struct PlatformWebLoginPage: View {
                     tokenType: tokenCookie == nil ? nil : "User",
                     password: nil,
                     cookies: relevantCookies.map(StoredHTTPCookie.init(cookie:)),
-                    userAgent: desktopUserAgent,
+                    userAgent: accountUserAgent,
                     baseURL: PlatformFeatureSettings.frontendBaseURL(for: platform),
                     source: .web,
                     profile: PlatformAccountProfile(email: nil, username: nil, nickname: nil)
@@ -145,21 +147,21 @@ struct PlatformWebLoginPage: View {
             guard hasLoginCookie || (!automatic && !relevantCookies.isEmpty) else {
                 throw PlatformWebLoginError.notReady
             }
-            return cookieBackedAccount(cookies: relevantCookies, currentURL: currentURL)
+            return cookieBackedAccount(cookies: relevantCookies, currentURL: currentURL, userAgent: accountUserAgent)
         case .jmComic, .htManga:
             guard !automatic, !relevantCookies.isEmpty else {
                 throw PlatformWebLoginError.notReady
             }
-            return cookieBackedAccount(cookies: relevantCookies, currentURL: currentURL)
+            return cookieBackedAccount(cookies: relevantCookies, currentURL: currentURL, userAgent: accountUserAgent)
         case .hitomi:
             guard !relevantCookies.isEmpty else {
                 throw PlatformWebLoginError.notReady
             }
-            return cookieBackedAccount(cookies: relevantCookies, currentURL: currentURL)
+            return cookieBackedAccount(cookies: relevantCookies, currentURL: currentURL, userAgent: accountUserAgent)
         }
     }
 
-    private func cookieBackedAccount(cookies: [HTTPCookie], currentURL: URL?) -> PlatformAccount {
+    private func cookieBackedAccount(cookies: [HTTPCookie], currentURL: URL?, userAgent: String) -> PlatformAccount {
         PlatformAccount(
             platform: platform,
             username: platform.webLoginDisplayName(cookies: cookies, fallback: currentURL?.host),
@@ -169,7 +171,7 @@ struct PlatformWebLoginPage: View {
                 tokenType: nil,
                 password: nil,
                 cookies: cookies.map(StoredHTTPCookie.init(cookie:)),
-                userAgent: desktopUserAgent,
+                userAgent: userAgent,
                 baseURL: PlatformFeatureSettings.frontendBaseURL(for: platform),
                 source: .web,
                 profile: PlatformAccountProfile(email: nil, username: nil, nickname: nil)
@@ -265,16 +267,18 @@ private extension ComicPlatform {
 
 private struct LoginWebView {
     let initialURL: URL
-    let userAgent: String
+    let userAgent: String?
     let onTitleChanged: (String) -> Void
-    let onCookiesChanged: (URL?, [HTTPCookie]) -> Void
+    let onCookiesChanged: (URL?, [HTTPCookie], String?) -> Void
 
     func makeWebView(coordinator: Coordinator) -> WKWebView {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = coordinator
-        webView.customUserAgent = userAgent
+        if let userAgent {
+            webView.customUserAgent = userAgent
+        }
         webView.load(URLRequest(url: initialURL))
         return webView
     }
@@ -287,18 +291,23 @@ private struct LoginWebView {
 
     final class Coordinator: NSObject, WKNavigationDelegate {
         private let onTitleChanged: (String) -> Void
-        private let onCookiesChanged: (URL?, [HTTPCookie]) -> Void
+        private let onCookiesChanged: (URL?, [HTTPCookie], String?) -> Void
 
-        init(onTitleChanged: @escaping (String) -> Void, onCookiesChanged: @escaping (URL?, [HTTPCookie]) -> Void) {
+        init(onTitleChanged: @escaping (String) -> Void, onCookiesChanged: @escaping (URL?, [HTTPCookie], String?) -> Void) {
             self.onTitleChanged = onTitleChanged
             self.onCookiesChanged = onCookiesChanged
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             onTitleChanged(webView.title ?? "")
-            webView.configuration.websiteDataStore.httpCookieStore.getAllCookies { [onCookiesChanged] cookies in
-                DispatchQueue.main.async {
-                    onCookiesChanged(webView.url, cookies)
+            webView.evaluateJavaScript("navigator.userAgent") { [weak webView, onCookiesChanged] result, _ in
+                let trimmedUserAgent = (result as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let userAgent = trimmedUserAgent.isEmpty ? nil : trimmedUserAgent
+                guard let webView else { return }
+                webView.configuration.websiteDataStore.httpCookieStore.getAllCookies { cookies in
+                    DispatchQueue.main.async {
+                        onCookiesChanged(webView.url, cookies, userAgent)
+                    }
                 }
             }
         }

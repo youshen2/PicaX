@@ -65,7 +65,7 @@ enum ComicPlatform: String, CaseIterable, Codable, Identifiable {
         case .nhentai:
             "\(PlatformFeatureSettings.frontendBaseURL(for: .nhentai))/login/"
         case .eHentai:
-            "\(PlatformFeatureSettings.frontendBaseURL(for: .eHentai))/bounce_login.php"
+            "https://forums.e-hentai.org/index.php?act=Login&CODE=00"
         case .hitomi:
             PlatformFeatureSettings.frontendBaseURL(for: .hitomi)
         case .htManga:
@@ -105,6 +105,15 @@ enum ComicPlatform: String, CaseIterable, Codable, Identifiable {
         case .htManga:
             .teal
         }
+    }
+}
+
+enum PlatformWebUserAgent {
+    static let defaultBrowser = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36"
+
+    static func normalized(_ userAgent: String?) -> String {
+        let trimmed = userAgent?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? defaultBrowser : trimmed
     }
 }
 

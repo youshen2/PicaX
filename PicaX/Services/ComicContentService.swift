@@ -393,7 +393,7 @@ struct ComicContentService {
         case .nhentai:
             return try await loadNhentaiComments(item: item)
         case .eHentai:
-            return try await loadEhentaiComments(item: item)
+            return try await loadEhentaiComments(item: item, account: account)
         case .jmComic:
             return try await loadJmComicComments(item: item, page: page)
         case .htManga, .hitomi:
@@ -475,7 +475,7 @@ struct ComicContentService {
         case .picacg:
             try await postPicacgComment(item: item, content: trimmed, account: account)
         case .eHentai:
-            try await postEhentaiComment(item: item, content: trimmed)
+            try await postEhentaiComment(item: item, content: trimmed, account: account)
         case .jmComic:
             try await postJmComicComment(item: item, content: trimmed, account: account)
         case .nhentai, .htManga, .hitomi:
@@ -1063,7 +1063,8 @@ private extension ComicContentService {
         guard let token else {
             throw ComicContentError.loginRequired("NHentai 登录状态无效，请重新登录。")
         }
-        return webHeaders(referer: "https://nhentai.net/").merging(["Authorization": "User \(token)"]) { _, new in new }
+        return webHeaders(referer: "https://nhentai.net/", userAgent: account.credential.userAgent)
+            .merging(["Authorization": "User \(token)"]) { _, new in new }
     }
 
     func refreshedNhentaiAuthHeaders(account: PlatformAccount) async throws -> [String: String]? {
@@ -1074,16 +1075,17 @@ private extension ComicContentService {
             throw ComicContentError.invalidURL("nhentai refresh")
         }
         let body = try JSONSerialization.data(withJSONObject: ["refresh_token": refreshToken])
+        let headers = webHeaders(referer: "https://nhentai.net/", userAgent: account.credential.userAgent)
         let json = try await requestJSON(
             url: url,
             method: "POST",
-            headers: webHeaders(referer: "https://nhentai.net/").merging(["Content-Type": "application/json"]) { _, new in new },
+            headers: headers.merging(["Content-Type": "application/json"]) { _, new in new },
             body: body
         )
         guard let token = json["access_token"] as? String, !token.isEmpty else {
             return nil
         }
-        return webHeaders(referer: "https://nhentai.net/").merging(["Authorization": "User \(token)"]) { _, new in new }
+        return headers.merging(["Authorization": "User \(token)"]) { _, new in new }
     }
 
     func nhentaiItems(from json: [String: Any], favoriteDate: Date? = nil) throws -> [ComicListItem] {
@@ -1282,7 +1284,7 @@ private extension ComicContentService {
             throw ComicContentError.loginRequired("E-Hentai 登录状态无效，请重新登录。")
         }
         let items = parseEhentaiGalleries(html, favoriteDate: Date())
-        return ComicFavoritePage(items: items, page: page, hasMore: html.contains("page=\(pageIndex + 1)"))
+        return ComicFavoritePage(items: items, page: page, hasMore: ehentaiHasNextPage(html))
     }
 
     func loadEhentaiFavoriteFolders(account: PlatformAccount?) async throws -> [PlatformFavoriteFolder] {
@@ -1323,23 +1325,47 @@ private extension ComicContentService {
     }
 
     func parseEhentaiGalleries(_ html: String, favoriteDate: Date? = nil) -> [ComicListItem] {
-        html.regexMatches(#"<tr class="gtr.*?</tr>"#, options: [.dotMatchesLineSeparators]).compactMap { row in
-            guard let link = row.firstRegexCapture(#"href="(https?://[^"]+/g/[^"]+)""#) else { return nil }
-            let title = row.firstRegexCapture(#"class="glink"[^>]*>(.*?)</"#)?.htmlDecoded ?? link
-            let cover = row.firstRegexCapture(#"data-src="([^"]+)""#) ?? row.firstRegexCapture(#"src="([^"]+)""#) ?? ""
-            let uploader = row.firstRegexCapture(#"<div class="gl4e glname">.*?</div>"#)?.strippingHTML ?? ""
-            return ComicListItem(
-                id: link,
-                platform: .eHentai,
-                title: title,
-                subtitle: uploader,
-                coverURLString: cover,
-                tags: [],
-                pageCount: nil,
-                likesCount: nil,
-                favoriteDate: favoriteDate
-            )
+        let rowBlocks = html.regexMatches(#"<tr\b[^>]*>.*?</tr>"#, options: [.dotMatchesLineSeparators])
+        let thumbnailBlocks = html.regexMatches(#"<div\b[^>]*class="[^"]*\bgl1t\b[^"]*"[^>]*>.*?(?=<div\b[^>]*class="[^"]*\bgl1t\b|\z)"#, options: [.dotMatchesLineSeparators])
+        var seen = Set<String>()
+        return (rowBlocks + thumbnailBlocks).compactMap { block in
+            guard let item = ehentaiGalleryItem(from: block, favoriteDate: favoriteDate),
+                  seen.insert(item.id).inserted else {
+                return nil
+            }
+            return item
         }
+    }
+
+    func ehentaiGalleryItem(from block: String, favoriteDate: Date?) -> ComicListItem? {
+        guard let link = block.firstRegexCapture(#"href="(https?://[^"]+/g/[0-9]+/[^"/?#]+/?)"#)?.htmlDecoded else {
+            return nil
+        }
+        let title = block.firstRegexCapture(#"class="[^"]*\bglink\b[^"]*"[^>]*>(.*?)</"#)?.htmlDecoded ??
+            block.firstRegexCapture(#"title="([^"]+)""#)?.htmlDecoded ??
+            link
+        let cover = block.firstRegexCapture(#"data-src="([^"]+)""#) ??
+            block.firstRegexCapture(#"src="([^"]+)""#) ??
+            ""
+        let uploader = block.firstRegexCapture(#"class="[^"]*\bglname\b[^"]*"[^>]*>.*?</[^>]+>"#)?.strippingHTML ?? ""
+        return ComicListItem(
+            id: link,
+            platform: .eHentai,
+            title: title,
+            subtitle: uploader,
+            coverURLString: cover,
+            tags: [],
+            pageCount: nil,
+            likesCount: nil,
+            favoriteDate: favoriteDate
+        )
+    }
+
+    func ehentaiHasNextPage(_ html: String) -> Bool {
+        guard let button = html.regexMatches(#"<a\b[^>]*id="dnext"[^>]*>"#).first else {
+            return false
+        }
+        return button.contains("href=") && !button.contains(#"href="""#)
     }
 
     func parseEhentaiFavoriteFolderNames(_ html: String) -> [String] {
@@ -1367,7 +1393,8 @@ private extension ComicContentService {
         guard !cookieHeader.isEmpty else {
             throw ComicContentError.loginRequired("E-Hentai 登录状态无效，请重新登录。")
         }
-        return webHeaders(referer: referer).merging(["Cookie": cookieHeader]) { _, new in new }
+        return webHeaders(referer: referer, userAgent: account.credential.userAgent)
+            .merging(["Cookie": cookieHeader]) { _, new in new }
     }
 
     func ehentaiCookieHeader(cookies: [StoredHTTPCookie]) -> String {
@@ -1459,7 +1486,10 @@ private extension ComicContentService {
         }
     }
 
-    func loadEhentaiComments(item: ComicListItem) async throws -> [ComicComment] {
+    func loadEhentaiComments(item: ComicListItem, account: PlatformAccount?) async throws -> [ComicComment] {
+        guard let account else {
+            throw ComicContentError.loginRequired("E-Hentai 评论需要先登录平台账号。")
+        }
         guard let baseURL = URL(string: item.id) else {
             throw ComicContentError.invalidURL(item.id)
         }
@@ -1467,19 +1497,27 @@ private extension ComicContentService {
         guard let url = URL(string: "\(item.id)\(separator)hc=1") else {
             throw ComicContentError.invalidURL("\(item.id)?hc=1")
         }
-        let html = try await requestString(url: url, headers: webHeaders(referer: ehentaiBaseURL))
+        let headers = try ehentaiAccountHeaders(account: account, referer: item.id)
+        let html = try await requestString(url: url, headers: headers)
+        guard !html.contains("You are not currently logged in") else {
+            throw ComicContentError.loginRequired("E-Hentai 登录状态无效，请重新登录。")
+        }
         return parseEhentaiComments(html)
     }
 
-    func postEhentaiComment(item: ComicListItem, content: String) async throws {
+    func postEhentaiComment(item: ComicListItem, content: String, account: PlatformAccount?) async throws {
+        guard let account else {
+            throw ComicContentError.loginRequired("E-Hentai 评论需要先登录平台账号。")
+        }
         guard let url = URL(string: item.id) else {
             throw ComicContentError.invalidURL(item.id)
         }
         let body = "commenttext_new=\(content.urlEncoded)"
+        let headers = try ehentaiAccountHeaders(account: account, referer: item.id)
         let data = try await requestData(
             url: url,
             method: "POST",
-            headers: webHeaders(referer: item.id).merging(["Content-Type": "application/x-www-form-urlencoded"]) { _, new in new },
+            headers: headers.merging(["Content-Type": "application/x-www-form-urlencoded"]) { _, new in new },
             body: Data(body.utf8)
         )
         let html = String(data: data, encoding: .utf8) ?? ""
@@ -1489,14 +1527,23 @@ private extension ComicContentService {
     }
 
     func parseEhentaiComments(_ html: String) -> [ComicComment] {
-        html.regexMatches(#"<div class="c1".*?</div>\s*</div>\s*</div>"#, options: [.dotMatchesLineSeparators])
+        html.regexMatches(#"<div\b[^>]*class="[^"]*\bc1\b[^"]*"[^>]*>.*?(?=<a\b[^>]*name="(?:comment_)?[0-9]+"|<div\b[^>]*class="[^"]*\bc1\b|\z)"#, options: [.dotMatchesLineSeparators])
             .enumerated()
-            .map { index, row in
-                let id = row.firstRegexCapture(#"name="(?:comment_)?([0-9]+)""#) ?? "\(index)"
-                let author = row.firstRegexCapture(#"<div class="c3"[^>]*>.*?<a[^>]*>(.*?)</a>"#)?.htmlDecoded ?? "未知"
-                let time = row.firstRegexCapture(#"Posted on\s*(.*?)\s*by"#)?.htmlDecoded
-                let content = row.firstRegexCapture(#"<div class="c6"[^>]*>(.*?)</div>"#)?.htmlDecoded ?? row.strippingHTML
-                let score = row.firstRegexCapture(#"<div class="c5"[^>]*>.*?<span[^>]*>(-?[0-9]+)</span>"#).flatMap(Int.init)
+            .compactMap { index, row -> ComicComment? in
+                guard let contentHTML = row.firstRegexCapture(#"<div\b[^>]*class="[^"]*\bc6\b[^"]*"[^>]*>(.*?)</div>"#),
+                      !contentHTML.strippingHTML.isEmpty else {
+                    return nil
+                }
+                let id = row.firstRegexCapture(#"name="(?:comment_)?([0-9]+)""#) ??
+                    row.firstRegexCapture(#"comment_vote_(?:up|down)_([0-9]+)""#) ??
+                    "\(index)"
+                let header = row.firstRegexCapture(#"<div\b[^>]*class="[^"]*\bc3\b[^"]*"[^>]*>(.*?)</div>"#)?.htmlDecoded ?? ""
+                let author = row.firstRegexCapture(#"<div\b[^>]*class="[^"]*\bc3\b[^"]*"[^>]*>.*?<a[^>]*>(.*?)</a>"#)?.htmlDecoded ??
+                    header.firstRegexCapture(#"by\s+(.+)$"#)?.trimmingCharacters(in: .whitespacesAndNewlines) ??
+                    "未知"
+                let time = header.firstRegexCapture(#"Posted on\s*(.*?)\s*by"#)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let content = contentHTML.htmlDecoded.strippingHTML.trimmingCharacters(in: .whitespacesAndNewlines)
+                let score = row.firstRegexCapture(#"<div\b[^>]*class="[^"]*\bc5\b[^"]*"[^>]*>.*?<span[^>]*>(-?[0-9]+)</span>"#).flatMap(Int.init)
                 return ComicComment(
                     id: id,
                     author: author,
@@ -1541,7 +1588,7 @@ private extension ComicContentService {
         guard let url = URL(string: "\(base)/users-users_fav-page-\(page)-c-\(folderID.urlEncoded).html") else {
             throw ComicContentError.invalidURL("htmanga favorites")
         }
-        let html = try await requestString(url: url, headers: webHeaders(referer: base), cookies: cookies)
+        let html = try await requestString(url: url, headers: webHeaders(referer: base, userAgent: account.credential.userAgent), cookies: cookies)
         let items = parseHtMangaList(html, baseURL: base, favoriteDate: Date())
         return ComicFavoritePage(items: items, page: page, hasMore: !items.isEmpty)
     }
@@ -1555,7 +1602,7 @@ private extension ComicContentService {
         guard let url = URL(string: "\(base)/users-addfav-id-210814.html") else {
             throw ComicContentError.invalidURL("htmanga folders")
         }
-        let html = try await requestString(url: url, headers: webHeaders(referer: base), cookies: cookies)
+        let html = try await requestString(url: url, headers: webHeaders(referer: base, userAgent: account.credential.userAgent), cookies: cookies)
         let folders = html.regexMatches(#"<option[^>]+value="([^"]+)"[^>]*>.*?</option>"#, options: [.dotMatchesLineSeparators]).compactMap { row -> PlatformFavoriteFolder? in
             guard let id = row.firstRegexCapture(#"value="([^"]+)""#), !id.isEmpty else { return nil }
             let title = row.strippingHTML
@@ -1577,7 +1624,8 @@ private extension ComicContentService {
         _ = try await requestData(
             url: url,
             method: "POST",
-            headers: webHeaders(referer: base).merging(["Content-Type": "application/x-www-form-urlencoded"]) { _, new in new },
+            headers: webHeaders(referer: base, userAgent: account.credential.userAgent)
+                .merging(["Content-Type": "application/x-www-form-urlencoded"]) { _, new in new },
             body: Data(body.utf8),
             cookies: cookies
         )
@@ -3049,12 +3097,12 @@ private extension ComicContentService {
         )
     }
 
-    func webHeaders(referer: String) -> [String: String] {
+    func webHeaders(referer: String, userAgent: String? = nil) -> [String: String] {
         var headers = [
             "Accept": "text/html,application/json;q=0.9,*/*;q=0.8",
             "Accept-Language": "zh-CN,zh-TW;q=0.9,zh;q=0.8,en-US;q=0.7,en;q=0.6",
             "Referer": referer,
-            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Safari/604"
+            "User-Agent": PlatformWebUserAgent.normalized(userAgent)
         ]
         if referer.contains("e-hentai.org") || referer.contains("exhentai.org") {
             var cookies = ["nw=\(UserDefaults.standard.bool(forKey: PlatformFeatureSettingsKey.ehentaiIgnoresContentWarning) ? "1" : "0")"]
