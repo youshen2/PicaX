@@ -20,6 +20,8 @@ struct HomeDownloadsHeader: View {
 }
 
 struct HomeDownloadsCard: View {
+    @EnvironmentObject private var downloadService: DownloadService
+
     let records: [DownloadRecord]
     let service: ComicContentService
     let openReader: (DownloadedComicReaderRequest) -> Void
@@ -45,7 +47,10 @@ struct HomeDownloadsCard: View {
                             Button {
                                 selectedRecord = record
                             } label: {
-                                DownloadRecordCardItem(record: record)
+                                DownloadRecordCardItem(
+                                    record: record,
+                                    coverURL: downloadService.localCoverURL(for: record) ?? record.item.coverURL
+                                )
                             }
                             .buttonStyle(.plain)
                         }
@@ -87,10 +92,11 @@ struct HomeDownloadsEntryLink: View {
 
 private struct DownloadRecordCardItem: View {
     let record: DownloadRecord
+    let coverURL: URL?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            ComicCoverView(url: record.item.coverURL, accentColor: record.item.accentColor)
+            ComicCoverView(url: coverURL, accentColor: record.item.accentColor)
                 .frame(width: 92, height: 124)
 
             Text(record.item.title)

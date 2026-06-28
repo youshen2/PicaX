@@ -116,7 +116,10 @@ struct DownloadListPage: View {
                         Button {
                             selectedRecord = record
                         } label: {
-                            DownloadRecordRow(record: record)
+                            DownloadRecordRow(
+                                record: record,
+                                coverURL: downloadService.localCoverURL(for: record) ?? record.item.coverURL
+                            )
                         }
                         .buttonStyle(.plain)
                         .swipeActions(edge: .trailing) {
@@ -406,10 +409,11 @@ private struct DownloadTaskRow: View {
 
 private struct DownloadRecordRow: View {
     let record: DownloadRecord
+    let coverURL: URL?
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            ComicCoverView(url: record.item.coverURL, accentColor: record.item.accentColor)
+            ComicCoverView(url: coverURL, accentColor: record.item.accentColor)
                 .frame(width: 58, height: 78)
 
             VStack(alignment: .leading, spacing: 5) {
