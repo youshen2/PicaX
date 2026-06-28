@@ -17,10 +17,19 @@ struct PicaXApp: App {
     @StateObject private var downloadService = DownloadService()
     @StateObject private var blockingKeywordService = BlockingKeywordService()
     @StateObject private var searchHistoryService = SearchHistoryService()
+    #if os(iOS)
+    @StateObject private var phoneWatchAccountSyncService = PhoneWatchAccountSyncService()
+    #endif
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            rootContent
+        }
+    }
+
+    @ViewBuilder
+    private var rootContent: some View {
+        let baseContent = ContentView()
                 .environmentObject(appSettings)
                 .environmentObject(accountService)
                 .environmentObject(platformAccountService)
@@ -35,6 +44,33 @@ struct PicaXApp: App {
                         platformAccountService.account(for: platform)
                     }
                 }
-        }
+
+        #if os(iOS)
+        baseContent
+            .onAppear(perform: syncAccountsToWatch)
+            .onChange(of: accountService.accounts) { _, _ in
+                syncAccountsToWatch()
+            }
+            .onChange(of: accountService.currentAccount) { _, _ in
+                syncAccountsToWatch()
+            }
+            .onChange(of: accountService.session) { _, _ in
+                syncAccountsToWatch()
+            }
+            .onChange(of: platformAccountService.accounts) { _, _ in
+                syncAccountsToWatch()
+            }
+        #else
+        baseContent
+        #endif
     }
+
+    #if os(iOS)
+    private func syncAccountsToWatch() {
+        phoneWatchAccountSyncService.sync(
+            accountService: accountService,
+            platformAccountService: platformAccountService
+        )
+    }
+    #endif
 }
