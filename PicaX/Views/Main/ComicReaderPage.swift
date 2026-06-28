@@ -530,7 +530,7 @@ struct ComicReaderPage: View {
                 .onChange(of: viewModel.currentChapterIndex) { _, _ in
                     resetContinuousImageState()
                     continuousScrollTracker.reset()
-                    continuousScrollPosition.scrollTo(y: 0)
+                    scrollContinuous(toY: 0, animated: false)
                     focusContinuousLoadableImage(viewModel.currentPageIndex, images: images)
                     scrollToInitialPage(proxy: proxy)
                 }
@@ -602,17 +602,17 @@ struct ComicReaderPage: View {
                 doubleTapZoomEnabled: effectiveDoubleTapZoomEnabled,
                 readingMode: readerReadingMode,
                 toggleUI: { toggleReaderUI() },
-                turnPage: { direction in
-                    Task {
-                        await turnPage(direction, images: images, targetPixelWidth: targetPixelWidth) { pageIndex in
-                            pagedPageIndex = pageIndex
-                        }
-                    }
-                }
+	                turnPage: { direction in
+	                    Task {
+	                        await turnPage(direction, images: images, targetPixelWidth: targetPixelWidth) { pageIndex in
+	                            setPagedPageIndex(pageIndex, animated: true)
+	                        }
+	                    }
+	                }
             )
             .readerAutoPaging(isEnabled: isAutoPaging, interval: boundedAutoPageInterval) {
                 handleAutoPageTick(images: images, targetPixelWidth: targetPixelWidth) { pageIndex in
-                    pagedPageIndex = pageIndex
+                    setPagedPageIndex(pageIndex, animated: true)
                 }
             }
             .onAppear {
@@ -660,7 +660,7 @@ struct ComicReaderPage: View {
                         turnPage: { direction in
                             Task {
                                 await turnPage(direction, images: images, targetPixelWidth: targetPixelWidth) { pageIndex in
-                                    pagedPageIndex = pageIndex
+                                    setPagedPageIndex(pageIndex, animated: false)
                                     if pageIndex == images.count, pagedCommentPageIndex(for: images) != nil {
                                         scrollToComments(proxy: proxy, animated: true)
                                     } else {
@@ -672,7 +672,7 @@ struct ComicReaderPage: View {
                     )
                     .readerAutoPaging(isEnabled: isAutoPaging, interval: boundedAutoPageInterval) {
                         handleAutoPageTick(images: images, targetPixelWidth: targetPixelWidth) { pageIndex in
-                            pagedPageIndex = pageIndex
+                            setPagedPageIndex(pageIndex, animated: false)
                             if pageIndex == images.count, pagedCommentPageIndex(for: images) != nil {
                                 scrollToComments(proxy: proxy, animated: true)
                             } else {
@@ -693,16 +693,16 @@ struct ComicReaderPage: View {
                             updateReadingPage(newValue, totalPages: images.count, targetPixelWidth: targetPixelWidth)
                         }
                     }
-                    .onChange(of: progressJumpRequest) { _, request in
-                        handleProgressJumpRequest(
-                            request,
-                            images: images,
-                            targetPixelWidth: targetPixelWidth
-                        ) { pageIndex in
-                            pagedPageIndex = pageIndex
-                            scrollToPage(pageIndex, proxy: proxy, animated: true)
-                        }
-                    }
+	                    .onChange(of: progressJumpRequest) { _, request in
+	                        handleProgressJumpRequest(
+	                            request,
+	                            images: images,
+	                            targetPixelWidth: targetPixelWidth
+	                        ) { pageIndex in
+	                            setPagedPageIndex(pageIndex, animated: false)
+	                            scrollToPage(pageIndex, proxy: proxy, animated: true)
+	                        }
+	                    }
             }
         }
         .ignoresSafeArea(.container)
@@ -782,23 +782,52 @@ struct ComicReaderPage: View {
         }
     }
 
-    private func scrollToPage(_ pageIndex: Int, proxy: ScrollViewProxy, animated: Bool) {
-        if animated {
-            withAnimation(.easeInOut(duration: 0.18)) {
-                proxy.scrollTo(readerPageID(pageIndex), anchor: .top)
-            }
-        } else {
+	    private func scrollToPage(_ pageIndex: Int, proxy: ScrollViewProxy, animated: Bool) {
+	        if animated {
+	            withAnimation(readerPageTurnAnimation) {
+	                proxy.scrollTo(readerPageID(pageIndex), anchor: .top)
+	            }
+	        } else {
             proxy.scrollTo(readerPageID(pageIndex), anchor: .top)
         }
     }
 
     private func scrollToComments(proxy: ScrollViewProxy, animated: Bool) {
         if animated {
-            withAnimation(.easeInOut(duration: 0.18)) {
+            withAnimation(readerPageTurnAnimation) {
                 proxy.scrollTo(readerCommentsPageID(), anchor: .top)
             }
         } else {
             proxy.scrollTo(readerCommentsPageID(), anchor: .top)
+        }
+    }
+
+    private func scrollContinuous(toY y: CGFloat, animated: Bool) {
+        let targetY = max(y, 0)
+        let update = {
+            continuousScrollPosition = ScrollPosition(y: targetY)
+        }
+        if animated {
+            withAnimation(readerPageTurnAnimation, update)
+        } else {
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction, update)
+        }
+        continuousScrollTracker.updateScrollY(targetY)
+    }
+
+    private func setPagedPageIndex(_ pageIndex: Int, animated: Bool) {
+        if animated {
+            withAnimation(readerPageTurnAnimation) {
+                pagedPageIndex = pageIndex
+            }
+        } else {
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                pagedPageIndex = pageIndex
+            }
         }
     }
 
@@ -879,10 +908,9 @@ struct ComicReaderPage: View {
             return true
         }
 
-        if currentPage != commentPageIndex {
-            pagedPageIndex = commentPageIndex
-            selectPage(commentPageIndex)
-        }
+	        if currentPage != commentPageIndex {
+	            selectPage(commentPageIndex)
+	        }
         stopAutoPaging(toast: "已到最后一页")
         return true
     }
@@ -900,10 +928,7 @@ struct ComicReaderPage: View {
         let maxY = continuousScrollTracker.maxScrollY(fallbackViewportHeight: viewportHeight)
         let targetY = min(continuousScrollTracker.scrollY + max(distance, 1), maxY)
 
-        withAnimation(.easeInOut(duration: 0.2)) {
-            continuousScrollPosition.scrollTo(y: targetY)
-        }
-        continuousScrollTracker.updateScrollY(targetY)
+        scrollContinuous(toY: targetY, animated: true)
 
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 260_000_000)
@@ -916,7 +941,7 @@ struct ComicReaderPage: View {
                 }
                 let didTurn = await turnPage(.next, images: images, targetPixelWidth: targetPixelWidth, allowsChapterTurn: autoPagingTurnsChapter) { pageIndex in
                     continuousScrollTracker.reset()
-                    continuousScrollPosition.scrollTo(y: 0)
+                    scrollContinuous(toY: 0, animated: false)
                     updateReadingPage(pageIndex, totalPages: images.count, targetPixelWidth: targetPixelWidth)
                 }
                 if !didTurn {
@@ -949,7 +974,7 @@ struct ComicReaderPage: View {
                 preloadDelay: readerPreloadDelay
             )
             continuousScrollTracker.reset()
-            continuousScrollPosition.scrollTo(y: 0)
+            scrollContinuous(toY: 0, animated: false)
             isAutoPagingTurnInFlight = false
             return
         }
@@ -983,10 +1008,7 @@ struct ComicReaderPage: View {
                 return
             }
             let targetY = max(currentY - distance, 0)
-            withAnimation(.easeInOut(duration: 0.18)) {
-                continuousScrollPosition.scrollTo(y: targetY)
-            }
-            continuousScrollTracker.updateScrollY(targetY)
+            scrollContinuous(toY: targetY, animated: true)
         case .next:
             if currentY >= maxY - 4 {
                 _ = await turnPage(.next, images: images, targetPixelWidth: targetPixelWidth, selectPage: { pageIndex in
@@ -995,10 +1017,7 @@ struct ComicReaderPage: View {
                 return
             }
             let targetY = min(currentY + distance, maxY)
-            withAnimation(.easeInOut(duration: 0.18)) {
-                continuousScrollPosition.scrollTo(y: targetY)
-            }
-            continuousScrollTracker.updateScrollY(targetY)
+            scrollContinuous(toY: targetY, animated: true)
         }
     }
 
@@ -1018,14 +1037,12 @@ struct ComicReaderPage: View {
         let nextPage = direction == .next ? currentPage + 1 : currentPage - 1
 
         if images.indices.contains(nextPage) {
-            pagedPageIndex = nextPage
             selectPage(nextPage)
             updateReadingPage(nextPage, totalPages: images.count, targetPixelWidth: targetPixelWidth)
             return true
         }
 
         if let commentPageIndex, nextPage == commentPageIndex {
-            pagedPageIndex = commentPageIndex
             selectPage(commentPageIndex)
             return true
         }
@@ -1210,8 +1227,7 @@ struct ComicReaderPage: View {
 
         let scrollY = max(snapshot.scrollY, 0)
         continuousScrollRestoreTask?.cancel()
-        continuousScrollTracker.updateScrollY(scrollY)
-        continuousScrollPosition.scrollTo(y: scrollY)
+        scrollContinuous(toY: scrollY, animated: false)
         continuousScrollRestoreTask = Task { @MainActor [snapshot] in
             let delays: [UInt64] = [70_000_000, 180_000_000, 320_000_000]
             for delay in delays {
@@ -1222,8 +1238,7 @@ struct ComicReaderPage: View {
                     return
                 }
                 let scrollY = max(snapshot.scrollY, 0)
-                continuousScrollTracker.updateScrollY(scrollY)
-                continuousScrollPosition.scrollTo(y: scrollY)
+                scrollContinuous(toY: scrollY, animated: false)
             }
             continuousScrollRestoreTask = nil
         }
@@ -1498,6 +1513,10 @@ struct ComicReaderPage: View {
     }
 
     private var readerChromeAnimation: Animation {
+        .easeInOut(duration: 0.22)
+    }
+
+    private var readerPageTurnAnimation: Animation {
         .easeInOut(duration: 0.22)
     }
 
@@ -2307,11 +2326,13 @@ private final class ReaderContinuousZoomUIView<Content: View>: UIView, UIScrollV
         fatalError("init(coder:) has not been implemented")
     }
 
-    func update(rootView: Content, configuration: ReaderZoomConfiguration, resetID: String) {
-        hostingController.rootView = rootView
-        let wasZoomEnabled = self.configuration.isZoomEnabled
-        self.configuration = configuration
-        let shouldReset = self.resetID != resetID
+	    func update(rootView: Content, configuration: ReaderZoomConfiguration, resetID: String) {
+	        hostingController.rootView = rootView
+	        hostingController.view.invalidateIntrinsicContentSize()
+	        hostingController.view.setNeedsLayout()
+	        let wasZoomEnabled = self.configuration.isZoomEnabled
+	        self.configuration = configuration
+	        let shouldReset = self.resetID != resetID
         self.resetID = resetID
         configureGestures()
         configureZoomLimits()
@@ -2328,20 +2349,17 @@ private final class ReaderContinuousZoomUIView<Content: View>: UIView, UIScrollV
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        guard bounds.width > 0, bounds.height > 0 else { return }
-        scrollView.frame = bounds
-        let didChangeSize = lastBoundsSize != bounds.size
-        lastBoundsSize = bounds.size
-        if didChangeSize {
-            resetZoom(animated: false)
-        }
-        hostingController.view.frame = CGRect(origin: .zero, size: bounds.size)
-        if scrollView.zoomScale <= scrollView.minimumZoomScale + 0.01 {
-            scrollView.contentSize = bounds.size
-        }
-        updateContentInsets()
-        updateInteractionState()
-    }
+	        guard bounds.width > 0, bounds.height > 0 else { return }
+	        scrollView.frame = bounds
+	        let didChangeSize = lastBoundsSize != bounds.size
+	        lastBoundsSize = bounds.size
+	        if didChangeSize {
+	            resetZoom(animated: false)
+	        }
+	        layoutHostedViewForCurrentZoomScale()
+	        updateContentInsets()
+	        updateInteractionState()
+	    }
 
     func viewForZooming(in scrollView: UIScrollView) -> UIView? {
         hostingController.view
@@ -2352,9 +2370,10 @@ private final class ReaderContinuousZoomUIView<Content: View>: UIView, UIScrollV
         updateInteractionState()
     }
 
-    func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) {
-        updateInteractionState()
-    }
+	    func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) {
+	        layoutHostedViewForCurrentZoomScale()
+	        updateInteractionState()
+	    }
 
     private func setup() {
         backgroundColor = .black
@@ -2420,16 +2439,50 @@ private final class ReaderContinuousZoomUIView<Content: View>: UIView, UIScrollV
         updateInteractionState()
     }
 
-    private func resetZoom(animated: Bool) {
-        longPressStartedZoom = false
-        scrollView.setZoomScale(scrollView.minimumZoomScale, animated: animated)
-        scrollView.contentOffset = .zero
-        scrollView.contentSize = bounds.size
-        updateContentInsets()
-        updateInteractionState()
-    }
+	    private func resetZoom(animated: Bool) {
+	        longPressStartedZoom = false
+	        scrollView.setZoomScale(scrollView.minimumZoomScale, animated: animated)
+	        scrollView.contentOffset = .zero
+	        if !animated {
+	            scrollView.contentSize = bounds.size
+	            hostingController.view.transform = .identity
+	            hostingController.view.frame = CGRect(origin: .zero, size: bounds.size)
+	        }
+	        updateContentInsets()
+	        updateInteractionState()
+	    }
 
-    private func updateContentInsets() {
+	    private func layoutHostedViewForCurrentZoomScale() {
+	        guard bounds.width > 0, bounds.height > 0 else { return }
+
+	        if scrollView.zoomScale <= scrollView.minimumZoomScale + 0.01 {
+	            hostingController.view.transform = .identity
+	            hostingController.view.frame = CGRect(origin: .zero, size: bounds.size)
+	            scrollView.contentSize = bounds.size
+	            return
+	        }
+
+	        let oldOffset = scrollView.contentOffset
+	        hostingController.view.bounds = CGRect(origin: .zero, size: bounds.size)
+	        scrollView.contentSize = CGSize(
+	            width: bounds.width * scrollView.zoomScale,
+	            height: bounds.height * scrollView.zoomScale
+	        )
+	        hostingController.view.center = CGPoint(
+	            x: scrollView.contentSize.width * 0.5,
+	            y: scrollView.contentSize.height * 0.5
+	        )
+	        scrollView.contentOffset = clampedContentOffset(oldOffset)
+	    }
+
+	    private func clampedContentOffset(_ offset: CGPoint) -> CGPoint {
+	        CGPoint(
+	            x: min(max(offset.x, 0), max(scrollView.contentSize.width - bounds.width, 0)),
+	            y: min(max(offset.y, 0), max(scrollView.contentSize.height - bounds.height, 0))
+	        )
+	    }
+
+	    private func updateContentInsets() {
         let contentSize = scrollView.contentSize
         let insetX = max((bounds.width - contentSize.width) * 0.5, 0)
         let insetY = max((bounds.height - contentSize.height) * 0.5, 0)
