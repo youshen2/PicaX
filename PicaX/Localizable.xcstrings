@@ -4358,17 +4358,6 @@
         }
       }
     },
-    "应用界面会立即切换为简体中文。" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "应用界面会立即切换为简体中文。"
-          }
-        }
-      }
-    },
     "应用设置" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -4500,17 +4489,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "当前仓库还没有发布版本。"
-          }
-        }
-      }
-    },
-    "当前使用：\\(Self.systemPreferredMode.title)" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "当前使用：\\(Self.systemPreferredMode.title)"
           }
         }
       }
@@ -5548,17 +5526,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "显示模式"
-          }
-        }
-      }
-    },
-    "显示模式、语言与剪贴板检测" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "显示模式、语言与剪贴板检测"
           }
         }
       }
@@ -9689,6 +9656,39 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "默认选中平台"
+          }
+        }
+      }
+    },
+    "App行为" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "App行为"
+          }
+        }
+      }
+    },
+    "显示模式与界面语言" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "显示模式与界面语言"
+          }
+        }
+      }
+    },
+    "剪贴板检测与启动检查" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "剪贴板检测与启动检查"
           }
         }
       }

@@ -131,15 +131,6 @@ enum AppLanguageMode: String, CaseIterable, Identifiable {
         }
     }
 
-    var detailText: String {
-        switch self {
-        case .system:
-            "当前使用：\(Self.systemPreferredMode.title)"
-        case .zhHans:
-            "应用界面会立即切换为简体中文。"
-        }
-    }
-
     var effectiveMode: AppLanguageMode {
         switch self {
         case .system:

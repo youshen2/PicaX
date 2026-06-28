@@ -93,8 +93,13 @@ struct SettingsPage: View {
                 }
             }
 
-            if showsAny(.appBehavior, .network, .about) {
+            if showsAny(.appDisplay, .appBehavior, .network, .about) {
                 Section("网络与应用") {
+                    if shows(.appDisplay) {
+                        SettingsNavigationLink(item: .appDisplay, systemImage: "paintbrush") {
+                            AppDisplaySettingsView()
+                        }
+                    }
                     if shows(.appBehavior) {
                         SettingsNavigationLink(item: .appBehavior, systemImage: "gearshape") {
                             AppBehaviorSettingsView()
@@ -161,6 +166,7 @@ private enum SettingsSearchItem: CaseIterable {
     case blockingKeywords
     case storage
     case backup
+    case appDisplay
     case appBehavior
     case network
     case about
@@ -193,8 +199,10 @@ private enum SettingsSearchItem: CaseIterable {
             "存储管理"
         case .backup:
             "备份与恢复"
-        case .appBehavior:
+        case .appDisplay:
             "显示与语言"
+        case .appBehavior:
+            "App行为"
         case .network:
             "网络与代理"
         case .about:
@@ -230,8 +238,10 @@ private enum SettingsSearchItem: CaseIterable {
             "空间占用与图片缓存"
         case .backup:
             "导出或导入本地数据"
+        case .appDisplay:
+            "显示模式与界面语言"
         case .appBehavior:
-            "显示模式、语言与剪贴板检测"
+            "剪贴板检测与启动检查"
         case .network:
             "连接与重试"
         case .about:
@@ -257,8 +267,10 @@ private enum SettingsSearchItem: CaseIterable {
             ["已读隐藏", "阅读进度", "收藏状态", "标签"]
         case .downloads:
             ["下载评论", "同时下载", "限速", "队列", "ZIP", "导出", "文件名"]
+        case .appDisplay:
+            ["深色", "浅色", "语言", "多语言"]
         case .appBehavior:
-            ["深色", "浅色", "语言", "多语言", "剪贴板", "启动"]
+            ["剪贴板", "启动", "更新"]
         case .history:
             ["阅读进度", "清空", "记录"]
         case .readingDuration:
@@ -275,12 +287,9 @@ private enum SettingsSearchItem: CaseIterable {
     }
 }
 
-private struct AppBehaviorSettingsView: View {
+private struct AppDisplaySettingsView: View {
     @AppStorage(AppAppearanceSettingsKey.colorScheme) private var colorScheme = AppAppearanceMode.system.rawValue
     @AppStorage(AppLanguageSettingsKey.language) private var language = AppLanguageMode.system.rawValue
-    @AppStorage(AppBehaviorSettingsKey.checksClipboardForComicLinks) private var checksClipboardForComicLinks = true
-    @AppStorage(AppBehaviorSettingsKey.checksClipboardOnlyOnLaunch) private var checksClipboardOnlyOnLaunch = false
-    @AppStorage(AppBehaviorSettingsKey.checksUpdatesOnLaunch) private var checksUpdatesOnLaunch = true
 
     var body: some View {
         List {
@@ -303,14 +312,23 @@ private struct AppBehaviorSettingsView: View {
                             .tag(mode.rawValue)
                     }
                 }
-
-                Text(selectedLanguageMode.detailText)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
             } footer: {
                 Text("选择“跟随系统”时，应用会根据系统首选语言自动选择支持的语言。")
             }
+        }
+        .picaxInsetGroupedListStyle()
+        .navigationTitle("显示与语言")
+        .picaxHidesTabBar()
+    }
+}
 
+private struct AppBehaviorSettingsView: View {
+    @AppStorage(AppBehaviorSettingsKey.checksClipboardForComicLinks) private var checksClipboardForComicLinks = true
+    @AppStorage(AppBehaviorSettingsKey.checksClipboardOnlyOnLaunch) private var checksClipboardOnlyOnLaunch = false
+    @AppStorage(AppBehaviorSettingsKey.checksUpdatesOnLaunch) private var checksUpdatesOnLaunch = true
+
+    var body: some View {
+        List {
             Section {
                 Toggle("检查剪贴板链接", isOn: $checksClipboardForComicLinks)
                 if checksClipboardForComicLinks {
@@ -322,12 +340,8 @@ private struct AppBehaviorSettingsView: View {
             }
         }
         .picaxInsetGroupedListStyle()
-        .navigationTitle("显示与语言")
+        .navigationTitle("App行为")
         .picaxHidesTabBar()
-    }
-
-    private var selectedLanguageMode: AppLanguageMode {
-        AppLanguageMode(rawValue: language) ?? .system
     }
 }
 
