@@ -3351,12 +3351,14 @@ private struct ReaderChapterPickerSheet: View {
             content
                 .navigationTitle(selectedTab.title(hasReadingList: listContext != nil))
                 .toolbar {
+                    #if os(iOS)
                     if selectedTab == .readingList, let listContext {
                         ToolbarItem(placement: .picaxTopBarLeading) {
                             EditButton()
                                 .disabled(listContext.entries.isEmpty)
                         }
                     }
+                    #endif
 
                     ToolbarItem(placement: .picaxTopBarTrailing) {
                         Button {

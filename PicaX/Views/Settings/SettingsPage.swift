@@ -532,9 +532,11 @@ private struct HomeSettingsView: View {
         .picaxInsetGroupedListStyle()
         .navigationTitle("首页")
         .picaxHidesTabBar()
+        #if os(iOS)
         .toolbar {
             EditButton()
         }
+        #endif
         .onAppear {
             sectionOrder = HomeSectionKind.normalizedOrder(from: sectionOrderRaw)
             saveSectionOrder()
@@ -578,7 +580,7 @@ private struct DownloadSettingsView: View {
                         .font(.subheadline)
 
                     TextField(DownloadSettingsKey.defaultArchiveFileNameTemplate, text: $archiveFileNameTemplate)
-                        .textInputAutocapitalization(.never)
+                        .picaxDisablesTextAutocapitalization()
                         .autocorrectionDisabled()
                 }
 
@@ -1113,7 +1115,7 @@ private struct BackupImportPreviewSheet: View {
                 }
             }
             .navigationTitle(preview.title)
-            .navigationBarTitleDisplayMode(.inline)
+            .picaxNavigationBarTitleDisplayModeInline()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("取消") {

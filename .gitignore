@@ -5,3 +5,5 @@
 .vccode
 /PicaX.xcodeproj/xcuserdata
 /PicaX.xcodeproj/project.xcworkspace/xcuserdata
+/build
+/build-mac
