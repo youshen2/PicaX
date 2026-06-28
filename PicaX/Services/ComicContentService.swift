@@ -787,7 +787,8 @@ private extension ComicContentService {
                 query: "category:\(title)",
                 platform: .picacg,
                 subtitle: "PicACG 分类",
-                coverURLString: coverURLString
+                coverURLString: coverURLString,
+                groupTitle: nil
             )
         }
     }
@@ -3098,18 +3099,7 @@ private extension ComicContentService {
                 category("巨乳", platform)
             ]
         case .nhentai:
-            return [
-                category("中文", platform, query: "language:chinese"),
-                category("日本語", platform, query: "language:japanese"),
-                category("English", platform, query: "language:english"),
-                category("full color", platform),
-                category("cosplay", platform),
-                category("artist cg", platform),
-                category("doujinshi", platform),
-                category("manga", platform),
-                category("group", platform),
-                category("parody", platform)
-            ]
+            return nhentaiDefaultCategories(platform: platform)
         case .hitomi:
             return [
                 category("中文", platform, query: "language:chinese"),
@@ -3132,14 +3122,29 @@ private extension ComicContentService {
                 category("全彩", platform)
             ]
         case .eHentai:
-            return [
-                category("中文", platform, query: "chinese"),
-                category("full color", platform),
-                category("artist cg", platform),
-                category("doujinshi", platform),
-                category("manga", platform),
-                category("cosplay", platform)
-            ]
+            return EhTagTranslationService.categorySuggestions(limitPerNamespace: 20).map { suggestion in
+                ComicCategoryItem(
+                    title: suggestion.translatedTitle,
+                    query: suggestion.categoryQuery,
+                    platform: platform,
+                    subtitle: "\(suggestion.namespaceTitle) · \(suggestion.query)",
+                    coverURLString: nil,
+                    groupTitle: suggestion.namespaceTitle
+                )
+            }
+        }
+    }
+
+    func nhentaiDefaultCategories(platform: ComicPlatform) -> [ComicCategoryItem] {
+        NhentaiTagSuggestionService.categorySuggestions(limitPerGroup: 50).map { suggestion in
+            ComicCategoryItem(
+                title: suggestion.translatedTitle,
+                query: suggestion.query,
+                platform: platform,
+                subtitle: "\(suggestion.groupTitle) · \(suggestion.query)",
+                coverURLString: nil,
+                groupTitle: suggestion.groupTitle
+            )
         }
     }
 
@@ -3150,7 +3155,8 @@ private extension ComicContentService {
             query: value,
             platform: platform,
             subtitle: value == title ? "按 \(title) 浏览" : value,
-            coverURLString: nil
+            coverURLString: nil,
+            groupTitle: nil
         )
     }
 

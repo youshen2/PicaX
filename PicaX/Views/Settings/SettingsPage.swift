@@ -262,7 +262,7 @@ private enum SettingsSearchItem: CaseIterable {
         case .blockingKeywords:
             ["屏蔽", "黑名单", "关键词", "标签"]
         case .search:
-            ["默认搜索源", "搜索历史", "聚合搜索"]
+            ["默认搜索源", "搜索历史", "聚合搜索", "搜索补全", "标签建议"]
         case .comicList:
             ["已读隐藏", "阅读进度", "收藏状态", "标签"]
         case .downloads:
@@ -1131,6 +1131,7 @@ private struct ExploreSettingsView: View {
 private struct SearchSettingsView: View {
     @EnvironmentObject private var searchHistory: SearchHistoryService
     @AppStorage(SearchSettingsKey.focusesSearchFieldOnOpen) private var focusesSearchFieldOnOpen = false
+    @AppStorage(SearchSettingsKey.enablesSearchSuggestions) private var enablesSearchSuggestions = true
     @AppStorage(SearchSettingsKey.defaultTargetMode) private var defaultTargetMode = SearchDefaultTargetMode.platform.rawValue
     @AppStorage(SearchSettingsKey.defaultPlatform) private var defaultSearchPlatformID = ComicPlatform.picacg.rawValue
     @AppStorage(SearchSettingsKey.defaultAggregatePlatforms) private var defaultAggregatePlatformIDs = ComicPlatform.allCases.map(\.rawValue).joined(separator: ",")
@@ -1176,6 +1177,12 @@ private struct SearchSettingsView: View {
                 Toggle("进入搜索页自动聚焦", isOn: $focusesSearchFieldOnOpen)
             } footer: {
                 Text("关闭后，打开搜索页不会自动弹出键盘；从标签或已下载详情进入并带有关键词时仍会自动搜索。")
+            }
+
+            Section {
+                Toggle("搜索补全", isOn: $enablesSearchSuggestions)
+            } footer: {
+                Text("开启后，E-Hentai 和 NHentai 搜索会根据本地标签数据提供补全建议。")
             }
 
             Section {

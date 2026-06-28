@@ -257,6 +257,7 @@ struct ComicCategoryItem: Identifiable, Hashable {
     let platform: ComicPlatform
     let subtitle: String
     let coverURLString: String?
+    let groupTitle: String?
 
     var id: String {
         "\(platform.id)-\(query)-\(title)"

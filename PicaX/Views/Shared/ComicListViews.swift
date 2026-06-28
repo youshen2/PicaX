@@ -569,11 +569,13 @@ struct ComicSearchPage: View {
     @EnvironmentObject private var platformAccounts: PlatformAccountService
     @EnvironmentObject private var searchHistory: SearchHistoryService
     @AppStorage(SearchSettingsKey.focusesSearchFieldOnOpen) private var focusesSearchFieldOnOpen = false
+    @AppStorage(SearchSettingsKey.enablesSearchSuggestions) private var enablesSearchSuggestions = true
     @AppStorage(SearchSettingsKey.defaultTargetMode) private var defaultTargetMode = SearchDefaultTargetMode.platform.rawValue
     @AppStorage(SearchSettingsKey.defaultPlatform) private var defaultSearchPlatformID = ComicPlatform.picacg.rawValue
     @AppStorage(SearchSettingsKey.defaultAggregatePlatforms) private var defaultAggregatePlatformIDs = ComicPlatform.allCases.map(\.rawValue).joined(separator: ",")
     let service: ComicContentService
     private let usesConfiguredDefaultTarget: Bool
+    private let recordsInitialSearchInHistory: Bool
     @StateObject private var viewModel: ComicSearchViewModel
     @State private var query: String
     @State private var selectedSearchTarget: ComicSearchTarget
@@ -582,9 +584,15 @@ struct ComicSearchPage: View {
     @State private var showsAdvancedOptions = false
     @FocusState private var isSearchFocused: Bool
 
-    init(initialQuery: String = "", platform: ComicPlatform? = nil, service: ComicContentService = ComicContentService()) {
+    init(
+        initialQuery: String = "",
+        platform: ComicPlatform? = nil,
+        recordsInitialSearchInHistory: Bool = true,
+        service: ComicContentService = ComicContentService()
+    ) {
         self.service = service
         self.usesConfiguredDefaultTarget = platform == nil
+        self.recordsInitialSearchInHistory = recordsInitialSearchInHistory
         let initialTarget = platform.map(ComicSearchTarget.platform) ?? ComicSearchTarget.configuredDefault()
         _query = State(initialValue: initialQuery)
         _selectedSearchTarget = State(initialValue: initialTarget)
@@ -649,6 +657,9 @@ struct ComicSearchPage: View {
             placement: .picaxNavigationSearch,
             prompt: "搜索漫画、作者、标签"
         )
+        .searchSuggestions {
+            tagSuggestions
+        }
         .searchFocused($isSearchFocused)
         .onSubmit(of: .search) {
             Task { await search(force: true) }
@@ -733,16 +744,18 @@ struct ComicSearchPage: View {
                 isSearchFocused = true
             }
             guard !viewModel.hasSearched, !viewModel.trimmedKeyword(query).isEmpty else { return }
-            await search(force: true)
+            await search(force: true, recordsHistory: recordsInitialSearchInHistory)
         }
     }
 
-    private func search(force: Bool = false) async {
+    private func search(force: Bool = false, recordsHistory: Bool = true) async {
         let trimmedKeyword = viewModel.trimmedKeyword(query)
         guard !trimmedKeyword.isEmpty else { return }
         query = trimmedKeyword
         isSearchFocused = false
-        searchHistory.record(keyword: trimmedKeyword, target: selectedSearchTarget)
+        if recordsHistory {
+            searchHistory.record(keyword: trimmedKeyword, target: selectedSearchTarget)
+        }
         await viewModel.search(
             target: selectedSearchTarget,
             keyword: trimmedKeyword,
@@ -815,6 +828,91 @@ struct ComicSearchPage: View {
         Task {
             await search(force: true)
         }
+    }
+
+    @ViewBuilder
+    private var tagSuggestions: some View {
+        if enablesSearchSuggestions, selectedSearchTarget == .platform(.eHentai) {
+            let suggestions = EhTagTranslationService.suggestions(for: query)
+            if !suggestions.isEmpty {
+                Section("E-Hentai 标签") {
+                    ForEach(suggestions) { suggestion in
+                        Button {
+                            applyEhentaiSuggestion(suggestion)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(suggestion.query)
+                                Text("\(suggestion.translatedTitle) · \(suggestion.namespaceTitle)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+            }
+        } else if enablesSearchSuggestions, selectedSearchTarget == .platform(.nhentai) {
+            let suggestions = NhentaiTagSuggestionService.suggestions(for: query)
+            if !suggestions.isEmpty {
+                Section("NHentai 标签") {
+                    ForEach(suggestions) { suggestion in
+                        Button {
+                            applyNhentaiSuggestion(suggestion)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(suggestion.query)
+                                Text("\(suggestion.translatedTitle) · \(suggestion.groupTitle)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func applyEhentaiSuggestion(_ suggestion: EhTagSuggestion) {
+        query = query.replacingLastSearchFragment(
+            with: "\(suggestion.query) ",
+            suggestionTag: suggestion.tag,
+            translatedTitle: suggestion.translatedTitle
+        )
+        isSearchFocused = true
+    }
+
+    private func applyNhentaiSuggestion(_ suggestion: NhentaiTagSuggestion) {
+        query = query.replacingLastSearchFragment(
+            with: "\(suggestion.query) ",
+            suggestionTag: suggestion.tag,
+            translatedTitle: suggestion.translatedTitle
+        )
+        isSearchFocused = true
+    }
+}
+
+private extension String {
+    func replacingLastSearchFragment(with replacement: String, suggestionTag: String, translatedTitle: String) -> String {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return replacement }
+
+        let words = trimmed.split(whereSeparator: \.isWhitespace).map(String.init)
+        let twoWordFragment = words.suffix(2).joined(separator: " ").lowercased()
+        let removesTwoWords = words.count >= 2
+            && (suggestionTag.lowercased().hasPrefix(twoWordFragment) || translatedTitle.lowercased().contains(twoWordFragment))
+        let wordsToRemove = removesTwoWords ? 2 : 1
+        var prefixEnd = trimmed.endIndex
+
+        for _ in 0..<wordsToRemove {
+            while prefixEnd > trimmed.startIndex, trimmed[trimmed.index(before: prefixEnd)].isWhitespace {
+                prefixEnd = trimmed.index(before: prefixEnd)
+            }
+            while prefixEnd > trimmed.startIndex, !trimmed[trimmed.index(before: prefixEnd)].isWhitespace {
+                prefixEnd = trimmed.index(before: prefixEnd)
+            }
+        }
+
+        let prefix = String(trimmed[..<prefixEnd]).trimmingCharacters(in: .whitespacesAndNewlines)
+        return prefix.isEmpty ? replacement : "\(prefix) \(replacement)"
     }
 }
 

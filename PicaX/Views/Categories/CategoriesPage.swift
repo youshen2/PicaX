@@ -27,16 +27,24 @@ struct CategoriesPage: View {
                             .listRowBackground(Color.clear)
                     }
                 } else {
-                    Section(selectedPlatform.title) {
-                        ForEach(items.prefix(visibleCount)) { item in
-                            NavigationLink {
-                                ComicSearchPage(initialQuery: searchQuery(for: item), platform: item.platform)
-                            } label: {
-                                CategoryListRow(item: item)
+                    ForEach(groupedItems(items: Array(items.prefix(visibleCount)))) { group in
+                        Section(group.title) {
+                            ForEach(group.items) { item in
+                                NavigationLink {
+                                    ComicSearchPage(
+                                        initialQuery: searchQuery(for: item),
+                                        platform: item.platform,
+                                        recordsInitialSearchInHistory: false
+                                    )
+                                } label: {
+                                    CategoryListRow(item: item)
+                                }
                             }
                         }
+                    }
 
-                        if viewModel.canLoadMore {
+                    if viewModel.canLoadMore {
+                        Section {
                             CategoryAutoLoadRow()
                                 .onAppear {
                                     viewModel.loadMoreCategories()
@@ -82,4 +90,24 @@ struct CategoriesPage: View {
         }
         return String(item.query.dropFirst(categoryPrefix.count))
     }
+
+    private func groupedItems(items: [ComicCategoryItem]) -> [CategoryDisplayGroup] {
+        var groups = [CategoryDisplayGroup]()
+        for item in items {
+            let title = item.groupTitle ?? selectedPlatform.title
+            if let index = groups.firstIndex(where: { $0.title == title }) {
+                groups[index].items.append(item)
+            } else {
+                groups.append(CategoryDisplayGroup(title: title, items: [item]))
+            }
+        }
+        return groups
+    }
+}
+
+private struct CategoryDisplayGroup: Identifiable {
+    let title: String
+    var items: [ComicCategoryItem]
+
+    var id: String { title }
 }

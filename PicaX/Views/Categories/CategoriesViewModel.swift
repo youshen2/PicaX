@@ -28,7 +28,8 @@ final class CategoriesViewModel: ObservableObject {
 
         do {
             let items = try await service.loadCategories(platform: platform, account: account)
-            state = .loaded(items, visibleCount: min(pageSize, items.count))
+            let initialVisibleCount = items.contains { $0.groupTitle != nil } ? items.count : min(pageSize, items.count)
+            state = .loaded(items, visibleCount: initialVisibleCount)
         } catch {
             state = .failed(error.localizedDescription)
         }

@@ -128,6 +128,7 @@ enum DownloadSettingsKey {
 
 enum SearchSettingsKey {
     static let focusesSearchFieldOnOpen = "settings.search.focusesSearchFieldOnOpen"
+    static let enablesSearchSuggestions = "settings.search.enablesSearchSuggestions"
     static let defaultTargetMode = "settings.search.defaultTargetMode"
     static let defaultPlatform = "settings.search.defaultPlatform"
     static let defaultAggregatePlatforms = "settings.search.defaultAggregatePlatforms"
