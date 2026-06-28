@@ -25,9 +25,9 @@ struct DownloadedComicInfoSheet: View {
                     }
 
                     Section("章节") {
-                        ForEach(record.chapters) { chapter in
+                        ForEach(Array(downloadedChapterRecords.enumerated()), id: \.element.id) { index, chapter in
                             Button {
-                                openLocalReader(chapterIndex: chapter.index, pageIndex: 0, ignoresHistoryProgress: true)
+                                openLocalReader(chapterIndex: index, pageIndex: 0, ignoresHistoryProgress: true)
                             } label: {
                                 DownloadedChapterRow(chapter: chapter)
                             }
@@ -73,16 +73,34 @@ struct DownloadedComicInfoSheet: View {
 
     private var localDetail: ComicDetailInfo {
         if let detail = record.detail {
-            return detail
+            var localDetail = ComicDetailInfo(
+                item: detail.item,
+                description: detail.description,
+                tagGroups: detail.tagGroups,
+                chapters: downloadedChapterRecords.map(\.chapter),
+                related: detail.related,
+                updatedText: detail.updatedText
+            )
+            localDetail.isLiked = detail.isLiked
+            localDetail.uploader = detail.uploader
+            return localDetail
         }
         return ComicDetailInfo(
             item: record.item,
             description: record.item.subtitle,
             tagGroups: fallbackTagGroups,
-            chapters: record.chapters.map(\.chapter),
+            chapters: downloadedChapterRecords.map(\.chapter),
             related: [],
             updatedText: nil
         )
+    }
+
+    private var downloadedChapterRecords: [DownloadedChapterRecord] {
+        record.chapters.sorted { $0.index < $1.index }
+    }
+
+    private var localChapterIndexes: [Int] {
+        downloadedChapterRecords.map(\.index)
     }
 
     private var fallbackTagGroups: [ComicTagGroup] {
@@ -116,13 +134,14 @@ struct DownloadedComicInfoSheet: View {
 
     private func openPrimaryReader() {
         if let readableProgress {
+            let chapterIndex = compactChapterIndex(for: readableProgress.chapterIndex) ?? 0
             openLocalReader(
-                chapterIndex: readableProgress.chapterIndex,
+                chapterIndex: chapterIndex,
                 pageIndex: readableProgress.pageIndex,
-                ignoresHistoryProgress: false
+                ignoresHistoryProgress: true
             )
         } else {
-            openLocalReader(chapterIndex: record.chapters.first?.index ?? 0, pageIndex: 0, ignoresHistoryProgress: true)
+            openLocalReader(chapterIndex: 0, pageIndex: 0, ignoresHistoryProgress: true)
         }
     }
 
@@ -132,11 +151,16 @@ struct DownloadedComicInfoSheet: View {
         openReader(DownloadedComicReaderRequest(
             record: record,
             detail: detail,
+            localChapterIndexes: localChapterIndexes,
             initialChapterIndex: boundedIndex,
             initialPageIndex: max(pageIndex, 0),
             ignoresHistoryProgress: ignoresHistoryProgress
         ))
         dismiss()
+    }
+
+    private func compactChapterIndex(for originalIndex: Int) -> Int? {
+        localChapterIndexes.firstIndex(of: originalIndex)
     }
 }
 
@@ -144,6 +168,7 @@ struct DownloadedComicReaderRequest: Identifiable, Hashable {
     let id = UUID()
     let record: DownloadRecord
     let detail: ComicDetailInfo
+    let localChapterIndexes: [Int]
     let initialChapterIndex: Int
     let initialPageIndex: Int
     let ignoresHistoryProgress: Bool

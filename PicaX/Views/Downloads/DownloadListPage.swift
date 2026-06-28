@@ -9,6 +9,7 @@ struct DownloadListPage: View {
     @State private var showsFilterSheet = false
     @State private var selectedRecord: DownloadRecord?
     @State private var readerRequest: DownloadedComicReaderRequest?
+    @State private var readingListRequest: ReadingListRequest?
     @State private var searchRequest: DownloadedComicSearchRequest?
     @State private var selectedPlatform: ComicPlatform?
     @State private var completionFilter: DownloadCompletionFilter = .all
@@ -96,12 +97,17 @@ struct DownloadListPage: View {
                 ignoresHistoryProgress: request.ignoresHistoryProgress,
                 service: service,
                 localChapterImageProvider: { _, chapterIndex in
-                    await downloadService.localChapterImages(for: request.record, chapterIndex: chapterIndex)
+                    guard request.localChapterIndexes.indices.contains(chapterIndex) else { return [] }
+                    return await downloadService.localChapterImages(for: request.record, chapterIndex: request.localChapterIndexes[chapterIndex])
                 },
                 localChapterCommentsProvider: { _, chapterIndex in
-                    await downloadService.localChapterComments(for: request.record, chapterIndex: chapterIndex)
+                    guard request.localChapterIndexes.indices.contains(chapterIndex) else { return [] }
+                    return await downloadService.localChapterComments(for: request.record, chapterIndex: request.localChapterIndexes[chapterIndex])
                 }
             )
+        }
+        .navigationDestination(item: $readingListRequest) { request in
+            ReadingListReaderPage(request: request, service: service)
         }
         .navigationDestination(item: $searchRequest) { request in
             ComicSearchPage(initialQuery: request.tag.query, platform: request.tag.platform, service: service)
@@ -137,6 +143,24 @@ struct DownloadListPage: View {
                 .listRowBackground(Color.clear)
             } else {
                 Section("已下载") {
+                    if !readableDisplayRecords.isEmpty {
+                        Button {
+                            Task { @MainActor in
+                                readingListRequest = ReadingListRequest(
+                                    title: "已下载",
+                                    entries: readableDisplayRecords.map { record in
+                                        ReadingListEntry.downloaded(
+                                            record,
+                                            coverURL: downloadService.localCoverURL(for: record) ?? record.item.coverURL
+                                        )
+                                    }
+                                )
+                            }
+                        } label: {
+                            Label("阅读全部", systemImage: "play.circle")
+                        }
+                    }
+
                     LazyLocalForEach(items: displayRecords, initialCount: 48, pageSize: 48) { record in
                         Button {
                             selectedRecord = record
@@ -168,6 +192,10 @@ struct DownloadListPage: View {
         }
         .picaxInsetGroupedListStyle()
         .background(AppColor.groupedBackground)
+    }
+
+    private var readableDisplayRecords: [DownloadRecord] {
+        displayRecords.filter { !$0.chapters.isEmpty }
     }
 
     private func prepareArchiveExport(for record: DownloadRecord) {

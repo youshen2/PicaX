@@ -46,10 +46,12 @@ struct HomePage: View {
                 ignoresHistoryProgress: request.ignoresHistoryProgress,
                 service: contentService,
                 localChapterImageProvider: { _, chapterIndex in
-                    await downloadService.localChapterImages(for: request.record, chapterIndex: chapterIndex)
+                    guard request.localChapterIndexes.indices.contains(chapterIndex) else { return [] }
+                    return await downloadService.localChapterImages(for: request.record, chapterIndex: request.localChapterIndexes[chapterIndex])
                 },
                 localChapterCommentsProvider: { _, chapterIndex in
-                    await downloadService.localChapterComments(for: request.record, chapterIndex: chapterIndex)
+                    guard request.localChapterIndexes.indices.contains(chapterIndex) else { return [] }
+                    return await downloadService.localChapterComments(for: request.record, chapterIndex: request.localChapterIndexes[chapterIndex])
                 }
             )
         }

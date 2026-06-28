@@ -18,9 +18,15 @@ struct ComicListSection: View {
     var hasMore = false
     var appliesBlocking = true
     var appliesReadProgressFilter = true
+    var showsReadAll = false
+    var readAllTitle = "阅读列表"
+    var readAllComics: [ComicListItem]?
+    var isPreparingReadAll = false
+    var readAllAction: (() -> Void)?
     var loadMore: (() -> Void)?
     @State private var detailRequest: ComicListDetailRequest?
     @State private var readerRequest: ComicListReaderRequest?
+    @State private var readingListRequest: ReadingListRequest?
 
     var body: some View {
         Group {
@@ -37,13 +43,40 @@ struct ComicListSection: View {
                 service: service
             )
         }
+        .navigationDestination(item: $readingListRequest) { request in
+            ReadingListReaderPage(request: request, service: service)
+        }
     }
 
     private var comicList: some View {
         let snapshot = makeRenderSnapshot()
+        let readingListComics = readAllComics ?? snapshot.visibleComics
 
         return List {
             Section {
+                if showsReadAll, !readingListComics.isEmpty {
+                    Button {
+                        if let readAllAction {
+                            readAllAction()
+                        } else {
+                            readingListRequest = ReadingListRequest(
+                                title: readAllTitle,
+                                entries: readingListComics.map(ReadingListEntry.online)
+                            )
+                        }
+                    } label: {
+                        if isPreparingReadAll {
+                            HStack(spacing: 10) {
+                                ProgressView()
+                                Text("正在准备阅读列表")
+                            }
+                        } else {
+                            Label("阅读全部", systemImage: "play.circle")
+                        }
+                    }
+                    .disabled(isPreparingReadAll)
+                }
+
                 if snapshot.visibleComics.isEmpty, !comics.isEmpty {
                     ContentUnavailableView("已隐藏全部结果", systemImage: "eye.slash", description: Text("当前列表内容命中了屏蔽词或阅读进度过滤，可在设置中调整。"))
                         .listRowBackground(Color.clear)
@@ -587,12 +620,13 @@ struct ComicSearchPage: View {
                         comics: comics,
                         service: service,
                         isLoadingMore: viewModel.isLoadingMore,
-                        hasMore: viewModel.hasMore
-                    ) {
-                        Task {
-                            await loadMore()
+                        hasMore: viewModel.hasMore,
+                        loadMore: {
+                            Task {
+                                await loadMore()
+                            }
                         }
-                    }
+                    )
                 }
             case .failed(let message):
                 ContentUnavailableView {
@@ -960,12 +994,13 @@ struct ComicTagComicsPage: View {
                         comics: comics,
                         service: service,
                         isLoadingMore: viewModel.isLoadingMore,
-                        hasMore: viewModel.hasMore
-                    ) {
-                        Task {
-                            await loadMore()
+                        hasMore: viewModel.hasMore,
+                        loadMore: {
+                            Task {
+                                await loadMore()
+                            }
                         }
-                    }
+                    )
                 }
             case .failed(let message):
                 ContentUnavailableView {

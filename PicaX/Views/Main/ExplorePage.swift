@@ -172,12 +172,13 @@ private struct ExploreEntryPage: View {
             comics: comics,
             service: service,
             isLoadingMore: viewModel.isLoadingMore,
-            hasMore: viewModel.hasMore
-        ) {
-            Task {
-                await loadMore()
+            hasMore: viewModel.hasMore,
+            loadMore: {
+                Task {
+                    await loadMore()
+                }
             }
-        }
+        )
         .refreshable {
             await load(force: true)
         }

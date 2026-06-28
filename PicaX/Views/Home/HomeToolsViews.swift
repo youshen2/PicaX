@@ -93,10 +93,11 @@ private struct EhentaiSubscriptionPage: View {
                         comics: comics,
                         service: service,
                         isLoadingMore: viewModel.isLoadingMore,
-                        hasMore: viewModel.hasMore
-                    ) {
-                        Task { await viewModel.loadMore() }
-                    }
+                        hasMore: viewModel.hasMore,
+                        loadMore: {
+                            Task { await viewModel.loadMore() }
+                        }
+                    )
                 }
             case .failed(let message):
                 ContentUnavailableView {

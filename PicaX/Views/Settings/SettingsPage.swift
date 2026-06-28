@@ -1466,6 +1466,9 @@ private struct ReaderSettingsView: View {
     @AppStorage(ReaderSettingsKey.systemStatusBottomInset) private var systemStatusBottomInset = 16.0
     @AppStorage(ReaderSettingsKey.usesProgressGlassBackground) private var usesProgressGlassBackground = false
     @AppStorage(ReaderSettingsKey.usesSystemStatusGlassBackground) private var usesSystemStatusGlassBackground = false
+    @AppStorage(ReaderSettingsKey.showsReadingListBookToast) private var showsReadingListBookToast = true
+    @AppStorage(ReaderSettingsKey.showsReadingListLoadingToast) private var showsReadingListLoadingToast = true
+    @AppStorage(ReaderSettingsKey.readingListAutoAdvancesAtBoundary) private var readingListAutoAdvancesAtBoundary = true
     @AppStorage(ReaderSettingsKey.visibilityDefaultsVersion) private var visibilityDefaultsVersion = 0
 
     var body: some View {
@@ -1565,6 +1568,18 @@ private struct ReaderSettingsView: View {
                 Text("交互")
             } footer: {
                 Text("点按翻页开启后，边缘区域翻页，中间区域按“切换控制栏”设置显示或隐藏顶部控制栏。关闭跟随后，对应浮层会在控制栏隐藏时继续显示。")
+            }
+
+            Section {
+                Toggle("切换时显示加载提示", isOn: $showsReadingListLoadingToast)
+
+                Toggle("切换完成后显示书名", isOn: $showsReadingListBookToast)
+
+                Toggle("章节边界自动切换书籍", isOn: $readingListAutoAdvancesAtBoundary)
+            } header: {
+                Text("批量阅读")
+            } footer: {
+                Text("批量阅读切换书籍时会保留当前阅读器并显示加载提示，加载完成后再切换内容。关闭自动切换后，顶部上一章/下一章按钮仍可在书籍边界手动切换。")
             }
 
             Section {

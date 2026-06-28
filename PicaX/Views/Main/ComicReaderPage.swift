@@ -51,6 +51,8 @@ struct ComicReaderPage: View {
     @AppStorage(ReaderSettingsKey.systemStatusBottomInset) private var systemStatusBottomInset = 16.0
     @AppStorage(ReaderSettingsKey.usesProgressGlassBackground) private var usesProgressGlassBackground = false
     @AppStorage(ReaderSettingsKey.usesSystemStatusGlassBackground) private var usesSystemStatusGlassBackground = false
+    @AppStorage(ReaderSettingsKey.showsReadingListBookToast) private var showsReadingListBookToast = true
+    @AppStorage(ReaderSettingsKey.readingListAutoAdvancesAtBoundary) private var readingListAutoAdvancesAtBoundary = true
     @AppStorage(ReaderSettingsKey.visibilityDefaultsVersion) private var visibilityDefaultsVersion = 0
 
     let detail: ComicDetailInfo
@@ -60,6 +62,8 @@ struct ComicReaderPage: View {
     let service: ComicContentService
     let localChapterImageProvider: ((ComicChapter, Int) async -> [ComicChapterImage])?
     let localChapterCommentsProvider: ((ComicChapter, Int) async -> [ComicComment])?
+    let listContext: ComicReaderListContext?
+    let initialToastMessage: String?
     @StateObject private var viewModel: ComicReaderViewModel
     @State private var showsChapters = false
     @State private var hidesReaderUI = false
@@ -75,6 +79,7 @@ struct ComicReaderPage: View {
     @State private var readerToastTask: Task<Void, Never>?
     @State private var historyRecordTask: Task<Void, Never>?
     @State private var readingDurationSessionStart: Date?
+    @State private var didShowInitialToast = false
 
     init(
         detail: ComicDetailInfo,
@@ -83,7 +88,9 @@ struct ComicReaderPage: View {
         ignoresHistoryProgress: Bool = false,
         service: ComicContentService,
         localChapterImageProvider: ((ComicChapter, Int) async -> [ComicChapterImage])? = nil,
-        localChapterCommentsProvider: ((ComicChapter, Int) async -> [ComicComment])? = nil
+        localChapterCommentsProvider: ((ComicChapter, Int) async -> [ComicComment])? = nil,
+        listContext: ComicReaderListContext? = nil,
+        initialToastMessage: String? = nil
     ) {
         self.detail = detail
         self.initialChapterIndex = initialChapterIndex
@@ -92,6 +99,8 @@ struct ComicReaderPage: View {
         self.service = service
         self.localChapterImageProvider = localChapterImageProvider
         self.localChapterCommentsProvider = localChapterCommentsProvider
+        self.listContext = listContext
+        self.initialToastMessage = initialToastMessage
         _viewModel = StateObject(wrappedValue: ComicReaderViewModel(
             detail: detail,
             initialChapterIndex: initialChapterIndex,
@@ -175,17 +184,13 @@ struct ComicReaderPage: View {
             ToolbarItemGroup(placement: .picaxTopBarTrailing) {
                 Button {
                     Task {
-                        await viewModel.loadPreviousChapter(
-                            account: platformAccounts.account(for: detail.item.platform),
-                            preloadImageCount: boundedPreloadImageCount,
-                            preloadDelay: readerPreloadDelay
-                        )
+                        await handlePreviousToolbarNavigation()
                     }
                 } label: {
-                    Image(systemName: "chevron.up")
+                    Image(systemName: previousNavigationSystemImage)
                 }
-                .disabled(!viewModel.canLoadPreviousChapter)
-                .accessibilityLabel("上一章")
+                .disabled(!canNavigatePrevious)
+                .accessibilityLabel(previousNavigationAccessibilityLabel)
 
                 Button {
                     toggleAutoPaging()
@@ -203,23 +208,23 @@ struct ComicReaderPage: View {
 
                 Button {
                     Task {
-                        await viewModel.loadNextChapter(
-                            account: platformAccounts.account(for: detail.item.platform),
-                            preloadImageCount: boundedPreloadImageCount,
-                            preloadDelay: readerPreloadDelay
-                        )
+                        await handleNextToolbarNavigation()
                     }
                 } label: {
-                    Image(systemName: "chevron.down")
+                    Image(systemName: nextNavigationSystemImage)
                 }
-                .disabled(!viewModel.canLoadNextChapter)
-                .accessibilityLabel("下一章")
+                .disabled(!canNavigateNext)
+                .accessibilityLabel(nextNavigationAccessibilityLabel)
             }
         }
         .sheet(isPresented: $showsChapters) {
             ReaderChapterPickerSheet(
                 chapters: detail.chapters,
-                selectedIndex: viewModel.currentChapterIndex
+                selectedIndex: viewModel.currentChapterIndex,
+                listContext: listContext,
+                onSelectReadingListEntry: { entry in
+                    listContext?.selectEntry(entry)
+                }
             ) { index in
                 showsChapters = false
                 Task {
@@ -239,6 +244,7 @@ struct ComicReaderPage: View {
         .task {
             migrateReaderVisibilityDefaultsIfNeeded()
             startReadingDurationSessionIfNeeded()
+            showInitialToastIfNeeded()
             await load()
         }
         .onDisappear {
@@ -261,6 +267,62 @@ struct ComicReaderPage: View {
         }
         .onChange(of: viewModel.currentChapterIndex) { _, _ in
             autoPagingCommentActionChapterIndex = nil
+        }
+    }
+
+    private var canNavigatePrevious: Bool {
+        viewModel.canLoadPreviousChapter || (listContext?.canMovePrevious ?? false)
+    }
+
+    private var canNavigateNext: Bool {
+        viewModel.canLoadNextChapter || (listContext?.canMoveNext ?? false)
+    }
+
+    private var previousNavigationSystemImage: String {
+        canMoveToPreviousReadingListEntry ? "backward.end" : "chevron.up"
+    }
+
+    private var nextNavigationSystemImage: String {
+        canMoveToNextReadingListEntry ? "forward.end" : "chevron.down"
+    }
+
+    private var previousNavigationAccessibilityLabel: String {
+        canMoveToPreviousReadingListEntry ? "上一本" : "上一章"
+    }
+
+    private var nextNavigationAccessibilityLabel: String {
+        canMoveToNextReadingListEntry ? "下一本" : "下一章"
+    }
+
+    private var canMoveToPreviousReadingListEntry: Bool {
+        !viewModel.canLoadPreviousChapter && (listContext?.canMovePrevious ?? false)
+    }
+
+    private var canMoveToNextReadingListEntry: Bool {
+        !viewModel.canLoadNextChapter && (listContext?.canMoveNext ?? false)
+    }
+
+    private func handlePreviousToolbarNavigation() async {
+        if viewModel.canLoadPreviousChapter {
+            await viewModel.loadPreviousChapter(
+                account: platformAccounts.account(for: detail.item.platform),
+                preloadImageCount: boundedPreloadImageCount,
+                preloadDelay: readerPreloadDelay
+            )
+        } else {
+            _ = moveReadingList(.previous)
+        }
+    }
+
+    private func handleNextToolbarNavigation() async {
+        if viewModel.canLoadNextChapter {
+            await viewModel.loadNextChapter(
+                account: platformAccounts.account(for: detail.item.platform),
+                preloadImageCount: boundedPreloadImageCount,
+                preloadDelay: readerPreloadDelay
+            )
+        } else {
+            _ = moveReadingList(.next)
         }
     }
 
@@ -679,6 +741,10 @@ struct ComicReaderPage: View {
             return true
         }
 
+        if autoPagingTurnsChapter, moveReadingList(.next, respectsAutoAdvanceSetting: true) {
+            return true
+        }
+
         if currentPage != commentPageIndex {
             pagedPageIndex = commentPageIndex
             selectPage(commentPageIndex)
@@ -758,6 +824,11 @@ struct ComicReaderPage: View {
             return
         }
 
+        if autoPagingTurnsChapter, moveReadingList(.next, respectsAutoAdvanceSetting: true) {
+            isAutoPagingTurnInFlight = false
+            return
+        }
+
         stopAutoPaging(toast: "已到最后一页")
     }
 
@@ -832,7 +903,9 @@ struct ComicReaderPage: View {
         guard allowsChapterTurn else { return false }
         switch direction {
         case .next:
-            guard viewModel.canLoadNextChapter else { return false }
+            guard viewModel.canLoadNextChapter else {
+                return moveReadingList(.next, respectsAutoAdvanceSetting: true)
+            }
             await viewModel.loadNextChapter(
                 account: platformAccounts.account(for: detail.item.platform),
                 preloadImageCount: boundedPreloadImageCount,
@@ -840,12 +913,33 @@ struct ComicReaderPage: View {
             )
             return true
         case .previous:
-            guard viewModel.canLoadPreviousChapter else { return false }
+            guard viewModel.canLoadPreviousChapter else {
+                return moveReadingList(.previous, respectsAutoAdvanceSetting: true)
+            }
             await viewModel.loadPreviousChapter(
                 account: platformAccounts.account(for: detail.item.platform),
                 preloadImageCount: boundedPreloadImageCount,
                 preloadDelay: readerPreloadDelay
             )
+            return true
+        }
+    }
+
+    @MainActor
+    private func moveReadingList(_ direction: ReaderPageTurnDirection, respectsAutoAdvanceSetting: Bool = false) -> Bool {
+        guard let listContext else { return false }
+        if respectsAutoAdvanceSetting, !readingListAutoAdvancesAtBoundary {
+            return false
+        }
+        switch direction {
+        case .previous:
+            guard listContext.canMovePrevious else { return false }
+            isAutoPaging = false
+            listContext.movePrevious()
+            return true
+        case .next:
+            guard listContext.canMoveNext else { return false }
+            listContext.moveNext()
             return true
         }
     }
@@ -1081,6 +1175,17 @@ struct ComicReaderPage: View {
                 }
             }
         }
+    }
+
+    private func showInitialToastIfNeeded() {
+        guard !didShowInitialToast else { return }
+        didShowInitialToast = true
+        guard showsReadingListBookToast,
+              let initialToastMessage,
+              !initialToastMessage.isEmpty else {
+            return
+        }
+        showReaderToast(initialToastMessage)
     }
 
     private var readerUIToggleMode: ReaderUIToggleMode {
@@ -2365,6 +2470,9 @@ enum ReaderSettingsKey {
     static let systemStatusBottomInset = "settings.reader.systemStatusBottomInset"
     static let usesProgressGlassBackground = "settings.reader.usesProgressGlassBackground"
     static let usesSystemStatusGlassBackground = "settings.reader.usesSystemStatusGlassBackground"
+    static let showsReadingListBookToast = "settings.reader.showsReadingListBookToast"
+    static let showsReadingListLoadingToast = "settings.reader.showsReadingListLoadingToast"
+    static let readingListAutoAdvancesAtBoundary = "settings.reader.readingListAutoAdvancesAtBoundary"
     static let visibilityDefaultsVersion = "settings.reader.visibilityDefaultsVersion"
 }
 
@@ -2810,7 +2918,7 @@ private struct ReaderAutoPagingModifier: ViewModifier {
     }
 }
 
-private struct ReaderToastView: View {
+struct ReaderToastView: View {
     let message: String
 
     var body: some View {
@@ -2821,16 +2929,29 @@ private struct ReaderToastView: View {
             .multilineTextAlignment(.center)
             .padding(.horizontal, 16)
             .padding(.vertical, 11)
-            .background(.black.opacity(0.72), in: Capsule(style: .continuous))
+            .readerToastGlassBackground()
             .overlay {
                 Capsule(style: .continuous)
-                    .stroke(.white.opacity(0.16), lineWidth: 0.5)
+                    .stroke(.white.opacity(0.24), lineWidth: 0.5)
             }
             .shadow(color: .black.opacity(0.28), radius: 12, x: 0, y: 6)
     }
 }
 
 private extension View {
+    @ViewBuilder
+    func readerToastGlassBackground() -> some View {
+        if #available(iOS 26, macOS 26, visionOS 26, *) {
+            self
+                .background(.black.opacity(0.34), in: Capsule(style: .continuous))
+                .glassEffect(.regular.tint(.black.opacity(0.28)), in: .capsule)
+        } else {
+            self
+                .background(.ultraThinMaterial, in: Capsule(style: .continuous))
+                .background(.black.opacity(0.38), in: Capsule(style: .continuous))
+        }
+    }
+
     func readerAutoPaging(isEnabled: Bool, interval: Double, onTick: @escaping () -> Void) -> some View {
         modifier(ReaderAutoPagingModifier(isEnabled: isEnabled, interval: interval, onTick: onTick))
     }
@@ -3214,42 +3335,128 @@ private struct ReaderChapterPickerSheet: View {
     @Environment(\.dismiss) private var dismiss
     let chapters: [ComicChapter]
     let selectedIndex: Int
+    let listContext: ComicReaderListContext?
+    let onSelectReadingListEntry: (ReadingListEntry) -> Void
     let onSelect: (Int) -> Void
+    @State private var selectedTab = ReaderChapterSheetTab.chapters
 
     var body: some View {
         NavigationStack {
-            List {
-                Section {
-                    ForEach(Array(chapters.enumerated()), id: \.element.id) { index, chapter in
-                        Button {
-                            onSelect(index)
-                        } label: {
-                            HStack {
-                                ComicChapterRow(chapter: chapter)
-                                Spacer()
-                                if index == selectedIndex {
-                                    Image(systemName: "checkmark")
-                                        .foregroundStyle(.blue)
-                                }
-                            }
+            content
+                .navigationTitle(selectedTab.title(hasReadingList: listContext != nil))
+                .toolbar {
+                    if selectedTab == .readingList, let listContext {
+                        ToolbarItem(placement: .picaxTopBarLeading) {
+                            EditButton()
+                                .disabled(listContext.entries.isEmpty)
                         }
-                        .buttonStyle(.plain)
+                    }
+
+                    ToolbarItem(placement: .picaxTopBarTrailing) {
+                        Button {
+                            dismiss()
+                        } label: {
+                            Image(systemName: "xmark")
+                        }
+                        .accessibilityLabel("关闭")
                     }
                 }
-            }
-            .picaxInsetGroupedListStyle()
-            .navigationTitle("章节")
-            .toolbar {
-                ToolbarItem(placement: .picaxTopBarTrailing) {
-                    Button {
-                        dismiss()
-                    } label: {
-                        Image(systemName: "xmark")
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if let listContext {
+            VStack(spacing: 0) {
+                Picker("内容", selection: $selectedTab) {
+                    ForEach(ReaderChapterSheetTab.allCases) { tab in
+                        Text(tab.title)
+                            .tag(tab)
                     }
-                    .accessibilityLabel("关闭")
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+
+                switch selectedTab {
+                case .chapters:
+                    chapterList
+                case .readingList:
+                    readingList(listContext)
+                }
+            }
+        } else {
+            chapterList
+        }
+    }
+
+    private var chapterList: some View {
+        List {
+            Section {
+                ForEach(Array(chapters.enumerated()), id: \.element.id) { index, chapter in
+                    Button {
+                        onSelect(index)
+                    } label: {
+                        HStack {
+                            ComicChapterRow(chapter: chapter)
+                            Spacer()
+                            if index == selectedIndex {
+                                Image(systemName: "checkmark")
+                                    .foregroundStyle(.blue)
+                            }
+                        }
+                    }
+                    .buttonStyle(.plain)
                 }
             }
         }
+        .picaxInsetGroupedListStyle()
+    }
+
+    private func readingList(_ listContext: ComicReaderListContext) -> some View {
+        List {
+            if listContext.entries.isEmpty {
+                ContentUnavailableView("阅读列表为空", systemImage: "list.bullet.rectangle")
+                    .listRowBackground(Color.clear)
+            } else {
+                Section("阅读列表") {
+                    ForEach(listContext.entries) { entry in
+                        Button {
+                            onSelectReadingListEntry(entry)
+                            dismiss()
+                        } label: {
+                            ReadingListEntryRow(
+                                entry: entry,
+                                isCurrent: entry.id == listContext.currentEntryID
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .onDelete(perform: listContext.removeEntries)
+                }
+            }
+        }
+        .picaxInsetGroupedListStyle()
+    }
+}
+
+private enum ReaderChapterSheetTab: String, CaseIterable, Identifiable {
+    case chapters
+    case readingList
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .chapters:
+            return "章节"
+        case .readingList:
+            return "阅读列表"
+        }
+    }
+
+    func title(hasReadingList: Bool) -> String {
+        hasReadingList ? title : "章节"
     }
 }
 

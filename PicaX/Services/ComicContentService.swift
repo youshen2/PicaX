@@ -94,17 +94,22 @@ struct ComicContentService {
     }
 
     func loadFavorites(account: PlatformAccount, folder: PlatformFavoriteFolder? = nil) async throws -> [ComicListItem] {
+        try await loadFavoritePage(account: account, folder: folder, page: 1).items
+    }
+
+    func loadFavoritePage(account: PlatformAccount, folder: PlatformFavoriteFolder? = nil, page: Int = 1) async throws -> ComicFavoritePage {
+        let page = max(page, 1)
         switch account.platform {
         case .picacg:
-            return try await loadPicacgFavorites(account: account)
+            return try await loadPicacgFavorites(account: account, page: page)
         case .nhentai:
-            return try await loadNhentaiFavorites(account: account)
+            return try await loadNhentaiFavorites(account: account, page: page)
         case .eHentai:
-            return try await loadEhentaiFavorites(account: account, folderID: folder?.id)
+            return try await loadEhentaiFavorites(account: account, folderID: folder?.id, page: page)
         case .htManga:
-            return try await loadHtMangaFavorites(account: account, folderID: folder?.id)
+            return try await loadHtMangaFavorites(account: account, folderID: folder?.id, page: page)
         case .jmComic:
-            return try await loadJmComicFavorites(account: account, folderID: folder?.id)
+            return try await loadJmComicFavorites(account: account, folderID: folder?.id, page: page)
         case .hitomi:
             throw ComicContentError.unsupported("Hitomi 没有平台收藏接口。")
         }
@@ -598,6 +603,12 @@ struct ComicContentService {
     }
 }
 
+struct ComicFavoritePage: Equatable {
+    let items: [ComicListItem]
+    let page: Int
+    let hasMore: Bool
+}
+
 private struct PicacgChapterInfo {
     let id: String
     let title: String
@@ -633,11 +644,14 @@ private extension ComicContentService {
         }
     }
 
-    func loadPicacgFavorites(account: PlatformAccount) async throws -> [ComicListItem] {
+    func loadPicacgFavorites(account: PlatformAccount, page: Int = 1) async throws -> ComicFavoritePage {
         let token = try await picacgToken(account: account)
         let sort = PlatformFeatureSettings.picacgFavoriteSort()
-        let json = try await picacgJSON(path: "users/favourite?s=\(sort)&page=1", token: token)
-        return try picacgItems(from: json, arrayPath: ["data", "comics", "docs"], favoriteDate: Date())
+        let page = max(page, 1)
+        let json = try await picacgJSON(path: "users/favourite?s=\(sort)&page=\(page)", token: token)
+        let items = try picacgItems(from: json, arrayPath: ["data", "comics", "docs"], favoriteDate: Date())
+        let pageCount = (json.value(at: ["data", "comics"]) as? [String: Any])?.intValue(for: "pages")
+        return ComicFavoritePage(items: items, page: page, hasMore: pageCount.map { page < $0 } ?? !items.isEmpty)
     }
 
     func addPicacgFavorite(item: ComicListItem, account: PlatformAccount?) async throws {
@@ -1005,9 +1019,10 @@ private extension ComicContentService {
         return try nhentaiItems(from: json)
     }
 
-    func loadNhentaiFavorites(account: PlatformAccount) async throws -> [ComicListItem] {
+    func loadNhentaiFavorites(account: PlatformAccount, page: Int = 1) async throws -> ComicFavoritePage {
         let headers = try nhentaiAuthHeaders(account: account)
-        guard let url = URL(string: "https://nhentai.net/api/v2/favorites?page=1") else {
+        let page = max(page, 1)
+        guard let url = URL(string: "https://nhentai.net/api/v2/favorites?page=\(page)") else {
             throw ComicContentError.invalidURL("nhentai favorites")
         }
         let json: [String: Any]
@@ -1019,7 +1034,9 @@ private extension ComicContentService {
             }
             json = try await requestJSON(url: url, headers: refreshedHeaders)
         }
-        return try nhentaiItems(from: json, favoriteDate: Date())
+        let items = try nhentaiItems(from: json, favoriteDate: Date())
+        let pageCount = json.intValue(for: "num_pages")
+        return ComicFavoritePage(items: items, page: page, hasMore: pageCount.map { page < $0 } ?? !items.isEmpty)
     }
 
     func addNhentaiFavorite(item: ComicListItem, account: PlatformAccount?) async throws {
@@ -1245,9 +1262,18 @@ private extension ComicContentService {
         return parseEhentaiGalleries(html)
     }
 
-    func loadEhentaiFavorites(account: PlatformAccount, folderID: String? = nil) async throws -> [ComicListItem] {
+    func loadEhentaiFavorites(account: PlatformAccount, folderID: String? = nil, page: Int = 1) async throws -> ComicFavoritePage {
         let headers = try ehentaiAccountHeaders(account: account, referer: ehentaiBaseURL)
-        let path = folderID == nil || folderID == "-1" ? "favorites.php" : "favorites.php?favcat=\(folderID?.urlEncoded ?? "")"
+        let page = max(page, 1)
+        let pageIndex = max(page - 1, 0)
+        var queryItems = [String]()
+        if let folderID, folderID != "-1" {
+            queryItems.append("favcat=\(folderID.urlEncoded)")
+        }
+        if pageIndex > 0 {
+            queryItems.append("page=\(pageIndex)")
+        }
+        let path = queryItems.isEmpty ? "favorites.php" : "favorites.php?\(queryItems.joined(separator: "&"))"
         guard let url = URL(string: "\(ehentaiBaseURL)/\(path)") else {
             throw ComicContentError.invalidURL("ehentai favorites")
         }
@@ -1255,7 +1281,8 @@ private extension ComicContentService {
         guard !html.contains("You are not currently logged in") else {
             throw ComicContentError.loginRequired("E-Hentai 登录状态无效，请重新登录。")
         }
-        return parseEhentaiGalleries(html, favoriteDate: Date())
+        let items = parseEhentaiGalleries(html, favoriteDate: Date())
+        return ComicFavoritePage(items: items, page: page, hasMore: html.contains("page=\(pageIndex + 1)"))
     }
 
     func loadEhentaiFavoriteFolders(account: PlatformAccount?) async throws -> [PlatformFavoriteFolder] {
@@ -1506,15 +1533,17 @@ private extension ComicContentService {
         return parseHtMangaList(html, baseURL: base)
     }
 
-    func loadHtMangaFavorites(account: PlatformAccount, folderID: String? = nil) async throws -> [ComicListItem] {
+    func loadHtMangaFavorites(account: PlatformAccount, folderID: String? = nil, page: Int = 1) async throws -> ComicFavoritePage {
         let base = htMangaBaseURL
         let cookies = try htMangaCookieStorage(account: account)
         let folderID = folderID?.nilIfEmpty ?? "0"
-        guard let url = URL(string: "\(base)/users-users_fav-page-1-c-\(folderID.urlEncoded).html") else {
+        let page = max(page, 1)
+        guard let url = URL(string: "\(base)/users-users_fav-page-\(page)-c-\(folderID.urlEncoded).html") else {
             throw ComicContentError.invalidURL("htmanga favorites")
         }
         let html = try await requestString(url: url, headers: webHeaders(referer: base), cookies: cookies)
-        return parseHtMangaList(html, baseURL: base, favoriteDate: Date())
+        let items = parseHtMangaList(html, baseURL: base, favoriteDate: Date())
+        return ComicFavoritePage(items: items, page: page, hasMore: !items.isEmpty)
     }
 
     func loadHtMangaFavoriteFolders(account: PlatformAccount?) async throws -> [PlatformFavoriteFolder] {
@@ -1787,14 +1816,16 @@ private extension ComicContentService {
         }
     }
 
-    func loadJmComicFavorites(account: PlatformAccount, folderID: String? = nil) async throws -> [ComicListItem] {
+    func loadJmComicFavorites(account: PlatformAccount, folderID: String? = nil, page: Int = 1) async throws -> ComicFavoritePage {
         let context = try await jmAuthenticatedContext(account: account)
         let cookies = context.cookies
         let baseURL = context.loginInfo.baseURL
         let sort = PlatformFeatureSettings.jmFavoriteSort()
         let folderID = folderID?.nilIfEmpty ?? "0"
-        let json = try await jmJSON(path: "favorite?page=1&folder_id=\(folderID.urlEncoded)&o=\(sort)", cookies: cookies, baseURL: baseURL)
-        return try jmComicItems(from: json, favoriteDate: Date())
+        let page = max(page, 1)
+        let json = try await jmJSON(path: "favorite?page=\(page)&folder_id=\(folderID.urlEncoded)&o=\(sort)", cookies: cookies, baseURL: baseURL)
+        let items = try jmComicItems(from: json, favoriteDate: Date())
+        return ComicFavoritePage(items: items, page: page, hasMore: !items.isEmpty)
     }
 
     func loadJmComicFavoriteFolders(account: PlatformAccount?) async throws -> [PlatformFavoriteFolder] {
