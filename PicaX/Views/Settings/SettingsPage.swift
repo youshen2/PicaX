@@ -564,6 +564,7 @@ private struct DownloadSettingsView: View {
     @AppStorage(DownloadSettingsKey.concurrentDownloadCount) private var concurrentDownloadCount = 1
     @AppStorage(DownloadSettingsKey.speedLimitEnabled) private var speedLimitEnabled = false
     @AppStorage(DownloadSettingsKey.speedLimitKBPerSecond) private var speedLimitKBPerSecond = 1024
+    @AppStorage(DownloadSettingsKey.readsImagesFromCache) private var readsImagesFromCache = true
     @AppStorage(DownloadSettingsKey.downloadsCommentsByDefault) private var downloadsCommentsByDefault = false
     @AppStorage(DownloadSettingsKey.archiveFileNameTemplate) private var archiveFileNameTemplate = DownloadSettingsKey.defaultArchiveFileNameTemplate
 
@@ -575,6 +576,14 @@ private struct DownloadSettingsView: View {
                 Text("下载内容")
             } footer: {
                 Text("开启后，支持评论区的漫画在打开下载面板时会默认一并保存详情评论和章节评论。")
+            }
+
+            Section {
+                Toggle("读取图片缓存", isOn: $readsImagesFromCache)
+            } header: {
+                Text("图片")
+            } footer: {
+                Text("开启后，下载会优先使用已缓存的图片数据。关闭后，每次下载都绕过图片缓存并从网络重新获取。")
             }
 
             Section {

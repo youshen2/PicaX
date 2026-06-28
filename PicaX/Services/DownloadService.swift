@@ -274,6 +274,9 @@ final class DownloadService: ObservableObject {
         if defaults.object(forKey: DownloadSettingsKey.speedLimitKBPerSecond) == nil {
             defaults.set(1024, forKey: DownloadSettingsKey.speedLimitKBPerSecond)
         }
+        if defaults.object(forKey: DownloadSettingsKey.readsImagesFromCache) == nil {
+            defaults.set(true, forKey: DownloadSettingsKey.readsImagesFromCache)
+        }
         if defaults.object(forKey: DownloadSettingsKey.archiveFileNameTemplate) == nil {
             defaults.set(DownloadSettingsKey.defaultArchiveFileNameTemplate, forKey: DownloadSettingsKey.archiveFileNameTemplate)
         }
@@ -634,7 +637,7 @@ final class DownloadService: ObservableObject {
             return fileName
         }
 
-        guard let data = try? await contentService.loadImageData(urlString: item.coverURLString) else {
+        guard let data = try? await loadImageDataWithRetry(urlString: item.coverURLString) else {
             return nil
         }
 
@@ -700,7 +703,10 @@ final class DownloadService: ObservableObject {
 
         for attempt in 0..<attempts {
             do {
-                return try await contentService.loadImageData(urlString: urlString)
+                return try await contentService.loadImageData(
+                    urlString: urlString,
+                    storesInCache: readsImagesFromCache
+                )
             } catch {
                 lastError = error
                 guard attempt < attempts - 1 else { break }
@@ -709,6 +715,12 @@ final class DownloadService: ObservableObject {
         }
 
         throw lastError ?? ComicContentError.invalidResponse("图片下载失败。")
+    }
+
+    private var readsImagesFromCache: Bool {
+        defaults.object(forKey: DownloadSettingsKey.readsImagesFromCache) == nil
+            ? true
+            : defaults.bool(forKey: DownloadSettingsKey.readsImagesFromCache)
     }
 
     private func throttleIfNeeded(downloadedBytes: Int, startedAt: Date) async throws {

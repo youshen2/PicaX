@@ -29,7 +29,7 @@ private enum AppNetworkSettings {
         case "原图":
             return "original"
         default:
-            return "medium"
+            return "middle"
         }
     }
 
@@ -457,12 +457,12 @@ struct ComicContentService {
         }
     }
 
-    func loadImageData(urlString: String) async throws -> Data {
+    func loadImageData(urlString: String, storesInCache: Bool = true) async throws -> Data {
         guard let url = URL.picaxResolved(from: urlString) else {
             throw ComicContentError.invalidURL(urlString)
         }
 
-        return try await ImageCacheService.data(for: url)
+        return try await ImageCacheService.data(for: url, storesInCache: storesInCache)
     }
 
     func postComment(item: ComicListItem, content: String, account: PlatformAccount?) async throws {
