@@ -19,11 +19,22 @@ struct ReaderZoomConfiguration: Equatable {
     var isZoomEnabled: Bool {
         pinchEnabled || doubleTapEnabled || longPressEnabled
     }
+
+    var interactionDisabled: ReaderZoomConfiguration {
+        ReaderZoomConfiguration(
+            pinchEnabled: false,
+            doubleTapEnabled: false,
+            doubleTapScale: doubleTapScale,
+            longPressEnabled: false,
+            longPressScale: longPressScale
+        )
+    }
 }
 
 struct ReaderInteractionGestureModifier: ViewModifier {
-    private static let delayedSingleTapNanoseconds: UInt64 = 260_000_000
+    private static let delayedSingleTapNanoseconds: UInt64 = 230_000_000
     private static let doubleTapSuppressionDuration: TimeInterval = 0.45
+    private static let movementTapSuppressionDuration: TimeInterval = 0.25
 
     let size: CGSize
     let mode: ReaderUIToggleMode
@@ -82,7 +93,11 @@ struct ReaderInteractionGestureModifier: ViewModifier {
     private var singleTapGesture: some Gesture {
         SpatialTapGesture(count: 1, coordinateSpace: .local)
             .onEnded { value in
-                handleSingleTap(at: value.location)
+                if doubleTapZoomEnabled {
+                    scheduleDelayedTap(at: value.location)
+                } else {
+                    handleTap(at: value.location)
+                }
             }
     }
 
@@ -103,18 +118,9 @@ struct ReaderInteractionGestureModifier: ViewModifier {
         }
     }
 
-    private func handleSingleTap(at location: CGPoint) {
-        guard !isTapSuppressed else { return }
-
-        if doubleTapZoomEnabled {
-            scheduleDelayedTap(at: location)
-        } else {
-            handleTap(at: location)
-        }
-    }
-
     private func handleTap(at location: CGPoint) {
-        guard !isTapSuppressed else {
+        guard !ReaderZoomTapSuppressor.shouldSuppressTap,
+              Date() >= tapSuppressionUntil else {
             return
         }
 
@@ -126,10 +132,6 @@ struct ReaderInteractionGestureModifier: ViewModifier {
         if mode == .single {
             toggleUI()
         }
-    }
-
-    private var isTapSuppressed: Bool {
-        ReaderZoomTapSuppressor.shouldSuppressTap || Date() < tapSuppressionUntil
     }
 
     private func tapPageDirection(at location: CGPoint) -> ReaderPageTurnDirection? {
@@ -159,7 +161,7 @@ struct ReaderInteractionGestureModifier: ViewModifier {
     private func suppressTapForCurrentMovement() {
         delayedTapTask?.cancel()
         delayedTapTask = nil
-        tapSuppressionUntil = Date().addingTimeInterval(0.25)
+        tapSuppressionUntil = Date().addingTimeInterval(Self.movementTapSuppressionDuration)
     }
 
     private func suppressTapAfterDoubleTap() {

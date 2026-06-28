@@ -548,7 +548,8 @@ struct ComicReaderPage: View {
                 }
                 .readerContinuousZoom(
                     configuration: readerZoomConfiguration,
-                    resetID: continuousZoomResetID
+                    resetID: continuousZoomResetID,
+                    allowsInteraction: allowsContinuousZoom(images: images)
                 )
             }
         }
@@ -559,21 +560,93 @@ struct ComicReaderPage: View {
     private func horizontalPagedReaderContent(images: [ComicChapterImage]) -> some View {
         GeometryReader { geometry in
             let targetPixelWidth = readerTargetPixelWidth(for: geometry.size.width)
-            TabView(selection: $pagedPageIndex) {
+            ScrollViewReader { proxy in
+                horizontalPagedScroll(images: images, size: geometry.size, targetPixelWidth: targetPixelWidth)
+                    .frame(width: geometry.size.width, height: geometry.size.height)
+                    .background(Color.black)
+                    .environment(\.layoutDirection, readerReadingMode == .rightToLeft ? .rightToLeft : .leftToRight)
+                    .ignoresSafeArea(.container)
+                    .readerInteractionGesture(
+                        size: geometry.size,
+                        mode: readerUIToggleMode,
+                        tapPagingEnabled: tapPagingEnabled,
+                        tapPagingEdgePercent: boundedTapPagingEdgePercent,
+                        tapPagingInverted: tapPagingInverted,
+                        doubleTapZoomEnabled: effectiveDoubleTapZoomEnabled,
+                        readingMode: readerReadingMode,
+                        toggleUI: { toggleReaderUI() },
+                        turnPage: { direction in
+                            Task {
+                                await turnPage(direction, images: images, targetPixelWidth: targetPixelWidth) { pageIndex in
+                                    setPagedPageIndex(pageIndex, animated: false)
+                                    if pageIndex == images.count, pagedCommentPageIndex(for: images) != nil {
+                                        scrollToComments(proxy: proxy, anchor: .leading, animated: true)
+                                    } else {
+                                        scrollToPage(pageIndex, proxy: proxy, anchor: .leading, animated: true)
+                                    }
+                                }
+                            }
+                        }
+                    )
+                    .readerAutoPaging(isEnabled: isAutoPaging, interval: boundedAutoPageInterval) {
+                        handleAutoPageTick(images: images, targetPixelWidth: targetPixelWidth) { pageIndex in
+                            setPagedPageIndex(pageIndex, animated: false)
+                            if pageIndex == images.count, pagedCommentPageIndex(for: images) != nil {
+                                scrollToComments(proxy: proxy, anchor: .leading, animated: true)
+                            } else {
+                                scrollToPage(pageIndex, proxy: proxy, anchor: .leading, animated: true)
+                            }
+                        }
+                    }
+                    .onAppear {
+                        syncPagedSelection(images: images, targetPixelWidth: targetPixelWidth)
+                        scrollToHorizontalPagedSelection(proxy: proxy)
+                    }
+                    .onChange(of: viewModel.currentChapterIndex) { _, _ in
+                        syncPagedSelection(images: images, targetPixelWidth: targetPixelWidth)
+                        scrollToHorizontalPagedSelection(proxy: proxy)
+                    }
+                    .onChange(of: pagedPageIndex) { _, newValue in
+                        if images.indices.contains(newValue) {
+                            updateReadingPage(newValue, totalPages: images.count, targetPixelWidth: targetPixelWidth)
+                        }
+                    }
+                    .onChange(of: progressJumpRequest) { _, request in
+                        handleProgressJumpRequest(
+                            request,
+                            images: images,
+                            targetPixelWidth: targetPixelWidth
+                        ) { pageIndex in
+                            setPagedPageIndex(pageIndex, animated: false)
+                            scrollToPage(pageIndex, proxy: proxy, anchor: .leading, animated: true)
+                        }
+                    }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func horizontalPagedScroll(images: [ComicChapterImage], size: CGSize, targetPixelWidth: Int?) -> some View {
+        let scroll = ScrollView(.horizontal, showsIndicators: false) {
+            LazyHStack(spacing: 0) {
                 ForEach(images.indices, id: \.self) { index in
                     ReaderImageView(
                         image: images[index],
                         retryCount: boundedImageRetryCount,
                         retryInterval: boundedImageRetryInterval,
-                                targetPixelWidth: targetPixelWidth,
-                                containerSize: geometry.size,
-                                isLoadAllowed: index == pagedPageIndex,
-                                zoomConfiguration: readerZoomConfiguration,
-                                dimsImage: dimsReaderImages
+                        targetPixelWidth: targetPixelWidth,
+                        containerSize: size,
+                        isLoadAllowed: index == pagedPageIndex,
+                        zoomConfiguration: readerZoomConfiguration,
+                        dimsImage: dimsReaderImages
                     )
-                    .frame(width: geometry.size.width, height: geometry.size.height)
-                    .tag(index)
+                    .frame(width: size.width, height: size.height)
                     .id(readerPageID(index))
+                    .onAppear {
+                        if pagedPageIndex != index {
+                            pagedPageIndex = index
+                        }
+                    }
                 }
                 if shouldShowChapterCommentsAtEnd,
                    let chapter = currentChapter {
@@ -585,61 +658,31 @@ struct ComicReaderPage: View {
                         account: platformAccounts.account(for: detail.item.platform),
                         localCommentsProvider: localChapterCommentsProvider
                     )
-                    .frame(width: geometry.size.width, height: geometry.size.height)
-                    .tag(images.count)
+                    .frame(width: size.width, height: size.height)
                     .id(readerCommentsPageID())
-                }
-            }
-            .frame(width: geometry.size.width, height: geometry.size.height)
-            .picaxPageTabViewStyle()
-            .background(Color.black)
-            .environment(\.layoutDirection, readerReadingMode == .rightToLeft ? .rightToLeft : .leftToRight)
-            .ignoresSafeArea(.container)
-            .readerInteractionGesture(
-                size: geometry.size,
-                mode: readerUIToggleMode,
-                tapPagingEnabled: tapPagingEnabled,
-                tapPagingEdgePercent: boundedTapPagingEdgePercent,
-                tapPagingInverted: tapPagingInverted,
-                doubleTapZoomEnabled: effectiveDoubleTapZoomEnabled,
-                readingMode: readerReadingMode,
-                toggleUI: { toggleReaderUI() },
-	                turnPage: { direction in
-	                    Task {
-	                        await turnPage(direction, images: images, targetPixelWidth: targetPixelWidth) { pageIndex in
-	                            setPagedPageIndex(pageIndex, animated: true)
-	                        }
-	                    }
-	                }
-            )
-            .readerAutoPaging(isEnabled: isAutoPaging, interval: boundedAutoPageInterval) {
-                handleAutoPageTick(images: images, targetPixelWidth: targetPixelWidth) { pageIndex in
-                    setPagedPageIndex(pageIndex, animated: true)
-                }
-            }
-            .onAppear {
-                syncPagedSelection(images: images, targetPixelWidth: targetPixelWidth)
-            }
-            .onChange(of: viewModel.currentChapterIndex) { _, _ in
-                syncPagedSelection(images: images, targetPixelWidth: targetPixelWidth)
-            }
-            .onChange(of: pagedPageIndex) { _, newValue in
-                if images.indices.contains(newValue) {
-                    updateReadingPage(newValue, totalPages: images.count, targetPixelWidth: targetPixelWidth)
-                }
-            }
-            .onChange(of: progressJumpRequest) { _, request in
-                handleProgressJumpRequest(
-                    request,
-                    images: images,
-                    targetPixelWidth: targetPixelWidth
-                ) { pageIndex in
-                    withAnimation(.easeInOut(duration: 0.18)) {
-                        pagedPageIndex = pageIndex
+                    .onAppear {
+                        if pagedPageIndex != images.count {
+                            pagedPageIndex = images.count
+                        }
                     }
                 }
             }
+            .modifier(ReaderScrollTargetLayoutModifier())
         }
+
+        scroll
+            .modifier(ReaderPagingScrollModifier())
+            .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                geometry.contentOffset.x
+            } action: { oldValue, newValue in
+                syncPagedScrollOffset(
+                    oldValue: oldValue,
+                    newValue: newValue,
+                    pageExtent: size.width,
+                    images: images,
+                    targetPixelWidth: targetPixelWidth
+                )
+            }
     }
 
     @ViewBuilder
@@ -757,6 +800,17 @@ struct ComicReaderPage: View {
 
         scroll
             .modifier(ReaderPagingScrollModifier())
+            .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                geometry.contentOffset.y
+            } action: { oldValue, newValue in
+                syncPagedScrollOffset(
+                    oldValue: oldValue,
+                    newValue: newValue,
+                    pageExtent: size.height,
+                    images: images,
+                    targetPixelWidth: targetPixelWidth
+                )
+            }
     }
 
     private func load(force: Bool = false) async {
@@ -784,35 +838,41 @@ struct ComicReaderPage: View {
         }
     }
 
-	    private func scrollToPage(_ pageIndex: Int, proxy: ScrollViewProxy, animated: Bool) {
-	        if animated {
-	            withAnimation(readerPageTurnAnimation) {
-	                proxy.scrollTo(readerPageID(pageIndex), anchor: .top)
-	            }
-	        } else {
-            proxy.scrollTo(readerPageID(pageIndex), anchor: .top)
+    private func scrollToPage(
+        _ pageIndex: Int,
+        proxy: ScrollViewProxy,
+        anchor: UnitPoint = .top,
+        animated: Bool
+    ) {
+        if animated {
+            withAnimation(readerPageTurnAnimation) {
+                proxy.scrollTo(readerPageID(pageIndex), anchor: anchor)
+            }
+        } else {
+            proxy.scrollTo(readerPageID(pageIndex), anchor: anchor)
         }
     }
 
-    private func scrollToComments(proxy: ScrollViewProxy, animated: Bool) {
+    private func scrollToComments(
+        proxy: ScrollViewProxy,
+        anchor: UnitPoint = .top,
+        animated: Bool
+    ) {
         if animated {
             withAnimation(readerPageTurnAnimation) {
-                proxy.scrollTo(readerCommentsPageID(), anchor: .top)
+                proxy.scrollTo(readerCommentsPageID(), anchor: anchor)
             }
         } else {
-            proxy.scrollTo(readerCommentsPageID(), anchor: .top)
+            proxy.scrollTo(readerCommentsPageID(), anchor: anchor)
         }
     }
 
     private func scrollContinuous(toY y: CGFloat, animated: Bool) {
         let targetY = max(y, 0)
-        if animated, continuousScrollBridge.scroll(toY: targetY, animated: true) {
-            continuousScrollTracker.updateScrollY(targetY)
-            return
-        }
+        _ = animated && continuousScrollBridge.scroll(toY: targetY, animated: true)
 
         let update = {
-            continuousScrollPosition = ScrollPosition(y: targetY)
+            continuousScrollPosition.scrollTo(y: targetY)
         }
         if animated {
             withAnimation(readerPageTurnAnimation, update)
@@ -855,9 +915,39 @@ struct ComicReaderPage: View {
         updateReadingPage(pagedPageIndex, totalPages: images.count, targetPixelWidth: targetPixelWidth, force: true)
     }
 
+    private func syncPagedScrollOffset(
+        oldValue: CGFloat,
+        newValue: CGFloat,
+        pageExtent: CGFloat,
+        images: [ComicChapterImage],
+        targetPixelWidth: Int?
+    ) {
+        guard pageExtent.isFinite, pageExtent > 0, !images.isEmpty else { return }
+        let rawPage = max(newValue / pageExtent, 0)
+        let incomingPage: Int
+        if newValue < oldValue {
+            incomingPage = Int(floor(rawPage))
+        } else if newValue > oldValue {
+            incomingPage = Int(ceil(rawPage))
+        } else {
+            incomingPage = Int(round(rawPage))
+        }
+        let pageIndex = min(max(incomingPage, 0), images.count - 1)
+        guard pageIndex != pagedPageIndex else { return }
+
+        pagedPageIndex = pageIndex
+        updateReadingPage(pageIndex, totalPages: images.count, targetPixelWidth: targetPixelWidth)
+    }
+
     private func scrollToPagedSelection(proxy: ScrollViewProxy) {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
             scrollToPage(pagedPageIndex, proxy: proxy, animated: false)
+        }
+    }
+
+    private func scrollToHorizontalPagedSelection(proxy: ScrollViewProxy) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+            scrollToPage(pagedPageIndex, proxy: proxy, anchor: .leading, animated: false)
         }
     }
 
@@ -1210,6 +1300,17 @@ struct ComicReaderPage: View {
         let imageIDs = Set([images[boundedIndex].urlString])
         guard continuousLoadableImageIDs != imageIDs else { return }
         continuousLoadableImageIDs = imageIDs
+    }
+
+    private func allowsContinuousZoom(images: [ComicChapterImage]) -> Bool {
+        guard readerReadingMode == .topToBottomContinuous,
+              !images.isEmpty else {
+            return true
+        }
+
+        let pageIndex = min(max(viewModel.currentPageIndex, 0), images.count - 1)
+        guard images.indices.contains(pageIndex) else { return true }
+        return continuousLoadableImageIDs.contains(images[pageIndex].urlString)
     }
 
     private func resetContinuousImageState() {

@@ -602,12 +602,13 @@ extension View {
     @ViewBuilder
     func readerContinuousZoom(
         configuration: ReaderZoomConfiguration,
-        resetID: String
+        resetID: String,
+        allowsInteraction: Bool = true
     ) -> some View {
         #if os(iOS)
         if configuration.isZoomEnabled {
             ReaderContinuousZoomHost(
-                configuration: configuration,
+                configuration: allowsInteraction ? configuration : configuration.interactionDisabled,
                 resetID: resetID
             ) {
                 self
