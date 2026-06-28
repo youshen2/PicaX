@@ -33,6 +33,7 @@ struct HomePage: View {
     @State private var clipboardCandidate: HomeClipboardCandidate?
     @State private var hasCheckedClipboardOnLaunch = false
     @State private var lastCheckedClipboardValue = ""
+    @State private var selectedReadingDurationRecordID: String?
 
     var body: some View {
         Group {
@@ -61,6 +62,14 @@ struct HomePage: View {
         .navigationDestination(item: $toolDetailRequest) { request in
             ComicDetailPage(item: request.item, service: contentService)
                 .picaxHidesTabBar()
+        }
+        .navigationDestination(item: $selectedReadingDurationRecordID) { recordID in
+            if let record = readingDuration.records.first(where: { $0.id == recordID }) {
+                ReadingDurationDetailPage(record: record, service: contentService)
+                    .picaxHidesTabBar()
+            } else {
+                ContentUnavailableView("记录不存在", systemImage: "timer")
+            }
         }
         .alert(toolInputTarget?.title ?? "", isPresented: toolInputDialogBinding) {
             if let target = toolInputTarget {
@@ -152,7 +161,7 @@ struct HomePage: View {
                         todayKey: readingDuration.todayKey,
                         todayDurationText: readingDuration.todayDurationText,
                         totalDurationText: readingDuration.totalDurationText,
-                        service: contentService
+                        openRecord: { selectedReadingDurationRecordID = $0.id }
                     )
                 } header: {
                     HomeReadingDurationHeader(service: contentService)
