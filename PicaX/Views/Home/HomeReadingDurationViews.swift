@@ -25,6 +25,7 @@ struct HomeReadingDurationCard: View {
     let todayDurationText: String
     let totalDurationText: String
     let service: ComicContentService
+    @State private var selectedRecordID: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -42,9 +43,8 @@ struct HomeReadingDurationCard: View {
             } else {
                 VStack(spacing: 0) {
                     ForEach(Array(records.enumerated()), id: \.element.id) { index, record in
-                        NavigationLink {
-                            ReadingDurationDetailPage(record: record, service: service)
-                                .picaxHidesTabBar()
+                        Button {
+                            selectedRecordID = record.id
                         } label: {
                             ReadingDurationCardItem(record: record, todayKey: todayKey)
                         }
@@ -60,6 +60,14 @@ struct HomeReadingDurationCard: View {
             }
         }
         .padding(.vertical, 6)
+        .navigationDestination(item: $selectedRecordID) { recordID in
+            if let record = records.first(where: { $0.id == recordID }) {
+                ReadingDurationDetailPage(record: record, service: service)
+                    .picaxHidesTabBar()
+            } else {
+                ContentUnavailableView("记录不存在", systemImage: "timer")
+            }
+        }
     }
 }
 

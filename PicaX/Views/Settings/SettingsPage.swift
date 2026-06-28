@@ -274,7 +274,7 @@ private enum SettingsSearchItem: CaseIterable {
         case .history:
             ["阅读进度", "清空", "记录"]
         case .readingDuration:
-            ["阅读时长", "统计", "趋势", "清空", "记录"]
+            ["阅读时长", "统计", "趋势", "清空", "记录", "单次", "低于"]
         default:
             []
         }
@@ -2060,12 +2060,21 @@ private struct ReadingDurationSettingsView: View {
     @EnvironmentObject private var readingDuration: ReadingDurationService
     @AppStorage(ReadingDurationService.Key.isEnabled) private var recordsReadingDuration = true
     @AppStorage(ReadingDurationService.Key.maxRecords) private var maxReadingDurationRecords = 300
+    @AppStorage(ReadingDurationService.Key.minimumSessionSeconds) private var minimumReadingDurationSessionSeconds = 1
     @State private var showsClearDurationConfirmation = false
 
     var body: some View {
         List {
             Section {
                 Toggle("记录阅读时长", isOn: $recordsReadingDuration)
+                IntegerSettingsInputRow(
+                    title: "低于不记录",
+                    value: $minimumReadingDurationSessionSeconds,
+                    unit: "秒",
+                    lowerBound: 1,
+                    upperBound: 600,
+                    detail: "单次进入阅读器后停留时间低于这个值时，不写入阅读时长统计。"
+                )
                 IntegerSettingsInputRow(title: "最多保存", value: $maxReadingDurationRecords, unit: "部", lowerBound: 20, upperBound: 1000)
             } footer: {
                 Text("阅读时长会在阅读器打开期间累计，应用进入后台或离开阅读器时保存。")

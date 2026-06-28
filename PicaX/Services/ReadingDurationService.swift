@@ -37,6 +37,7 @@ final class ReadingDurationService: ObservableObject {
         static let isEnabled = "settings.readingDuration.isEnabled"
         static let homeLimit = "settings.readingDuration.homeLimit"
         static let maxRecords = "settings.readingDuration.maxRecords"
+        static let minimumSessionSeconds = "settings.readingDuration.minimumSessionSeconds"
     }
 
     @Published private(set) var records: [ReadingDurationRecord] = [] {
@@ -58,6 +59,9 @@ final class ReadingDurationService: ObservableObject {
         }
         if defaults.object(forKey: Key.maxRecords) == nil {
             defaults.set(300, forKey: Key.maxRecords)
+        }
+        if defaults.object(forKey: Key.minimumSessionSeconds) == nil {
+            defaults.set(1, forKey: Key.minimumSessionSeconds)
         }
         records = PicaXSQLiteStore.loadReadingDuration()
         fillMissingCoversFromReadingHistory()
@@ -91,7 +95,8 @@ final class ReadingDurationService: ObservableObject {
     func record(item: ComicListItem, seconds rawSeconds: TimeInterval, at date: Date = Date()) {
         guard defaults.bool(forKey: Key.isEnabled) else { return }
         let seconds = rawSeconds.rounded(.down)
-        guard seconds >= 1 else { return }
+        let minimumSessionSeconds = max(defaults.integer(forKey: Key.minimumSessionSeconds), 1)
+        guard seconds >= TimeInterval(minimumSessionSeconds) else { return }
 
         let id = item.readingHistoryID
         let previousIDs = Set(records.map(\.id))
