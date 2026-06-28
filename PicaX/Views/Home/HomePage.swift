@@ -8,12 +8,15 @@ import AppKit
 struct HomePage: View {
     @EnvironmentObject private var platformAccounts: PlatformAccountService
     @EnvironmentObject private var readingHistory: ReadingHistoryService
+    @EnvironmentObject private var readingDuration: ReadingDurationService
     @EnvironmentObject private var downloadService: DownloadService
     @Environment(\.scenePhase) private var scenePhase
 
     @AppStorage(ReadingHistoryService.Key.homeLimit) private var historyHomeLimit = 10
+    @AppStorage(ReadingDurationService.Key.homeLimit) private var readingDurationHomeLimit = 6
     @AppStorage(DownloadSettingsKey.homeLimit) private var downloadHomeLimit = 8
     @AppStorage(HomeSettingsKey.showsHistorySection) private var showsHistorySection = true
+    @AppStorage(HomeSettingsKey.showsReadingDurationSection) private var showsReadingDurationSection = true
     @AppStorage(HomeSettingsKey.showsDownloadSection) private var showsDownloadSection = true
     @AppStorage(HomeSettingsKey.showsAccountManagementEntry) private var showsAccountManagementEntry = true
     @AppStorage(AppBehaviorSettingsKey.checksClipboardForComicLinks) private var checksClipboardForComicLinks = true
@@ -119,6 +122,28 @@ struct HomePage: View {
             } else {
                 Section("历史记录") {
                     HomeHistoryEntryLink(service: contentService)
+                }
+            }
+
+            if showsReadingDurationSection {
+                Section {
+                    HomeReadingDurationCard(
+                        records: readingDuration.latest(limit: readingDurationHomeLimit),
+                        todayKey: readingDuration.todayKey,
+                        todayDurationText: readingDuration.todayDurationText,
+                        totalDurationText: readingDuration.totalDurationText,
+                        service: contentService
+                    )
+                } header: {
+                    HomeReadingDurationHeader(service: contentService)
+                }
+            } else {
+                Section("阅读时长") {
+                    HomeReadingDurationEntryLink(
+                        todayDurationText: readingDuration.todayDurationText,
+                        totalDurationText: readingDuration.totalDurationText,
+                        service: contentService
+                    )
                 }
             }
 

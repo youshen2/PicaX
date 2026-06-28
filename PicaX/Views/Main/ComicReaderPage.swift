@@ -12,8 +12,10 @@ import AppKit
 struct ComicReaderPage: View {
     @EnvironmentObject private var platformAccounts: PlatformAccountService
     @EnvironmentObject private var readingHistory: ReadingHistoryService
+    @EnvironmentObject private var readingDuration: ReadingDurationService
     @Environment(\.displayScale) private var displayScale
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.scenePhase) private var scenePhase
     @AppStorage(ReaderSettingsKey.progressStyle) private var progressStyle = ReaderProgressStyle.circular.rawValue
     @AppStorage(ReaderSettingsKey.progressPosition) private var progressPosition = ReaderProgressPosition.trailing.rawValue
     @AppStorage(ReaderSettingsKey.showsPageLabel) private var showsPageLabel = true
@@ -72,6 +74,7 @@ struct ComicReaderPage: View {
     @State private var readerToastMessage: String?
     @State private var readerToastTask: Task<Void, Never>?
     @State private var historyRecordTask: Task<Void, Never>?
+    @State private var readingDurationSessionStart: Date?
 
     init(
         detail: ComicDetailInfo,
@@ -235,14 +238,26 @@ struct ComicReaderPage: View {
         }
         .task {
             migrateReaderVisibilityDefaultsIfNeeded()
+            startReadingDurationSessionIfNeeded()
             await load()
         }
         .onDisappear {
+            flushReadingDurationSession()
             readerToastTask?.cancel()
             historyRecordTask?.cancel()
             isAutoPaging = false
             isAutoPagingTurnInFlight = false
             autoPagingCommentActionChapterIndex = nil
+        }
+        .onChange(of: scenePhase) { _, newValue in
+            switch newValue {
+            case .active:
+                startReadingDurationSessionIfNeeded()
+            case .inactive, .background:
+                flushReadingDurationSession()
+            @unknown default:
+                break
+            }
         }
         .onChange(of: viewModel.currentChapterIndex) { _, _ in
             autoPagingCommentActionChapterIndex = nil
@@ -868,6 +883,17 @@ struct ComicReaderPage: View {
                 )
             }
         }
+    }
+
+    private func startReadingDurationSessionIfNeeded() {
+        guard scenePhase == .active, readingDurationSessionStart == nil else { return }
+        readingDurationSessionStart = Date()
+    }
+
+    private func flushReadingDurationSession() {
+        guard let startedAt = readingDurationSessionStart else { return }
+        readingDurationSessionStart = nil
+        readingDuration.record(item: detail.item, seconds: Date().timeIntervalSince(startedAt))
     }
 
     private var readerProgressStyle: ReaderProgressStyle {

@@ -76,6 +76,7 @@ enum BackupContentKind: String, Codable, CaseIterable, Identifiable, Hashable {
     case settings
     case favorites
     case readingHistory
+    case readingDuration
     case searchHistory
     case blockingKeywords
     case downloads
@@ -92,6 +93,8 @@ enum BackupContentKind: String, Codable, CaseIterable, Identifiable, Hashable {
             "本地收藏"
         case .readingHistory:
             "阅读历史"
+        case .readingDuration:
+            "阅读时长"
         case .searchHistory:
             "搜索历史"
         case .blockingKeywords:
@@ -111,6 +114,8 @@ enum BackupContentKind: String, Codable, CaseIterable, Identifiable, Hashable {
             "本地收藏夹内容"
         case .readingHistory:
             "阅读记录和进度"
+        case .readingDuration:
+            "阅读时长统计"
         case .searchHistory:
             "搜索记录"
         case .blockingKeywords:
@@ -333,6 +338,9 @@ enum BackupService {
         if key == ReadingHistoryService.Key.records {
             return .readingHistory
         }
+        if key == ReadingDurationService.Key.records {
+            return .readingDuration
+        }
         if key == SearchHistorySettingsKey.records {
             return .searchHistory
         }
@@ -370,6 +378,9 @@ enum BackupService {
         }
         if key == ReadingHistoryService.Key.records {
             return mergeReadingHistory(existingData: existingData, importedData: importedData)
+        }
+        if key == ReadingDurationService.Key.records {
+            return mergeReadingDuration(existingData: existingData, importedData: importedData)
         }
         if key == SearchHistorySettingsKey.records {
             return mergeSearchHistory(existingData: existingData, importedData: importedData)
@@ -430,6 +441,28 @@ enum BackupService {
             }
         }
         return try? JSONEncoder().encode(Array(values.values).sorted { $0.viewedAt > $1.viewedAt })
+    }
+
+    private static func mergeReadingDuration(existingData: Data, importedData: Data) -> Data? {
+        let local = (try? JSONDecoder().decode([ReadingDurationRecord].self, from: existingData)) ?? []
+        let imported = (try? JSONDecoder().decode([ReadingDurationRecord].self, from: importedData)) ?? []
+        var values = Dictionary(uniqueKeysWithValues: imported.map { ($0.id, $0) })
+        for record in local {
+            guard var existing = values[record.id] else {
+                values[record.id] = record
+                continue
+            }
+            if record.lastReadAt > existing.lastReadAt {
+                existing.item = record.item
+                existing.lastReadAt = record.lastReadAt
+            }
+            existing.totalSeconds = max(existing.totalSeconds, record.totalSeconds)
+            for (key, seconds) in record.dailySeconds {
+                existing.dailySeconds[key] = max(existing.dailySeconds[key] ?? 0, seconds)
+            }
+            values[record.id] = existing
+        }
+        return try? JSONEncoder().encode(Array(values.values).sorted { $0.lastReadAt > $1.lastReadAt })
     }
 
     private static func mergeSearchHistory(existingData: Data, importedData: Data) -> Data? {

@@ -58,7 +58,7 @@ struct SettingsPage: View {
                 }
             }
 
-            if showsAny(.downloads, .history, .blockingKeywords, .storage, .backup) {
+            if showsAny(.downloads, .history, .readingDuration, .blockingKeywords, .storage, .backup) {
                 Section("内容与数据") {
                     if shows(.downloads) {
                         SettingsNavigationLink(item: .downloads, systemImage: "arrow.down.circle") {
@@ -68,6 +68,11 @@ struct SettingsPage: View {
                     if shows(.history) {
                         SettingsNavigationLink(item: .history, systemImage: "clock.arrow.circlepath") {
                             HistorySettingsView()
+                        }
+                    }
+                    if shows(.readingDuration) {
+                        SettingsNavigationLink(item: .readingDuration, systemImage: "timer") {
+                            ReadingDurationSettingsView()
                         }
                     }
                     if shows(.blockingKeywords) {
@@ -152,6 +157,7 @@ private enum SettingsSearchItem: CaseIterable {
     case reader
     case downloads
     case history
+    case readingDuration
     case blockingKeywords
     case storage
     case backup
@@ -179,6 +185,8 @@ private enum SettingsSearchItem: CaseIterable {
             "下载"
         case .history:
             "历史记录"
+        case .readingDuration:
+            "阅读时长"
         case .blockingKeywords:
             "关键词屏蔽"
         case .storage:
@@ -213,7 +221,9 @@ private enum SettingsSearchItem: CaseIterable {
         case .downloads:
             "并发、限速与默认内容"
         case .history:
-            "记录保存与清理"
+            "历史记录与阅读进度"
+        case .readingDuration:
+            "统计、趋势与清理"
         case .blockingKeywords:
             "通用与 JMComic 专用关键词"
         case .storage:
@@ -235,6 +245,8 @@ private enum SettingsSearchItem: CaseIterable {
             ComicPlatform.allCases.map(\.title) + ["登录", "账号", "cookie"]
         case .reader:
             ["自动翻页", "点按翻页", "两指缩放", "双击缩放", "长按缩放", "预加载", "状态栏", "页码", "亮度", "深色模式"]
+        case .home:
+            ["阅读时长", "阅读历史", "下载", "折叠", "首页卡片"]
         case .storage:
             ["缓存", "图片缓存", "空间", "清空缓存"]
         case .blockingKeywords:
@@ -247,6 +259,10 @@ private enum SettingsSearchItem: CaseIterable {
             ["下载评论", "同时下载", "限速", "队列"]
         case .appBehavior:
             ["深色", "浅色", "剪贴板", "启动"]
+        case .history:
+            ["阅读进度", "清空", "记录"]
+        case .readingDuration:
+            ["阅读时长", "统计", "趋势", "清空", "记录"]
         default:
             []
         }
@@ -437,8 +453,10 @@ struct PlatformLoginView: View {
 
 private struct HomeSettingsView: View {
     @AppStorage(ReadingHistoryService.Key.homeLimit) private var homeLimit = 10
+    @AppStorage(ReadingDurationService.Key.homeLimit) private var readingDurationHomeLimit = 6
     @AppStorage(DownloadSettingsKey.homeLimit) private var downloadHomeLimit = 8
     @AppStorage(HomeSettingsKey.showsHistorySection) private var showsHistorySection = true
+    @AppStorage(HomeSettingsKey.showsReadingDurationSection) private var showsReadingDurationSection = true
     @AppStorage(HomeSettingsKey.showsDownloadSection) private var showsDownloadSection = true
     @AppStorage(HomeSettingsKey.showsAccountManagementEntry) private var showsAccountManagementEntry = true
 
@@ -447,16 +465,21 @@ private struct HomeSettingsView: View {
             Section {
                 Toggle("账号管理入口", isOn: $showsAccountManagementEntry)
                 Toggle("阅读历史", isOn: $showsHistorySection)
+                Toggle("阅读时长", isOn: $showsReadingDurationSection)
                 Toggle("下载", isOn: $showsDownloadSection)
             } header: {
                 Text("详细内容")
             } footer: {
-                Text("关闭阅读历史或下载后，首页仍保留入口，只折叠横向卡片等详细内容。")
+                Text("关闭阅读历史、阅读时长或下载后，首页仍保留入口，只折叠横向卡片等详细内容。")
             }
 
             Section {
                 if showsHistorySection {
                     IntegerSettingsInputRow(title: "阅读历史显示", value: $homeLimit, unit: "条", lowerBound: 1, upperBound: 30)
+                }
+
+                if showsReadingDurationSection {
+                    IntegerSettingsInputRow(title: "阅读时长显示", value: $readingDurationHomeLimit, unit: "部", lowerBound: 1, upperBound: 30)
                 }
 
                 if showsDownloadSection {
@@ -559,6 +582,7 @@ private struct StorageManagementView: View {
             Section("阅读历史") {
                 SettingsValueRow(title: "记录数量", value: "\(readingHistory.records.count) 条")
                 SettingsValueRow(title: "记录占用", value: ImageCacheService.formattedSize(historyBytes))
+                SettingsValueRow(title: "阅读时长", value: ImageCacheService.formattedSize(durationBytes))
             }
 
             Section("清理") {
@@ -622,8 +646,12 @@ private struct StorageManagementView: View {
         UserDefaults.standard.data(forKey: ReadingHistoryService.Key.records)?.count ?? 0
     }
 
+    private var durationBytes: Int {
+        UserDefaults.standard.data(forKey: ReadingDurationService.Key.records)?.count ?? 0
+    }
+
     private var localDataBytes: Int64 {
-        Int64(historyBytes + downloadUsage.metadataBytes)
+        Int64(historyBytes + durationBytes + downloadUsage.metadataBytes)
     }
 
     private var totalDiskUsage: Int64 {
@@ -642,6 +670,7 @@ private struct BackupSettingsView: View {
     @EnvironmentObject private var accountService: AccountService
     @EnvironmentObject private var platformAccounts: PlatformAccountService
     @EnvironmentObject private var readingHistory: ReadingHistoryService
+    @EnvironmentObject private var readingDuration: ReadingDurationService
     @EnvironmentObject private var downloadService: DownloadService
     @EnvironmentObject private var blockingKeywords: BlockingKeywordService
     @EnvironmentObject private var searchHistory: SearchHistoryService
@@ -853,6 +882,7 @@ private struct BackupSettingsView: View {
         accountService.reloadFromStore()
         platformAccounts.reloadFromDefaults()
         readingHistory.reloadFromDefaults()
+        readingDuration.reloadFromDefaults()
         downloadService.reloadFromDefaults()
         blockingKeywords.reloadFromDefaults()
         searchHistory.reloadFromDefaults()
@@ -1872,6 +1902,47 @@ private struct HistorySettingsView: View {
             Button("取消", role: .cancel) {}
         } message: {
             Text("历史条目会保留，但会移除章节和页码进度。")
+        }
+    }
+}
+
+private struct ReadingDurationSettingsView: View {
+    @EnvironmentObject private var readingDuration: ReadingDurationService
+    @AppStorage(ReadingDurationService.Key.isEnabled) private var recordsReadingDuration = true
+    @AppStorage(ReadingDurationService.Key.maxRecords) private var maxReadingDurationRecords = 300
+    @State private var showsClearDurationConfirmation = false
+
+    var body: some View {
+        List {
+            Section {
+                Toggle("记录阅读时长", isOn: $recordsReadingDuration)
+                IntegerSettingsInputRow(title: "最多保存", value: $maxReadingDurationRecords, unit: "部", lowerBound: 20, upperBound: 1000)
+            } footer: {
+                Text("阅读时长会在阅读器打开期间累计，应用进入后台或离开阅读器时保存。")
+            }
+
+            Section {
+                Button(role: .destructive) {
+                    showsClearDurationConfirmation = true
+                } label: {
+                    Label("清空阅读时长", systemImage: "timer")
+                }
+                .disabled(readingDuration.records.isEmpty)
+            }
+        }
+        .picaxInsetGroupedListStyle()
+        .navigationTitle("阅读时长")
+        .picaxHidesTabBar()
+        .onChange(of: maxReadingDurationRecords) { _, _ in
+            readingDuration.trimToCurrentLimit()
+        }
+        .alert("清空阅读时长？", isPresented: $showsClearDurationConfirmation) {
+            Button("清空阅读时长", role: .destructive) {
+                readingDuration.clear()
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("此操作只会删除阅读时长统计，不会影响历史记录和阅读进度。")
         }
     }
 }

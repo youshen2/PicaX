@@ -3,6 +3,7 @@ import SwiftUI
 
 enum HomeSettingsKey {
     static let showsHistorySection = "settings.home.showsHistorySection"
+    static let showsReadingDurationSection = "settings.home.showsReadingDurationSection"
     static let showsDownloadSection = "settings.home.showsDownloadSection"
     static let showsAccountManagementEntry = "settings.home.showsAccountManagementEntry"
 }
