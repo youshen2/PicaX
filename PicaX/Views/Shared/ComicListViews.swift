@@ -583,6 +583,8 @@ struct ComicSearchPage: View {
     @State private var aggregatePlatforms = Set(ComicPlatform.allCases)
     @State private var searchOptions = ComicSearchAdvancedOptions()
     @State private var showsAdvancedOptions = false
+    @State private var searchSubmitSuppressionGeneration = 0
+    @State private var suppressedSearchSubmitGeneration: Int?
     @FocusState private var isSearchFocused: Bool
 
     init(
@@ -663,6 +665,10 @@ struct ComicSearchPage: View {
         }
         .searchFocused($isSearchFocused)
         .onSubmit(of: .search) {
+            if suppressedSearchSubmitGeneration != nil {
+                suppressedSearchSubmitGeneration = nil
+                return
+            }
             Task { await search(force: true) }
         }
         .onChange(of: selectedSearchTarget) { _, _ in
@@ -883,12 +889,22 @@ struct ComicSearchPage: View {
     private func applyTagSuggestion(query suggestionQuery: String, tag: String, translatedTitle: String) {
         switch selectedSuggestionSelectionBehavior {
         case .fill:
+            searchSubmitSuppressionGeneration += 1
+            let suppressionGeneration = searchSubmitSuppressionGeneration
+            suppressedSearchSubmitGeneration = suppressionGeneration
             query = query.replacingLastSearchFragment(
                 with: "\(suggestionQuery) ",
                 suggestionTag: tag,
                 translatedTitle: translatedTitle
             )
-            isSearchFocused = true
+            Task { @MainActor in
+                await Task.yield()
+                isSearchFocused = true
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                if suppressedSearchSubmitGeneration == suppressionGeneration {
+                    suppressedSearchSubmitGeneration = nil
+                }
+            }
         case .search:
             query = suggestionQuery
             isSearchFocused = false
