@@ -680,11 +680,11 @@ private struct StorageManagementView: View {
     }
 
     private var historyBytes: Int {
-        UserDefaults.standard.data(forKey: ReadingHistoryService.Key.records)?.count ?? 0
+        PicaXSQLiteStore.bytes(for: .readingHistory)
     }
 
     private var durationBytes: Int {
-        UserDefaults.standard.data(forKey: ReadingDurationService.Key.records)?.count ?? 0
+        PicaXSQLiteStore.bytes(for: .readingDuration)
     }
 
     private var localDataBytes: Int64 {

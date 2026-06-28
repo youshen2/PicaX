@@ -232,11 +232,12 @@ enum BackupService {
     static func makeDocument(includedContent: Set<BackupContentKind>, defaults: UserDefaults = .standard) async throws -> PicaXBackupDocument {
         let orderedContent = BackupContentKind.allCases.filter { includedContent.contains($0) }
         let includesDownloads = includedContent.contains(.downloads)
+        let exportedDefaults = exportDefaults(includedContent: includedContent, defaults: defaults)
         let backup = PicaXBackup(
             formatVersion: formatVersion,
             createdAt: Date(),
             includedContent: orderedContent,
-            defaults: exportDefaults(includedContent: includedContent, defaults: defaults),
+            defaults: exportedDefaults,
             downloadFiles: includesDownloads ? try await exportDownloadFiles() : []
         )
         let data = try StoredZipArchive.makeArchive(entries: [
@@ -272,15 +273,19 @@ enum BackupService {
         return try decoder.decode(PicaXBackup.self, from: manifest)
     }
 
+    @MainActor
     private static func exportDefaults(includedContent: Set<BackupContentKind>, defaults: UserDefaults) -> [String: BackupDefaultValue] {
-        defaults.dictionaryRepresentation().reduce(into: [String: BackupDefaultValue]()) { result, element in
+        var values = defaults.dictionaryRepresentation().reduce(into: [String: BackupDefaultValue]()) { result, element in
             let key = element.key
-            guard shouldExportKey(key, includedContent: includedContent),
+            guard !isSQLiteBackedDataKey(key),
+                  shouldExportKey(key, includedContent: includedContent),
                   let value = BackupDefaultValue.from(element.value) else {
                 return
             }
             result[key] = value
         }
+        appendSQLiteDefaults(to: &values, includedContent: includedContent)
+        return values
     }
 
     private static func overwrite(with backup: PicaXBackup, defaults: UserDefaults) async throws {
@@ -291,9 +296,12 @@ enum BackupService {
         }
 
         for (key, value) in backup.defaults {
+            if isSQLiteBackedDataKey(key) { continue }
             guard let defaultsValue = value.userDefaultsValue() else { continue }
             defaults.set(defaultsValue, forKey: key)
         }
+
+        applySQLiteBackupValues(backup)
 
         if includedContent.contains(.downloads) {
             try await replaceDownloadFiles(with: backup.downloadFiles)
@@ -302,6 +310,9 @@ enum BackupService {
 
     private static func merge(with backup: PicaXBackup, defaults: UserDefaults) async throws {
         for (key, importedValue) in backup.defaults {
+            if mergeSQLiteBackupValue(key: key, importedValue: importedValue) {
+                continue
+            }
             if let mergedValue = mergedDefaultValue(key: key, importedValue: importedValue, defaults: defaults) {
                 defaults.set(mergedValue, forKey: key)
             }
@@ -310,6 +321,165 @@ enum BackupService {
         if backup.contentSelection.contains(.downloads) {
             try await mergeDownloadFiles(backup.downloadFiles)
         }
+    }
+
+    @MainActor
+    private static func appendSQLiteDefaults(to values: inout [String: BackupDefaultValue], includedContent: Set<BackupContentKind>) {
+        if includedContent.contains(.accounts),
+           let data = try? JSONEncoder().encode(ComicPlatform.allCases.compactMap({ PicaXSQLiteStore.loadPlatformAccounts()[$0] })) {
+            values["picax.platformAccounts"] = BackupDefaultValue.from(data)
+        }
+        if includedContent.contains(.favorites),
+           let data = try? JSONEncoder().encode(PicaXSQLiteStore.loadLocalFavorites(folderID: "default")) {
+            values["picax.localFavorites.default"] = BackupDefaultValue.from(data)
+        }
+        if includedContent.contains(.readingHistory),
+           let data = try? JSONEncoder().encode(PicaXSQLiteStore.loadReadingHistory()) {
+            values[ReadingHistoryService.Key.records] = BackupDefaultValue.from(data)
+        }
+        if includedContent.contains(.readingDuration),
+           let data = try? JSONEncoder().encode(PicaXSQLiteStore.loadReadingDuration()) {
+            values[ReadingDurationService.Key.records] = BackupDefaultValue.from(data)
+        }
+        if includedContent.contains(.searchHistory),
+           let data = try? JSONEncoder().encode(PicaXSQLiteStore.loadSearchHistory()) {
+            values[SearchHistorySettingsKey.records] = BackupDefaultValue.from(data)
+        }
+        if includedContent.contains(.downloads),
+           let data = try? JSONEncoder().encode(PicaXSQLiteStore.loadDownloadRecords()) {
+            values[DownloadSettingsKey.records] = BackupDefaultValue.from(data)
+        }
+    }
+
+    @MainActor
+    private static func applySQLiteBackupValues(_ backup: PicaXBackup) {
+        let content = backup.contentSelection
+        if content.contains(.accounts) {
+            replaceSQLiteValue(
+                backup.defaults["picax.platformAccounts"],
+                as: PlatformAccount.self,
+                replace: PicaXSQLiteStore.replacePlatformAccounts
+            )
+        }
+        if content.contains(.favorites) {
+            replaceSQLiteValue(
+                backup.defaults["picax.localFavorites.default"],
+                as: StoredLocalFavorite.self
+            ) { PicaXSQLiteStore.replaceLocalFavorites($0, folderID: "default") }
+        }
+        if content.contains(.readingHistory) {
+            replaceSQLiteValue(
+                backup.defaults[ReadingHistoryService.Key.records],
+                as: ReadingHistoryRecord.self,
+                replace: PicaXSQLiteStore.replaceReadingHistory
+            )
+        }
+        if content.contains(.readingDuration) {
+            replaceSQLiteValue(
+                backup.defaults[ReadingDurationService.Key.records],
+                as: ReadingDurationRecord.self,
+                replace: PicaXSQLiteStore.replaceReadingDuration
+            )
+        }
+        if content.contains(.searchHistory) {
+            replaceSQLiteValue(
+                backup.defaults[SearchHistorySettingsKey.records],
+                as: SearchHistoryRecord.self,
+                replace: PicaXSQLiteStore.replaceSearchHistory
+            )
+        }
+        if content.contains(.downloads) {
+            replaceSQLiteValue(
+                backup.defaults[DownloadSettingsKey.records],
+                as: DownloadRecord.self,
+                replace: PicaXSQLiteStore.replaceDownloadRecords
+            )
+        }
+
+    }
+
+    @discardableResult
+    @MainActor
+    private static func mergeSQLiteBackupValue(key: String, importedValue: BackupDefaultValue) -> Bool {
+        guard isSQLiteBackedDataKey(key) else {
+            return false
+        }
+        guard let importedData = importedValue.decodedData() else {
+            return true
+        }
+
+        if key == "picax.platformAccounts" {
+            let existingData = (try? JSONEncoder().encode(ComicPlatform.allCases.compactMap { PicaXSQLiteStore.loadPlatformAccounts()[$0] })) ?? Data()
+            if let data = mergePlatformAccounts(existingData: existingData, importedData: importedData),
+               let values = try? JSONDecoder().decode([PlatformAccount].self, from: data) {
+                PicaXSQLiteStore.replacePlatformAccounts(values)
+            }
+            return true
+        }
+        if key == "picax.localFavorites.default" {
+            let existingData = (try? JSONEncoder().encode(PicaXSQLiteStore.loadLocalFavorites(folderID: "default"))) ?? Data()
+            if let data = mergeLocalFavorites(existingData: existingData, importedData: importedData),
+               let values = try? JSONDecoder().decode([StoredLocalFavorite].self, from: data) {
+                PicaXSQLiteStore.replaceLocalFavorites(values, folderID: "default")
+            }
+            return true
+        }
+        if key == ReadingHistoryService.Key.records {
+            let existingData = (try? JSONEncoder().encode(PicaXSQLiteStore.loadReadingHistory())) ?? Data()
+            if let data = mergeReadingHistory(existingData: existingData, importedData: importedData),
+               let values = try? JSONDecoder().decode([ReadingHistoryRecord].self, from: data) {
+                PicaXSQLiteStore.replaceReadingHistory(values)
+            }
+            return true
+        }
+        if key == ReadingDurationService.Key.records {
+            let existingData = (try? JSONEncoder().encode(PicaXSQLiteStore.loadReadingDuration())) ?? Data()
+            if let data = mergeReadingDuration(existingData: existingData, importedData: importedData),
+               let values = try? JSONDecoder().decode([ReadingDurationRecord].self, from: data) {
+                PicaXSQLiteStore.replaceReadingDuration(values)
+            }
+            return true
+        }
+        if key == SearchHistorySettingsKey.records {
+            let existingData = (try? JSONEncoder().encode(PicaXSQLiteStore.loadSearchHistory())) ?? Data()
+            if let data = mergeSearchHistory(existingData: existingData, importedData: importedData),
+               let values = try? JSONDecoder().decode([SearchHistoryRecord].self, from: data) {
+                PicaXSQLiteStore.replaceSearchHistory(values)
+            }
+            return true
+        }
+        if key == DownloadSettingsKey.records {
+            let existingData = (try? JSONEncoder().encode(PicaXSQLiteStore.loadDownloadRecords())) ?? Data()
+            if let data = mergeDownloadRecords(existingData: existingData, importedData: importedData),
+               let values = try? JSONDecoder().decode([DownloadRecord].self, from: data) {
+                PicaXSQLiteStore.replaceDownloadRecords(values)
+            }
+            return true
+        }
+        return true
+    }
+
+    @MainActor
+    private static func replaceSQLiteValue<Value: Decodable>(
+        _ value: BackupDefaultValue?,
+        as type: Value.Type,
+        replace: ([Value]) -> Void
+    ) {
+        guard let data = value?.decodedData(),
+              let values = try? JSONDecoder().decode([Value].self, from: data) else {
+            replace([])
+            return
+        }
+        replace(values)
+    }
+
+    private static func isSQLiteBackedDataKey(_ key: String) -> Bool {
+        key == "picax.platformAccounts"
+            || key == "picax.localFavorites.default"
+            || key == ReadingHistoryService.Key.records
+            || key == ReadingDurationService.Key.records
+            || key == SearchHistorySettingsKey.records
+            || key == DownloadSettingsKey.records
     }
 
     private static func shouldExportKey(_ key: String, includedContent: Set<BackupContentKind>) -> Bool {

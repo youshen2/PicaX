@@ -3025,33 +3025,16 @@ struct LocalFavoritesStore {
     }
 
     func items(folderID: String) -> [ComicListItem] {
-        guard let data = UserDefaults.standard.data(forKey: "picax.localFavorites.\(folderID)"),
-              let values = try? JSONDecoder().decode([StoredLocalFavorite].self, from: data) else {
-            return []
-        }
-        return values.map(\.item)
+        PicaXSQLiteStore.loadLocalFavorites(folderID: folderID).map(\.item)
     }
 
     func add(item: ComicListItem, folderID: String) {
-        let key = "picax.localFavorites.\(folderID)"
-        var values: [StoredLocalFavorite]
-        if let data = UserDefaults.standard.data(forKey: key),
-           let decoded = try? JSONDecoder().decode([StoredLocalFavorite].self, from: data) {
-            values = decoded
-        } else {
-            values = []
-        }
-
         let stored = StoredLocalFavorite(item: item, favoriteDate: Date())
-        values.removeAll { $0.id == item.id && $0.platform == item.platform }
-        values.insert(stored, at: 0)
-
-        guard let data = try? JSONEncoder().encode(values) else { return }
-        UserDefaults.standard.set(data, forKey: key)
+        PicaXSQLiteStore.upsertLocalFavorite(stored, folderID: folderID)
     }
 }
 
-private struct StoredLocalFavorite: Codable {
+struct StoredLocalFavorite: Codable {
     let id: String
     let platform: ComicPlatform
     let title: String

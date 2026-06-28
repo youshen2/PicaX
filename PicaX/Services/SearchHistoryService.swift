@@ -99,8 +99,6 @@ final class SearchHistoryService: ObservableObject {
     @Published private(set) var records: [SearchHistoryRecord] = []
 
     private let defaults: UserDefaults
-    private let encoder = JSONEncoder()
-    private let decoder = JSONDecoder()
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -110,7 +108,7 @@ final class SearchHistoryService: ObservableObject {
         if defaults.object(forKey: SearchHistorySettingsKey.maxRecords) == nil {
             defaults.set(50, forKey: SearchHistorySettingsKey.maxRecords)
         }
-        records = Self.loadRecords(defaults: defaults, decoder: decoder)
+        records = PicaXSQLiteStore.loadSearchHistory()
     }
 
     var isEnabled: Bool {
@@ -127,14 +125,20 @@ final class SearchHistoryService: ObservableObject {
         records.removeAll { record in
             record.target == historyTarget && normalized(record.keyword) == normalizedKeyword
         }
-        records.insert(SearchHistoryRecord(keyword: keyword, target: historyTarget, searchedAt: Date()), at: 0)
+        let previousIDs = Set(records.map(\.id))
+        let record = SearchHistoryRecord(keyword: keyword, target: historyTarget, searchedAt: Date())
+        records.insert(record, at: 0)
         trimToLimit()
-        save()
+        PicaXSQLiteStore.upsertSearchHistory(record)
+        let currentIDs = Set(records.map(\.id))
+        for removedID in previousIDs.subtracting(currentIDs) {
+            PicaXSQLiteStore.deleteSearchHistory(id: removedID)
+        }
     }
 
     func remove(_ record: SearchHistoryRecord) {
         records.removeAll { $0.id == record.id }
-        save()
+        PicaXSQLiteStore.deleteSearchHistory(id: record.id)
     }
 
     func remove(at offsets: IndexSet, displayedRecords: [SearchHistoryRecord]) {
@@ -146,16 +150,16 @@ final class SearchHistoryService: ObservableObject {
 
     func clear() {
         records.removeAll()
-        defaults.removeObject(forKey: SearchHistorySettingsKey.records)
+        PicaXSQLiteStore.clearSearchHistory()
     }
 
     func trimToCurrentLimit() {
         trimToLimit()
-        save()
+        PicaXSQLiteStore.replaceSearchHistory(records)
     }
 
     func reloadFromDefaults() {
-        records = Self.loadRecords(defaults: defaults, decoder: decoder)
+        records = PicaXSQLiteStore.loadSearchHistory()
     }
 
     private func trimToLimit() {
@@ -169,16 +173,4 @@ final class SearchHistoryService: ObservableObject {
         value.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
     }
 
-    private func save() {
-        guard let data = try? encoder.encode(records) else { return }
-        defaults.set(data, forKey: SearchHistorySettingsKey.records)
-    }
-
-    private static func loadRecords(defaults: UserDefaults, decoder: JSONDecoder) -> [SearchHistoryRecord] {
-        guard let data = defaults.data(forKey: SearchHistorySettingsKey.records),
-              let records = try? decoder.decode([SearchHistoryRecord].self, from: data) else {
-            return []
-        }
-        return records.sorted { $0.searchedAt > $1.searchedAt }
-    }
 }

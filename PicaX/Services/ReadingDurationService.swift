@@ -42,8 +42,6 @@ final class ReadingDurationService: ObservableObject {
     @Published private(set) var records: [ReadingDurationRecord] = []
 
     private let defaults: UserDefaults
-    private let encoder = JSONEncoder()
-    private let decoder = JSONDecoder()
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -56,7 +54,7 @@ final class ReadingDurationService: ObservableObject {
         if defaults.object(forKey: Key.maxRecords) == nil {
             defaults.set(300, forKey: Key.maxRecords)
         }
-        records = Self.loadRecords(defaults: defaults, decoder: decoder)
+        records = PicaXSQLiteStore.loadReadingDuration()
     }
 
     var todayKey: String {
@@ -90,6 +88,7 @@ final class ReadingDurationService: ObservableObject {
         guard seconds >= 1 else { return }
 
         let id = item.readingHistoryID
+        let previousIDs = Set(records.map(\.id))
         let key = Self.dayKey(for: date)
         if let index = records.firstIndex(where: { $0.id == id }) {
             var record = records[index]
@@ -108,26 +107,32 @@ final class ReadingDurationService: ObservableObject {
             records.insert(record, at: 0)
         }
         trimToLimit()
-        save()
+        if let record = records.first(where: { $0.id == id }) {
+            PicaXSQLiteStore.upsertReadingDuration(record)
+        }
+        let currentIDs = Set(records.map(\.id))
+        for removedID in previousIDs.subtracting(currentIDs) {
+            PicaXSQLiteStore.deleteReadingDuration(id: removedID)
+        }
     }
 
     func remove(_ record: ReadingDurationRecord) {
         records.removeAll { $0.id == record.id }
-        save()
+        PicaXSQLiteStore.deleteReadingDuration(id: record.id)
     }
 
     func clear() {
         records.removeAll()
-        defaults.removeObject(forKey: Key.records)
+        PicaXSQLiteStore.clearReadingDuration()
     }
 
     func trimToCurrentLimit() {
         trimToLimit()
-        save()
+        PicaXSQLiteStore.replaceReadingDuration(records)
     }
 
     func reloadFromDefaults() {
-        records = Self.loadRecords(defaults: defaults, decoder: decoder)
+        records = PicaXSQLiteStore.loadReadingDuration()
     }
 
     private func trimToLimit() {
@@ -135,19 +140,6 @@ final class ReadingDurationService: ObservableObject {
         if records.count > maxRecords {
             records = Array(records.prefix(maxRecords))
         }
-    }
-
-    private func save() {
-        guard let data = try? encoder.encode(records) else { return }
-        defaults.set(data, forKey: Key.records)
-    }
-
-    private static func loadRecords(defaults: UserDefaults, decoder: JSONDecoder) -> [ReadingDurationRecord] {
-        guard let data = defaults.data(forKey: Key.records),
-              let records = try? decoder.decode([ReadingDurationRecord].self, from: data) else {
-            return []
-        }
-        return records.sorted { $0.lastReadAt > $1.lastReadAt }
     }
 
     nonisolated static func formattedDuration(_ seconds: TimeInterval) -> String {

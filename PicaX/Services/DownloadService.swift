@@ -248,7 +248,7 @@ final class DownloadService: ObservableObject {
         if defaults.object(forKey: DownloadSettingsKey.speedLimitKBPerSecond) == nil {
             defaults.set(1024, forKey: DownloadSettingsKey.speedLimitKBPerSecond)
         }
-        records = Self.loadRecords(defaults: defaults, decoder: decoder)
+        records = PicaXSQLiteStore.loadDownloadRecords()
         tasks = Self.loadTasks(defaults: defaults, decoder: decoder)
     }
 
@@ -389,7 +389,7 @@ final class DownloadService: ObservableObject {
             try? fileManager.removeItem(at: directoryURL)
         }
         records.removeAll { $0.id == record.id }
-        saveRecords()
+        PicaXSQLiteStore.deleteDownloadRecord(id: record.id)
     }
 
     func clearFinishedDownloads() {
@@ -399,11 +399,11 @@ final class DownloadService: ObservableObject {
             }
         }
         records.removeAll()
-        defaults.removeObject(forKey: DownloadSettingsKey.records)
+        PicaXSQLiteStore.clearDownloadRecords()
     }
 
     func reloadFromDefaults() {
-        records = Self.loadRecords(defaults: defaults, decoder: decoder)
+        records = PicaXSQLiteStore.loadDownloadRecords()
         tasks = Self.loadTasks(defaults: defaults, decoder: decoder)
         startIfNeeded()
     }
@@ -412,7 +412,7 @@ final class DownloadService: ObservableObject {
         let filesBytes = await Self.downloadsDirectorySize()
         return DownloadStorageUsage(
             filesBytes: filesBytes,
-            recordsBytes: defaults.data(forKey: DownloadSettingsKey.records)?.count ?? 0,
+            recordsBytes: PicaXSQLiteStore.bytes(for: .downloadRecords),
             tasksBytes: defaults.data(forKey: DownloadSettingsKey.tasks)?.count ?? 0
         )
     }
@@ -729,17 +729,12 @@ final class DownloadService: ObservableObject {
         records.removeAll { $0.id == id }
         records.insert(record, at: 0)
         records.sort { $0.updatedAt > $1.updatedAt }
-        saveRecords()
+        PicaXSQLiteStore.upsertDownloadRecord(record)
     }
 
     private func updateTask(_ id: String, update: (inout ComicDownloadTask) -> Void) {
         guard let index = tasks.firstIndex(where: { $0.id == id }) else { return }
         update(&tasks[index])
-    }
-
-    private func saveRecords() {
-        guard let data = try? encoder.encode(records) else { return }
-        defaults.set(data, forKey: DownloadSettingsKey.records)
     }
 
     private func saveTasks() {
@@ -755,14 +750,6 @@ final class DownloadService: ObservableObject {
         }
         guard let data = try? encoder.encode(persistedTasks) else { return }
         defaults.set(data, forKey: DownloadSettingsKey.tasks)
-    }
-
-    private static func loadRecords(defaults: UserDefaults, decoder: JSONDecoder) -> [DownloadRecord] {
-        guard let data = defaults.data(forKey: DownloadSettingsKey.records),
-              let records = try? decoder.decode([DownloadRecord].self, from: data) else {
-            return []
-        }
-        return records.sorted { $0.updatedAt > $1.updatedAt }
     }
 
     private static func loadTasks(defaults: UserDefaults, decoder: JSONDecoder) -> [ComicDownloadTask] {

@@ -77,7 +77,7 @@ struct MainTabView_Previews: PreviewProvider {
     static var previews: some View {
         MainTabView()
             .environmentObject(AccountService(store: AccountStore(defaults: .preview)))
-            .environmentObject(PlatformAccountService(defaults: .preview))
+            .environmentObject(PlatformAccountService())
             .environmentObject(ReadingHistoryService(defaults: .preview))
             .environmentObject(ReadingDurationService(defaults: .preview))
             .environmentObject(DownloadService(defaults: .preview))
