@@ -5,7 +5,6 @@ struct ContentView: View {
     @EnvironmentObject private var appSettings: AppSettings
     @EnvironmentObject private var accountService: AccountService
     @AppStorage(AppAppearanceSettingsKey.colorScheme) private var colorScheme = AppAppearanceMode.system.rawValue
-    @AppStorage(AppLanguageSettingsKey.language) private var language = AppLanguageMode.system.rawValue
     @AppStorage(AppBehaviorSettingsKey.checksUpdatesOnLaunch) private var checksUpdatesOnLaunch = true
     @State private var didRunAutomaticUpdateCheck = false
     @State private var automaticUpdateAlert: AutomaticUpdateAlert?
@@ -23,7 +22,6 @@ struct ContentView: View {
             }
         }
         .preferredColorScheme(selectedAppearanceMode.colorScheme)
-        .environment(\.locale, selectedLanguageMode.locale)
         .task {
             await checkForUpdatesOnLaunch()
         }
@@ -41,10 +39,6 @@ struct ContentView: View {
 
     private var selectedAppearanceMode: AppAppearanceMode {
         AppAppearanceMode(rawValue: colorScheme) ?? .system
-    }
-
-    private var selectedLanguageMode: AppLanguageMode {
-        AppLanguageMode(rawValue: language) ?? .system
     }
 
     @MainActor

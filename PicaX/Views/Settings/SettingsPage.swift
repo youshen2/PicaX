@@ -200,7 +200,7 @@ private enum SettingsSearchItem: CaseIterable {
         case .backup:
             "备份与恢复"
         case .appDisplay:
-            "显示与语言"
+            "显示"
         case .appBehavior:
             "App行为"
         case .network:
@@ -239,7 +239,7 @@ private enum SettingsSearchItem: CaseIterable {
         case .backup:
             "导出或导入本地数据"
         case .appDisplay:
-            "显示模式与界面语言"
+            "显示模式"
         case .appBehavior:
             "剪贴板检测与启动检查"
         case .network:
@@ -268,7 +268,7 @@ private enum SettingsSearchItem: CaseIterable {
         case .downloads:
             ["下载评论", "同时下载", "限速", "队列", "ZIP", "导出", "文件名"]
         case .appDisplay:
-            ["深色", "浅色", "语言", "多语言"]
+            ["深色", "浅色"]
         case .appBehavior:
             ["剪贴板", "启动", "更新"]
         case .history:
@@ -289,7 +289,6 @@ private enum SettingsSearchItem: CaseIterable {
 
 private struct AppDisplaySettingsView: View {
     @AppStorage(AppAppearanceSettingsKey.colorScheme) private var colorScheme = AppAppearanceMode.system.rawValue
-    @AppStorage(AppLanguageSettingsKey.language) private var language = AppLanguageMode.system.rawValue
 
     var body: some View {
         List {
@@ -304,20 +303,9 @@ private struct AppDisplaySettingsView: View {
             } footer: {
                 Text("选择后会应用到整个应用。")
             }
-
-            Section {
-                Picker("语言", selection: $language) {
-                    ForEach(AppLanguageMode.allCases) { mode in
-                        Text(mode.title)
-                            .tag(mode.rawValue)
-                    }
-                }
-            } footer: {
-                Text("选择“跟随系统”时，应用会根据系统首选语言自动选择支持的语言。")
-            }
         }
         .picaxInsetGroupedListStyle()
-        .navigationTitle("显示与语言")
+        .navigationTitle("显示")
         .picaxHidesTabBar()
     }
 }
