@@ -316,6 +316,22 @@ enum BackupService {
         try await importBackup(backup, mode: mode, defaults: defaults)
     }
 
+    static func filteredBackup(_ backup: PicaXBackup, includedContent: Set<BackupContentKind>) -> PicaXBackup {
+        let selectedContent = backup.contentSelection.intersection(includedContent)
+        let orderedContent = BackupContentKind.allCases.filter { selectedContent.contains($0) }
+        let defaults = backup.defaults.filter { key, _ in
+            guard let contentKind = contentKind(for: key) else { return false }
+            return selectedContent.contains(contentKind)
+        }
+        return PicaXBackup(
+            formatVersion: backup.formatVersion,
+            createdAt: backup.createdAt,
+            includedContent: orderedContent,
+            defaults: defaults,
+            downloadFiles: selectedContent.contains(.downloads) ? backup.downloadFiles : []
+        )
+    }
+
     private static func decodeBackup(from data: Data) throws -> PicaXBackup {
         let entries = try StoredZipArchive.extractEntries(from: data)
         let entryMap = entries.reduce(into: [String: Data]()) { result, entry in

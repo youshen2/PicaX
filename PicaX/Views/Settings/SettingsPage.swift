@@ -861,14 +861,14 @@ private struct BackupSettingsView: View {
                 onCancel: {
                     pendingImport = nil
                 },
-                onOverwrite: {
+                onOverwrite: { includedContent in
                     Task {
-                        await importBackup(preview, mode: .overwrite)
+                        await importBackup(preview, mode: .overwrite, includedContent: includedContent)
                     }
                 },
-                onMerge: {
+                onMerge: { includedContent in
                     Task {
-                        await importBackup(preview, mode: .merge)
+                        await importBackup(preview, mode: .merge, includedContent: includedContent)
                     }
                 }
             )
@@ -954,7 +954,7 @@ private struct BackupSettingsView: View {
     }
 
     @MainActor
-    private func importBackup(_ preview: BackupImportPreview, mode: BackupImportMode) async {
+    private func importBackup(_ preview: BackupImportPreview, mode: BackupImportMode, includedContent: Set<BackupContentKind>) async {
         guard !isImporting else { return }
         isImporting = true
         defer {
@@ -963,7 +963,8 @@ private struct BackupSettingsView: View {
         }
 
         do {
-            try await BackupService.importBackup(preview.backup, mode: mode)
+            let backup = BackupService.filteredBackup(preview.backup, includedContent: includedContent)
+            try await BackupService.importBackup(backup, mode: mode)
             reloadServicesAfterImport()
             operationResult = BackupOperationResult(title: "导入完成", message: mode == .overwrite ? "备份已覆盖本地数据。" : "备份已与本地数据合并。")
         } catch {
@@ -1017,11 +1018,31 @@ private struct BackupImportPreviewSheet: View {
     let preview: BackupImportPreview
     let isImporting: Bool
     let onCancel: () -> Void
-    let onOverwrite: () -> Void
-    let onMerge: () -> Void
+    let onOverwrite: (Set<BackupContentKind>) -> Void
+    let onMerge: (Set<BackupContentKind>) -> Void
+    @State private var selectedContent: Set<BackupContentKind>
+
+    init(
+        preview: BackupImportPreview,
+        isImporting: Bool,
+        onCancel: @escaping () -> Void,
+        onOverwrite: @escaping (Set<BackupContentKind>) -> Void,
+        onMerge: @escaping (Set<BackupContentKind>) -> Void
+    ) {
+        self.preview = preview
+        self.isImporting = isImporting
+        self.onCancel = onCancel
+        self.onOverwrite = onOverwrite
+        self.onMerge = onMerge
+        _selectedContent = State(initialValue: preview.backup.contentSelection)
+    }
 
     private var includedContent: [BackupContentKind] {
         BackupContentKind.allCases.filter { preview.backup.contentSelection.contains($0) }
+    }
+
+    private var canImport: Bool {
+        !isImporting && !selectedContent.isEmpty
     }
 
     var body: some View {
@@ -1035,26 +1056,40 @@ private struct BackupImportPreviewSheet: View {
                 }
 
                 Section {
+                    HStack {
+                        Button("全选") {
+                            selectedContent = Set(includedContent)
+                        }
+                        .disabled(isImporting || selectedContent.count == includedContent.count)
+
+                        Spacer()
+
+                        Button("清空") {
+                            selectedContent.removeAll()
+                        }
+                        .disabled(isImporting || selectedContent.isEmpty)
+                    }
+
                     ForEach(includedContent) { content in
-                        Label {
+                        Toggle(isOn: importContentBinding(for: content)) {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(content.title)
                                 Text(content.summary)
                                     .font(.footnote)
                                     .foregroundStyle(.secondary)
                             }
-                        } icon: {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundStyle(.green)
                         }
+                        .disabled(isImporting)
                     }
                 } header: {
-                    Text("包含内容")
+                    Text("导入内容")
+                } footer: {
+                    Text(selectedContent.isEmpty ? "至少选择一项内容后才能导入。" : "默认全选；关闭的内容不会被导入，覆盖本地时也不会清空对应本地数据。")
                 }
 
                 Section {
                     Button {
-                        onMerge()
+                        onMerge(selectedContent)
                     } label: {
                         if isImporting {
                             HStack {
@@ -1065,16 +1100,16 @@ private struct BackupImportPreviewSheet: View {
                             Label("合并导入", systemImage: "plus.circle")
                         }
                     }
-                    .disabled(isImporting)
+                    .disabled(!canImport)
 
                     Button(role: .destructive) {
-                        onOverwrite()
+                        onOverwrite(selectedContent)
                     } label: {
                         Label("覆盖本地", systemImage: "arrow.triangle.2.circlepath")
                     }
-                    .disabled(isImporting)
+                    .disabled(!canImport)
                 } footer: {
-                    Text("合并会保留本地已有内容；覆盖只会替换此备份包含的内容。")
+                    Text("合并会保留本地已有内容；覆盖只会替换所选内容。")
                 }
             }
             .navigationTitle(preview.title)
@@ -1089,6 +1124,18 @@ private struct BackupImportPreviewSheet: View {
             }
         }
         .presentationDetents([.medium, .large])
+    }
+
+    private func importContentBinding(for content: BackupContentKind) -> Binding<Bool> {
+        Binding {
+            selectedContent.contains(content)
+        } set: { isSelected in
+            if isSelected {
+                selectedContent.insert(content)
+            } else {
+                selectedContent.remove(content)
+            }
+        }
     }
 
     private static let dateFormatter: DateFormatter = {
