@@ -162,7 +162,9 @@ struct DownloadListPage: View {
             }
         }
 
-        displayRecords = records
+        if displayRecords != records {
+            displayRecords = records
+        }
     }
 
     private func isOrdered(_ lhs: DownloadRecord, before rhs: DownloadRecord) -> Bool {

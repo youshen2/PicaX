@@ -167,6 +167,12 @@ enum BackupContentKind: String, Codable, CaseIterable, Identifiable, Hashable {
 struct BackupFile: Codable {
     var relativePath: String
     var data: String? = nil
+    var rawData: Data? = nil
+
+    private enum CodingKeys: String, CodingKey {
+        case relativePath
+        case data
+    }
 }
 
 struct BackupDefaultValue: Codable {
@@ -262,6 +268,8 @@ enum BackupService {
         decoder.dateDecodingStrategy = .iso8601
         return decoder
     }()
+    private static let valueEncoder = JSONEncoder()
+    private static let valueDecoder = JSONDecoder()
 
     static func makeDocument(includedContent: Set<BackupContentKind>, defaults: UserDefaults = .standard) async throws -> PicaXBackupDocument {
         let orderedContent = BackupContentKind.allCases.filter { includedContent.contains($0) }
@@ -325,7 +333,7 @@ enum BackupService {
         backup.downloadFiles = content.downloadFiles.map { file in
             var file = file
             if let data = entryMap[BackupSQLiteArchive.downloadEntryPath(for: file.relativePath)] {
-                file.data = data.base64EncodedString()
+                file.rawData = data
             }
             return file
         }
@@ -384,29 +392,36 @@ enum BackupService {
 
     @MainActor
     private static func appendSQLiteDefaults(to values: inout [String: BackupDefaultValue], includedContent: Set<BackupContentKind>) {
-        if includedContent.contains(.accounts),
-           let data = try? JSONEncoder().encode(ComicPlatform.allCases.compactMap({ PicaXSQLiteStore.loadPlatformAccounts()[$0] })) {
-            values["picax.platformAccounts"] = BackupDefaultValue.from(data)
+        if includedContent.contains(.accounts) {
+            let accounts = PicaXSQLiteStore.loadPlatformAccounts()
+            if let data = encodeValue(ComicPlatform.allCases.compactMap { accounts[$0] }) {
+                values["picax.platformAccounts"] = BackupDefaultValue.from(data)
+            }
         }
-        if includedContent.contains(.favorites),
-           let data = try? JSONEncoder().encode(PicaXSQLiteStore.loadLocalFavorites(folderID: "default")) {
-            values["picax.localFavorites.default"] = BackupDefaultValue.from(data)
+        if includedContent.contains(.favorites) {
+            if let data = encodeValue(PicaXSQLiteStore.loadLocalFavorites(folderID: "default")) {
+                values["picax.localFavorites.default"] = BackupDefaultValue.from(data)
+            }
         }
-        if includedContent.contains(.readingHistory),
-           let data = try? JSONEncoder().encode(PicaXSQLiteStore.loadReadingHistory()) {
-            values[ReadingHistoryService.Key.records] = BackupDefaultValue.from(data)
+        if includedContent.contains(.readingHistory) {
+            if let data = encodeValue(PicaXSQLiteStore.loadReadingHistory()) {
+                values[ReadingHistoryService.Key.records] = BackupDefaultValue.from(data)
+            }
         }
-        if includedContent.contains(.readingDuration),
-           let data = try? JSONEncoder().encode(PicaXSQLiteStore.loadReadingDuration()) {
-            values[ReadingDurationService.Key.records] = BackupDefaultValue.from(data)
+        if includedContent.contains(.readingDuration) {
+            if let data = encodeValue(PicaXSQLiteStore.loadReadingDuration()) {
+                values[ReadingDurationService.Key.records] = BackupDefaultValue.from(data)
+            }
         }
-        if includedContent.contains(.searchHistory),
-           let data = try? JSONEncoder().encode(PicaXSQLiteStore.loadSearchHistory()) {
-            values[SearchHistorySettingsKey.records] = BackupDefaultValue.from(data)
+        if includedContent.contains(.searchHistory) {
+            if let data = encodeValue(PicaXSQLiteStore.loadSearchHistory()) {
+                values[SearchHistorySettingsKey.records] = BackupDefaultValue.from(data)
+            }
         }
-        if includedContent.contains(.downloads),
-           let data = try? JSONEncoder().encode(PicaXSQLiteStore.loadDownloadRecords()) {
-            values[DownloadSettingsKey.records] = BackupDefaultValue.from(data)
+        if includedContent.contains(.downloads) {
+            if let data = encodeValue(PicaXSQLiteStore.loadDownloadRecords()) {
+                values[DownloadSettingsKey.records] = BackupDefaultValue.from(data)
+            }
         }
     }
 
@@ -468,54 +483,74 @@ enum BackupService {
         }
 
         if key == "picax.platformAccounts" {
-            let existingData = (try? JSONEncoder().encode(ComicPlatform.allCases.compactMap { PicaXSQLiteStore.loadPlatformAccounts()[$0] })) ?? Data()
-            if let data = mergePlatformAccounts(existingData: existingData, importedData: importedData),
-               let values = try? JSONDecoder().decode([PlatformAccount].self, from: data) {
-                PicaXSQLiteStore.replacePlatformAccounts(values)
-            }
+            let accounts = PicaXSQLiteStore.loadPlatformAccounts()
+            mergeSQLiteValues(
+                existing: ComicPlatform.allCases.compactMap { accounts[$0] },
+                importedData: importedData,
+                merge: mergePlatformAccounts,
+                replace: PicaXSQLiteStore.replacePlatformAccounts
+            )
             return true
         }
         if key == "picax.localFavorites.default" {
-            let existingData = (try? JSONEncoder().encode(PicaXSQLiteStore.loadLocalFavorites(folderID: "default"))) ?? Data()
-            if let data = mergeLocalFavorites(existingData: existingData, importedData: importedData),
-               let values = try? JSONDecoder().decode([StoredLocalFavorite].self, from: data) {
-                PicaXSQLiteStore.replaceLocalFavorites(values, folderID: "default")
-            }
+            mergeSQLiteValues(
+                existing: PicaXSQLiteStore.loadLocalFavorites(folderID: "default"),
+                importedData: importedData,
+                merge: mergeLocalFavorites
+            ) { PicaXSQLiteStore.replaceLocalFavorites($0, folderID: "default") }
             return true
         }
         if key == ReadingHistoryService.Key.records {
-            let existingData = (try? JSONEncoder().encode(PicaXSQLiteStore.loadReadingHistory())) ?? Data()
-            if let data = mergeReadingHistory(existingData: existingData, importedData: importedData),
-               let values = try? JSONDecoder().decode([ReadingHistoryRecord].self, from: data) {
-                PicaXSQLiteStore.replaceReadingHistory(values)
-            }
+            mergeSQLiteValues(
+                existing: PicaXSQLiteStore.loadReadingHistory(),
+                importedData: importedData,
+                merge: mergeReadingHistory,
+                replace: PicaXSQLiteStore.replaceReadingHistory
+            )
             return true
         }
         if key == ReadingDurationService.Key.records {
-            let existingData = (try? JSONEncoder().encode(PicaXSQLiteStore.loadReadingDuration())) ?? Data()
-            if let data = mergeReadingDuration(existingData: existingData, importedData: importedData),
-               let values = try? JSONDecoder().decode([ReadingDurationRecord].self, from: data) {
-                PicaXSQLiteStore.replaceReadingDuration(values)
-            }
+            mergeSQLiteValues(
+                existing: PicaXSQLiteStore.loadReadingDuration(),
+                importedData: importedData,
+                merge: mergeReadingDuration,
+                replace: PicaXSQLiteStore.replaceReadingDuration
+            )
             return true
         }
         if key == SearchHistorySettingsKey.records {
-            let existingData = (try? JSONEncoder().encode(PicaXSQLiteStore.loadSearchHistory())) ?? Data()
-            if let data = mergeSearchHistory(existingData: existingData, importedData: importedData),
-               let values = try? JSONDecoder().decode([SearchHistoryRecord].self, from: data) {
-                PicaXSQLiteStore.replaceSearchHistory(values)
-            }
+            mergeSQLiteValues(
+                existing: PicaXSQLiteStore.loadSearchHistory(),
+                importedData: importedData,
+                merge: mergeSearchHistory,
+                replace: PicaXSQLiteStore.replaceSearchHistory
+            )
             return true
         }
         if key == DownloadSettingsKey.records {
-            let existingData = (try? JSONEncoder().encode(PicaXSQLiteStore.loadDownloadRecords())) ?? Data()
-            if let data = mergeDownloadRecords(existingData: existingData, importedData: importedData),
-               let values = try? JSONDecoder().decode([DownloadRecord].self, from: data) {
-                PicaXSQLiteStore.replaceDownloadRecords(values)
-            }
+            mergeSQLiteValues(
+                existing: PicaXSQLiteStore.loadDownloadRecords(),
+                importedData: importedData,
+                merge: mergeDownloadRecords,
+                replace: PicaXSQLiteStore.replaceDownloadRecords
+            )
             return true
         }
         return true
+    }
+
+    @MainActor
+    private static func mergeSQLiteValues<Value: Codable>(
+        existing: [Value],
+        importedData: Data,
+        merge: (_ existingData: Data, _ importedData: Data) -> Data?,
+        replace: ([Value]) -> Void
+    ) {
+        guard let existingData = encodeValue(existing) else { return }
+        if let data = merge(existingData, importedData),
+           let values = decodeValue([Value].self, from: data) {
+            replace(values)
+        }
     }
 
     @MainActor
@@ -525,11 +560,19 @@ enum BackupService {
         replace: ([Value]) -> Void
     ) {
         guard let data = value?.decodedData(),
-              let values = try? JSONDecoder().decode([Value].self, from: data) else {
+              let values = decodeValue([Value].self, from: data) else {
             replace([])
             return
         }
         replace(values)
+    }
+
+    private static func encodeValue<Value: Encodable>(_ value: Value) -> Data? {
+        try? valueEncoder.encode(value)
+    }
+
+    private static func decodeValue<Value: Decodable>(_ type: Value.Type, from data: Data) -> Value? {
+        try? valueDecoder.decode(type, from: data)
     }
 
     private static func isSQLiteBackedDataKey(_ key: String) -> Bool {
@@ -638,29 +681,29 @@ enum BackupService {
     }
 
     private static func mergePlatformAccounts(existingData: Data, importedData: Data) -> Data? {
-        let local = (try? JSONDecoder().decode([PlatformAccount].self, from: existingData)) ?? []
-        let imported = (try? JSONDecoder().decode([PlatformAccount].self, from: importedData)) ?? []
+        let local = decodeValue([PlatformAccount].self, from: existingData) ?? []
+        let imported = decodeValue([PlatformAccount].self, from: importedData) ?? []
         var values = Dictionary(uniqueKeysWithValues: imported.map { ($0.platform, $0) })
         for account in local {
             values[account.platform] = account
         }
         let ordered = ComicPlatform.allCases.compactMap { values[$0] }
-        return try? JSONEncoder().encode(ordered)
+        return encodeValue(ordered)
     }
 
     private static func mergeUserAccounts(existingData: Data, importedData: Data) -> Data? {
-        let local = (try? JSONDecoder().decode([UserAccount].self, from: existingData)) ?? []
-        let imported = (try? JSONDecoder().decode([UserAccount].self, from: importedData)) ?? []
+        let local = decodeValue([UserAccount].self, from: existingData) ?? []
+        let imported = decodeValue([UserAccount].self, from: importedData) ?? []
         var values = Dictionary(uniqueKeysWithValues: imported.map { ($0.id, $0) })
         for account in local {
             values[account.id] = account
         }
-        return try? JSONEncoder().encode(Array(values.values).sorted { $0.createdAt > $1.createdAt })
+        return encodeValue(Array(values.values).sorted { $0.createdAt > $1.createdAt })
     }
 
     private static func mergeReadingHistory(existingData: Data, importedData: Data) -> Data? {
-        let local = (try? JSONDecoder().decode([ReadingHistoryRecord].self, from: existingData)) ?? []
-        let imported = (try? JSONDecoder().decode([ReadingHistoryRecord].self, from: importedData)) ?? []
+        let local = decodeValue([ReadingHistoryRecord].self, from: existingData) ?? []
+        let imported = decodeValue([ReadingHistoryRecord].self, from: importedData) ?? []
         var values = Dictionary(uniqueKeysWithValues: imported.map { ($0.id, $0) })
         for record in local {
             if let existing = values[record.id] {
@@ -669,12 +712,12 @@ enum BackupService {
                 values[record.id] = record
             }
         }
-        return try? JSONEncoder().encode(Array(values.values).sorted { $0.viewedAt > $1.viewedAt })
+        return encodeValue(Array(values.values).sorted { $0.viewedAt > $1.viewedAt })
     }
 
     private static func mergeReadingDuration(existingData: Data, importedData: Data) -> Data? {
-        let local = (try? JSONDecoder().decode([ReadingDurationRecord].self, from: existingData)) ?? []
-        let imported = (try? JSONDecoder().decode([ReadingDurationRecord].self, from: importedData)) ?? []
+        let local = decodeValue([ReadingDurationRecord].self, from: existingData) ?? []
+        let imported = decodeValue([ReadingDurationRecord].self, from: importedData) ?? []
         var values = Dictionary(uniqueKeysWithValues: imported.map { ($0.id, $0) })
         for record in local {
             guard var existing = values[record.id] else {
@@ -691,12 +734,12 @@ enum BackupService {
             }
             values[record.id] = existing
         }
-        return try? JSONEncoder().encode(Array(values.values).sorted { $0.lastReadAt > $1.lastReadAt })
+        return encodeValue(Array(values.values).sorted { $0.lastReadAt > $1.lastReadAt })
     }
 
     private static func mergeSearchHistory(existingData: Data, importedData: Data) -> Data? {
-        let local = (try? JSONDecoder().decode([SearchHistoryRecord].self, from: existingData)) ?? []
-        let imported = (try? JSONDecoder().decode([SearchHistoryRecord].self, from: importedData)) ?? []
+        let local = decodeValue([SearchHistoryRecord].self, from: existingData) ?? []
+        let imported = decodeValue([SearchHistoryRecord].self, from: importedData) ?? []
         var values = Dictionary(uniqueKeysWithValues: imported.map { ($0.id, $0) })
         for record in local {
             if let existing = values[record.id] {
@@ -705,12 +748,12 @@ enum BackupService {
                 values[record.id] = record
             }
         }
-        return try? JSONEncoder().encode(Array(values.values).sorted { $0.searchedAt > $1.searchedAt })
+        return encodeValue(Array(values.values).sorted { $0.searchedAt > $1.searchedAt })
     }
 
     private static func mergeDownloadRecords(existingData: Data, importedData: Data) -> Data? {
-        let local = (try? JSONDecoder().decode([DownloadRecord].self, from: existingData)) ?? []
-        let imported = (try? JSONDecoder().decode([DownloadRecord].self, from: importedData)) ?? []
+        let local = decodeValue([DownloadRecord].self, from: existingData) ?? []
+        let imported = decodeValue([DownloadRecord].self, from: importedData) ?? []
         var values = Dictionary(uniqueKeysWithValues: imported.map { ($0.id, $0) })
         for record in local {
             if let existing = values[record.id] {
@@ -719,17 +762,17 @@ enum BackupService {
                 values[record.id] = record
             }
         }
-        return try? JSONEncoder().encode(Array(values.values).sorted { $0.updatedAt > $1.updatedAt })
+        return encodeValue(Array(values.values).sorted { $0.updatedAt > $1.updatedAt })
     }
 
     private static func mergeLocalFavorites(existingData: Data, importedData: Data) -> Data? {
-        let local = (try? JSONDecoder().decode([BackupStoredLocalFavorite].self, from: existingData)) ?? []
-        let imported = (try? JSONDecoder().decode([BackupStoredLocalFavorite].self, from: importedData)) ?? []
+        let local = decodeValue([BackupStoredLocalFavorite].self, from: existingData) ?? []
+        let imported = decodeValue([BackupStoredLocalFavorite].self, from: importedData) ?? []
         var values = Dictionary(uniqueKeysWithValues: imported.map { ($0.mergeID, $0) })
         for favorite in local {
             values[favorite.mergeID] = favorite
         }
-        return try? JSONEncoder().encode(Array(values.values).sorted {
+        return encodeValue(Array(values.values).sorted {
             ($0.favoriteDate ?? .distantPast) > ($1.favoriteDate ?? .distantPast)
         })
     }
@@ -780,8 +823,7 @@ enum BackupService {
     private nonisolated static func writeDownloadFiles(_ files: [BackupFile], rootURL: URL, overwritesExisting: Bool) throws {
         for file in files {
             guard isSafeRelativePath(file.relativePath),
-                  let dataValue = file.data,
-                  let data = Data(base64Encoded: dataValue) else {
+                  let data = file.rawData ?? file.data.flatMap({ Data(base64Encoded: $0) }) else {
                 continue
             }
             let fileURL = rootURL.appendingPathComponent(file.relativePath)

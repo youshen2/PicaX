@@ -867,14 +867,9 @@ private struct BackupSettingsView: View {
     private func handleImporterResult(_ result: Result<[URL], Error>) {
         do {
             guard let url = try result.get().first else { return }
-            let didAccess = url.startAccessingSecurityScopedResource()
-            defer {
-                if didAccess {
-                    url.stopAccessingSecurityScopedResource()
-                }
+            Task {
+                await loadBackupPreview(from: url, source: .picax)
             }
-            let data = try Data(contentsOf: url)
-            pendingImport = try BackupService.preview(from: data)
         } catch {
             operationResult = BackupOperationResult(title: "读取备份失败", message: error.localizedDescription)
         }
@@ -883,17 +878,34 @@ private struct BackupSettingsView: View {
     private func handlePicaComicImporterResult(_ result: Result<[URL], Error>) {
         do {
             guard let url = try result.get().first else { return }
+            Task {
+                await loadBackupPreview(from: url, source: .picaComic)
+            }
+        } catch {
+            operationResult = BackupOperationResult(title: "读取 PicaComic 备份失败", message: error.localizedDescription)
+        }
+    }
+
+    @MainActor
+    private func loadBackupPreview(from url: URL, source: BackupImportSource) async {
+        do {
+            let data = try await Self.readSecurityScopedData(from: url)
+            pendingImport = try source.preview(from: data)
+        } catch {
+            operationResult = BackupOperationResult(title: source.failureTitle, message: error.localizedDescription)
+        }
+    }
+
+    private static func readSecurityScopedData(from url: URL) async throws -> Data {
+        try await Task.detached(priority: .userInitiated) {
             let didAccess = url.startAccessingSecurityScopedResource()
             defer {
                 if didAccess {
                     url.stopAccessingSecurityScopedResource()
                 }
             }
-            let data = try Data(contentsOf: url)
-            pendingImport = try PicaComicBackupImporter.preview(from: data)
-        } catch {
-            operationResult = BackupOperationResult(title: "读取 PicaComic 备份失败", message: error.localizedDescription)
-        }
+            return try Data(contentsOf: url)
+        }.value
     }
 
     @MainActor
@@ -931,6 +943,29 @@ private struct BackupSettingsView: View {
         formatter.dateFormat = "yyyyMMdd-HHmmss"
         return formatter
     }()
+}
+
+private enum BackupImportSource {
+    case picax
+    case picaComic
+
+    var failureTitle: String {
+        switch self {
+        case .picax:
+            "读取备份失败"
+        case .picaComic:
+            "读取 PicaComic 备份失败"
+        }
+    }
+
+    func preview(from data: Data) throws -> BackupImportPreview {
+        switch self {
+        case .picax:
+            try BackupService.preview(from: data)
+        case .picaComic:
+            try PicaComicBackupImporter.preview(from: data)
+        }
+    }
 }
 
 private struct BackupImportPreviewSheet: View {
@@ -2001,7 +2036,7 @@ private struct AboutSettingsView: View {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "1"
     }
 
-    private var buildEnvironment: [String: String] {
+    private static let buildEnvironment: [String: String] = {
         guard let url = Bundle.main.url(forResource: "PicaXBuildEnvironment", withExtension: "plist"),
               let data = try? Data(contentsOf: url),
               let plist = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) else {
@@ -2009,10 +2044,10 @@ private struct AboutSettingsView: View {
         }
 
         return plist as? [String: String] ?? [:]
-    }
+    }()
 
     private var buildInfoRows: [(title: String, value: String)] {
-        let environment = buildEnvironment
+        let environment = Self.buildEnvironment
         return [
             ("构建时间", buildEnvironmentValue("BuildTime", in: environment)),
             ("主机名", buildEnvironmentValue("BuildHostName", in: environment)),
