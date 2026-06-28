@@ -12,6 +12,13 @@ struct ImageCacheUsage: Equatable {
 
 enum ImageCacheService {
     nonisolated static let defaultMaxDiskSizeMB = 400
+    nonisolated(unsafe) private static let uncachedSession: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        configuration.urlCache = nil
+        configuration.httpMaximumConnectionsPerHost = 6
+        return URLSession(configuration: configuration)
+    }()
 
     @MainActor
     static func configure(defaults: UserDefaults = .standard) {
@@ -104,12 +111,7 @@ enum ImageCacheService {
     private nonisolated static func uncachedData(for url: URL) async throws -> (Data, URLResponse) {
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 30)
         request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-        configuration.urlCache = nil
-        let session = URLSession(configuration: configuration)
-        defer { session.finishTasksAndInvalidate() }
-        return try await session.data(for: request)
+        return try await uncachedSession.data(for: request)
     }
 
     private nonisolated static func localFileData(for fileURL: URL) async throws -> Data {
