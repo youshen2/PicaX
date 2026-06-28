@@ -63,7 +63,7 @@ enum ComicPlatform: String, CaseIterable, Codable, Identifiable {
         case .jmComic:
             nil
         case .nhentai:
-            "\(PlatformFeatureSettings.frontendBaseURL(for: .nhentai))/login/"
+            "\(PlatformFeatureSettings.frontendBaseURL(for: .nhentai))/login/?next=/"
         case .eHentai:
             "https://forums.e-hentai.org/index.php?act=Login&CODE=00"
         case .hitomi:

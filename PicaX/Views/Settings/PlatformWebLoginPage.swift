@@ -11,6 +11,7 @@ struct PlatformWebLoginPage: View {
     @State private var currentURL: URL?
     @State private var latestCookies = [HTTPCookie]()
     @State private var latestUserAgent: String?
+    @State private var webView: WKWebView?
     @State private var message: String?
     @State private var isSaving = false
     @State private var didSave = false
@@ -23,6 +24,7 @@ struct PlatformWebLoginPage: View {
                 LoginWebView(
                     initialURL: initialURL,
                     userAgent: nil,
+                    onWebViewReady: { webView = $0 },
                     onTitleChanged: { title = $0.isEmpty ? "网页登录" : $0 },
                     onCookiesChanged: { url, cookies, userAgent in
                         currentURL = url
@@ -44,7 +46,7 @@ struct PlatformWebLoginPage: View {
             ToolbarItem(placement: .confirmationAction) {
                 Button {
                     Task {
-                        await saveIfReady(cookies: latestCookies, currentURL: currentURL ?? initialURL, userAgent: latestUserAgent, automatic: false)
+                        await saveFromCurrentWebView(automatic: false)
                     }
                 } label: {
                     if isSaving {
@@ -53,7 +55,7 @@ struct PlatformWebLoginPage: View {
                         Text("完成")
                     }
                 }
-                .disabled(isSaving || latestCookies.isEmpty)
+                .disabled(isSaving || initialURL == nil)
             }
         }
         .safeAreaInset(edge: .bottom) {
@@ -94,6 +96,30 @@ struct PlatformWebLoginPage: View {
         }
     }
 
+    @MainActor
+    private func saveFromCurrentWebView(automatic: Bool) async {
+        let state = await currentWebLoginState()
+        currentURL = state.url
+        latestCookies = state.cookies
+        latestUserAgent = state.userAgent
+        await saveIfReady(cookies: state.cookies, currentURL: state.url, userAgent: state.userAgent, automatic: automatic)
+    }
+
+    @MainActor
+    private func currentWebLoginState() async -> WebLoginState {
+        guard let webView else {
+            return WebLoginState(url: currentURL ?? initialURL, cookies: latestCookies, userAgent: latestUserAgent)
+        }
+
+        async let userAgent = webView.currentUserAgent()
+        async let cookies = webView.allCookies()
+        return WebLoginState(
+            url: webView.url ?? currentURL ?? initialURL,
+            cookies: await cookies,
+            userAgent: await userAgent ?? latestUserAgent
+        )
+    }
+
     private func makeAccount(cookies: [HTTPCookie], currentURL: URL?, userAgent: String?, automatic: Bool) async throws -> PlatformAccount {
         let relevantCookies = cookies.filter { platform.acceptsWebLoginCookie($0) }
         let tokenCookie = relevantCookies.first { platform.tokenCookieNames.contains($0.name) }
@@ -122,8 +148,10 @@ struct PlatformWebLoginPage: View {
                 )
             )
         case .nhentai:
+            let hasTokenOrSessionCookie = tokenCookie != nil || relevantCookies.contains { $0.name == "sessionid" }
+            let hasXSRFCookieAfterLoginPage = relevantCookies.contains { $0.name == "XSRF-TOKEN" } && currentURL?.isLikelyLoginPage != true
             guard !relevantCookies.isEmpty,
-                  tokenCookie != nil || relevantCookies.contains(where: { $0.name == "sessionid" }) || !automatic else {
+                  hasTokenOrSessionCookie || (!automatic && !relevantCookies.isEmpty) || hasXSRFCookieAfterLoginPage else {
                 throw PlatformWebLoginError.notReady
             }
             return PlatformAccount(
@@ -148,8 +176,13 @@ struct PlatformWebLoginPage: View {
                 throw PlatformWebLoginError.notReady
             }
             return cookieBackedAccount(cookies: relevantCookies, currentURL: currentURL, userAgent: accountUserAgent)
-        case .jmComic, .htManga:
+        case .jmComic:
             guard !automatic, !relevantCookies.isEmpty else {
+                throw PlatformWebLoginError.notReady
+            }
+            return cookieBackedAccount(cookies: relevantCookies, currentURL: currentURL, userAgent: accountUserAgent)
+        case .htManga:
+            guard !relevantCookies.isEmpty, !automatic || currentURL?.isLikelyLoginPage != true else {
                 throw PlatformWebLoginError.notReady
             }
             return cookieBackedAccount(cookies: relevantCookies, currentURL: currentURL, userAgent: accountUserAgent)
@@ -178,6 +211,12 @@ struct PlatformWebLoginPage: View {
             )
         )
     }
+}
+
+private struct WebLoginState {
+    var url: URL?
+    var cookies: [HTTPCookie]
+    var userAgent: String?
 }
 
 private enum PlatformWebLoginError: LocalizedError {
@@ -268,6 +307,7 @@ private extension ComicPlatform {
 private struct LoginWebView {
     let initialURL: URL
     let userAgent: String?
+    let onWebViewReady: (WKWebView) -> Void
     let onTitleChanged: (String) -> Void
     let onCookiesChanged: (URL?, [HTTPCookie], String?) -> Void
 
@@ -279,6 +319,10 @@ private struct LoginWebView {
         if let userAgent {
             webView.customUserAgent = userAgent
         }
+        coordinator.attach(webView)
+        DispatchQueue.main.async {
+            onWebViewReady(webView)
+        }
         webView.load(URLRequest(url: initialURL))
         return webView
     }
@@ -289,17 +333,53 @@ private struct LoginWebView {
         Coordinator(onTitleChanged: onTitleChanged, onCookiesChanged: onCookiesChanged)
     }
 
-    final class Coordinator: NSObject, WKNavigationDelegate {
+    final class Coordinator: NSObject, WKNavigationDelegate, WKHTTPCookieStoreObserver {
         private let onTitleChanged: (String) -> Void
         private let onCookiesChanged: (URL?, [HTTPCookie], String?) -> Void
+        private weak var webView: WKWebView?
+        private weak var cookieStore: WKHTTPCookieStore?
+        private var titleObservation: NSKeyValueObservation?
+        private var urlObservation: NSKeyValueObservation?
 
         init(onTitleChanged: @escaping (String) -> Void, onCookiesChanged: @escaping (URL?, [HTTPCookie], String?) -> Void) {
             self.onTitleChanged = onTitleChanged
             self.onCookiesChanged = onCookiesChanged
         }
 
+        deinit {
+            cookieStore?.remove(self)
+        }
+
+        func attach(_ webView: WKWebView) {
+            self.webView = webView
+            let cookieStore = webView.configuration.websiteDataStore.httpCookieStore
+            self.cookieStore = cookieStore
+            cookieStore.add(self)
+
+            titleObservation = webView.observe(\.title, options: [.new]) { [weak self, weak webView] observedWebView, _ in
+                self?.onTitleChanged(observedWebView.title ?? "")
+                if let currentWebView = webView {
+                    self?.collectState(from: currentWebView)
+                }
+            }
+            urlObservation = webView.observe(\.url, options: [.new]) { [weak self, weak webView] _, _ in
+                if let webView {
+                    self?.collectState(from: webView)
+                }
+            }
+        }
+
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             onTitleChanged(webView.title ?? "")
+            collectState(from: webView)
+        }
+
+        func cookiesDidChange(in cookieStore: WKHTTPCookieStore) {
+            guard let webView else { return }
+            collectState(from: webView)
+        }
+
+        private func collectState(from webView: WKWebView) {
             webView.evaluateJavaScript("navigator.userAgent") { [weak webView, onCookiesChanged] result, _ in
                 let trimmedUserAgent = (result as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 let userAgent = trimmedUserAgent.isEmpty ? nil : trimmedUserAgent
@@ -311,6 +391,34 @@ private struct LoginWebView {
                 }
             }
         }
+    }
+}
+
+private extension WKWebView {
+    @MainActor
+    func currentUserAgent() async -> String? {
+        await withCheckedContinuation { continuation in
+            evaluateJavaScript("navigator.userAgent") { result, _ in
+                let trimmed = (result as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                continuation.resume(returning: trimmed.isEmpty ? nil : trimmed)
+            }
+        }
+    }
+
+    @MainActor
+    func allCookies() async -> [HTTPCookie] {
+        await withCheckedContinuation { continuation in
+            configuration.websiteDataStore.httpCookieStore.getAllCookies { cookies in
+                continuation.resume(returning: cookies)
+            }
+        }
+    }
+}
+
+private extension URL {
+    var isLikelyLoginPage: Bool {
+        let lowercasedPath = path.lowercased()
+        return lowercasedPath.contains("login") || lowercasedPath.contains("register")
     }
 }
 
