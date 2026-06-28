@@ -20,7 +20,7 @@ struct HomePage: View {
     @AppStorage(HomeSettingsKey.showsDownloadSection) private var showsDownloadSection = true
     @AppStorage(HomeSettingsKey.showsAccountManagementEntry) private var showsAccountManagementEntry = true
     @AppStorage(HomeSettingsKey.sectionOrder) private var homeSectionOrderRaw = HomeSectionKind.defaultRawValue
-    @AppStorage(AppBehaviorSettingsKey.checksClipboardForComicLinks) private var checksClipboardForComicLinks = true
+    @AppStorage(AppBehaviorSettingsKey.checksClipboardForComicLinks) private var checksClipboardForComicLinks = false
     @AppStorage(AppBehaviorSettingsKey.checksClipboardOnlyOnLaunch) private var checksClipboardOnlyOnLaunch = false
 
     private let contentService = ComicContentService()
