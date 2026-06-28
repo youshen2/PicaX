@@ -96,7 +96,7 @@ struct SettingsPage: View {
             if showsAny(.appBehavior, .network, .about) {
                 Section("网络与应用") {
                     if shows(.appBehavior) {
-                        SettingsNavigationLink(item: .appBehavior, systemImage: "paintbrush") {
+                        SettingsNavigationLink(item: .appBehavior, systemImage: "gearshape") {
                             AppBehaviorSettingsView()
                         }
                     }
@@ -194,7 +194,7 @@ private enum SettingsSearchItem: CaseIterable {
         case .backup:
             "备份与恢复"
         case .appBehavior:
-            "外观与启动"
+            "显示与语言"
         case .network:
             "网络与代理"
         case .about:
@@ -231,7 +231,7 @@ private enum SettingsSearchItem: CaseIterable {
         case .backup:
             "导出或导入本地数据"
         case .appBehavior:
-            "显示模式与剪贴板检测"
+            "显示模式、语言与剪贴板检测"
         case .network:
             "连接与重试"
         case .about:
@@ -258,7 +258,7 @@ private enum SettingsSearchItem: CaseIterable {
         case .downloads:
             ["下载评论", "同时下载", "限速", "队列", "ZIP", "导出", "文件名"]
         case .appBehavior:
-            ["深色", "浅色", "剪贴板", "启动"]
+            ["深色", "浅色", "语言", "多语言", "剪贴板", "启动"]
         case .history:
             ["阅读进度", "清空", "记录"]
         case .readingDuration:
@@ -277,6 +277,7 @@ private enum SettingsSearchItem: CaseIterable {
 
 private struct AppBehaviorSettingsView: View {
     @AppStorage(AppAppearanceSettingsKey.colorScheme) private var colorScheme = AppAppearanceMode.system.rawValue
+    @AppStorage(AppLanguageSettingsKey.language) private var language = AppLanguageMode.system.rawValue
     @AppStorage(AppBehaviorSettingsKey.checksClipboardForComicLinks) private var checksClipboardForComicLinks = true
     @AppStorage(AppBehaviorSettingsKey.checksClipboardOnlyOnLaunch) private var checksClipboardOnlyOnLaunch = false
     @AppStorage(AppBehaviorSettingsKey.checksUpdatesOnLaunch) private var checksUpdatesOnLaunch = true
@@ -296,6 +297,21 @@ private struct AppBehaviorSettingsView: View {
             }
 
             Section {
+                Picker("语言", selection: $language) {
+                    ForEach(AppLanguageMode.allCases) { mode in
+                        Text(mode.title)
+                            .tag(mode.rawValue)
+                    }
+                }
+
+                Text(selectedLanguageMode.detailText)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } footer: {
+                Text("选择“跟随系统”时，应用会根据系统首选语言自动选择支持的语言。")
+            }
+
+            Section {
                 Toggle("检查剪贴板链接", isOn: $checksClipboardForComicLinks)
                 if checksClipboardForComicLinks {
                     Toggle("仅启动应用时检查", isOn: $checksClipboardOnlyOnLaunch)
@@ -306,8 +322,12 @@ private struct AppBehaviorSettingsView: View {
             }
         }
         .picaxInsetGroupedListStyle()
-        .navigationTitle("外观与启动")
+        .navigationTitle("显示与语言")
         .picaxHidesTabBar()
+    }
+
+    private var selectedLanguageMode: AppLanguageMode {
+        AppLanguageMode(rawValue: language) ?? .system
     }
 }
 

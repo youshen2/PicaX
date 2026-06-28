@@ -76,6 +76,10 @@ enum AppAppearanceSettingsKey {
     static let colorScheme = "settings.appAppearance.colorScheme"
 }
 
+enum AppLanguageSettingsKey {
+    static let language = "settings.appLanguage.language"
+}
+
 enum AppBehaviorSettingsKey {
     static let checksClipboardForComicLinks = "settings.appBehavior.checksClipboardForComicLinks"
     static let checksClipboardOnlyOnLaunch = "settings.appBehavior.checksClipboardOnlyOnLaunch"
@@ -109,6 +113,68 @@ enum AppAppearanceMode: String, CaseIterable, Identifiable {
         case .dark:
             .dark
         }
+    }
+}
+
+enum AppLanguageMode: String, CaseIterable, Identifiable {
+    case system
+    case zhHans = "zh-Hans"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .system:
+            "跟随系统"
+        case .zhHans:
+            "简体中文"
+        }
+    }
+
+    var detailText: String {
+        switch self {
+        case .system:
+            "当前使用：\(Self.systemPreferredMode.title)"
+        case .zhHans:
+            "应用界面会立即切换为简体中文。"
+        }
+    }
+
+    var effectiveMode: AppLanguageMode {
+        switch self {
+        case .system:
+            Self.systemPreferredMode
+        case .zhHans:
+            self
+        }
+    }
+
+    var locale: Locale {
+        Locale(identifier: effectiveMode.localeIdentifier)
+    }
+
+    private var localeIdentifier: String {
+        switch self {
+        case .system:
+            Self.systemPreferredMode.localeIdentifier
+        case .zhHans:
+            rawValue
+        }
+    }
+
+    static var selectedLocale: Locale {
+        let rawValue = UserDefaults.standard.string(forKey: AppLanguageSettingsKey.language) ?? AppLanguageMode.system.rawValue
+        return (AppLanguageMode(rawValue: rawValue) ?? .system).locale
+    }
+
+    static var systemPreferredMode: AppLanguageMode {
+        for identifier in Locale.preferredLanguages {
+            let normalized = identifier.replacingOccurrences(of: "_", with: "-").lowercased()
+            if normalized == "zh-hans" || normalized.hasPrefix("zh-hans-") || normalized == "zh-cn" || normalized == "zh-sg" {
+                return .zhHans
+            }
+        }
+        return .zhHans
     }
 }
 
