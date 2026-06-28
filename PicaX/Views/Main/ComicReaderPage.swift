@@ -565,7 +565,7 @@ struct ComicReaderPage: View {
     }
 
     private func load(force: Bool = false) async {
-        let record = readingHistory.records.first { $0.item.platform == detail.item.platform && $0.item.id == detail.item.id }
+        let record = readingHistory.record(for: detail.item)
         let progress = ignoresHistoryProgress ? nil : record?.progress
         let chapterIndex = progress?.status == .viewed ? initialChapterIndex : progress?.chapterIndex ?? initialChapterIndex
         let pageIndex = progress?.status == .viewed ? initialPageIndex : progress?.pageIndex ?? initialPageIndex

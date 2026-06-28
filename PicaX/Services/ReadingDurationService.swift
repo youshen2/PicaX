@@ -39,9 +39,14 @@ final class ReadingDurationService: ObservableObject {
         static let maxRecords = "settings.readingDuration.maxRecords"
     }
 
-    @Published private(set) var records: [ReadingDurationRecord] = []
+    @Published private(set) var records: [ReadingDurationRecord] = [] {
+        didSet {
+            rebuildSummary()
+        }
+    }
 
     private let defaults: UserDefaults
+    private var durationSummary = ReadingDurationSummary(todayKey: ReadingDurationService.dayKey(for: Date()), totalSeconds: 0, todaySeconds: 0)
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -56,10 +61,11 @@ final class ReadingDurationService: ObservableObject {
         }
         records = PicaXSQLiteStore.loadReadingDuration()
         fillMissingCoversFromReadingHistory()
+        rebuildSummary()
     }
 
     var todayKey: String {
-        Self.dayKey(for: Date())
+        currentSummary.todayKey
     }
 
     var totalDurationText: String {
@@ -71,12 +77,11 @@ final class ReadingDurationService: ObservableObject {
     }
 
     var totalSeconds: TimeInterval {
-        records.reduce(0) { $0 + max($1.totalSeconds, 0) }
+        currentSummary.totalSeconds
     }
 
     var todaySeconds: TimeInterval {
-        let key = todayKey
-        return records.reduce(0) { $0 + max($1.dailySeconds[key] ?? 0, 0) }
+        currentSummary.todaySeconds
     }
 
     func latest(limit: Int) -> [ReadingDurationRecord] {
@@ -177,6 +182,25 @@ final class ReadingDurationService: ObservableObject {
         item.coverURLString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    private var currentSummary: ReadingDurationSummary {
+        let key = ReadingDurationService.dayKey(for: Date())
+        if durationSummary.todayKey != key {
+            rebuildSummary(todayKey: key)
+        }
+        return durationSummary
+    }
+
+    private func rebuildSummary(todayKey: String? = nil) {
+        let todayKey = todayKey ?? ReadingDurationService.dayKey(for: Date())
+        var totalSeconds: TimeInterval = 0
+        var todaySeconds: TimeInterval = 0
+        for record in records {
+            totalSeconds += max(record.totalSeconds, 0)
+            todaySeconds += max(record.dailySeconds[todayKey] ?? 0, 0)
+        }
+        durationSummary = ReadingDurationSummary(todayKey: todayKey, totalSeconds: totalSeconds, todaySeconds: todaySeconds)
+    }
+
     nonisolated static func formattedDuration(_ seconds: TimeInterval) -> String {
         let totalSeconds = max(Int(seconds.rounded()), 0)
         if totalSeconds < 60 {
@@ -205,4 +229,10 @@ final class ReadingDurationService: ObservableObject {
             components.day ?? 0
         )
     }
+}
+
+private struct ReadingDurationSummary {
+    let todayKey: String
+    let totalSeconds: TimeInterval
+    let todaySeconds: TimeInterval
 }

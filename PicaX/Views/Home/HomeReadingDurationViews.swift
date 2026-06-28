@@ -41,7 +41,7 @@ struct HomeReadingDurationCard: View {
                     .foregroundStyle(.secondary)
             } else {
                 VStack(spacing: 0) {
-                    ForEach(records) { record in
+                    ForEach(Array(records.enumerated()), id: \.element.id) { index, record in
                         NavigationLink {
                             ReadingDurationDetailPage(record: record, service: service)
                                 .picaxHidesTabBar()
@@ -50,7 +50,7 @@ struct HomeReadingDurationCard: View {
                         }
                         .buttonStyle(.plain)
 
-                        if record.id != records.last?.id {
+                        if index < records.count - 1 {
                             Divider()
                                 .padding(.leading, 70)
                         }
@@ -161,7 +161,7 @@ private struct ReadingDurationListPage: View {
                     .listRowBackground(Color.clear)
             } else {
                 Section {
-                    ForEach(readingDuration.records) { record in
+                    LazyLocalForEach(items: readingDuration.records, initialCount: 48, pageSize: 48) { record in
                         NavigationLink {
                             ReadingDurationDetailPage(record: record, service: service)
                                 .picaxHidesTabBar()

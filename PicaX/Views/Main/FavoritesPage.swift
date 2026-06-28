@@ -173,9 +173,14 @@ private struct FavoritesCollectionPage: View {
     let source: FavoriteCollectionSource
     let service: ComicContentService
     @State private var comics: [ComicListItem] = []
+    @State private var filteredComics: [ComicListItem] = []
+    @State private var visibleLocalComicCount = Self.localFavoriteInitialCount
     @State private var isLoading = true
     @State private var errorMessage: String?
     @State private var searchText = ""
+
+    private static let localFavoriteInitialCount = 48
+    private static let localFavoriteBatchSize = 48
 
     var body: some View {
         Group {
@@ -199,7 +204,15 @@ private struct FavoritesCollectionPage: View {
             } else if filteredComics.isEmpty {
                 ContentUnavailableView("没有匹配收藏", systemImage: "magnifyingglass", description: Text("换个关键词再试"))
             } else {
-                ComicListSection(comics: filteredComics, service: service, appliesBlocking: false, appliesReadProgressFilter: false)
+                ComicListSection(
+                    comics: visibleComics,
+                    service: service,
+                    isLoadingMore: false,
+                    hasMore: canLoadMoreLocalComics,
+                    appliesBlocking: false,
+                    appliesReadProgressFilter: false,
+                    loadMore: localLoadMoreAction
+                )
                 .refreshable {
                     await load(force: true)
                 }
@@ -209,6 +222,9 @@ private struct FavoritesCollectionPage: View {
         .picaxNavigationBarTitleDisplayModeInline()
         .picaxHidesTabBar()
         .searchable(text: $searchText, placement: .picaxNavigationSearch, prompt: "搜索当前收藏夹")
+        .onChange(of: searchText) { _, _ in
+            refreshFilteredComics(resetVisibleCount: true)
+        }
         .toolbar {
             ToolbarItem(placement: .picaxTopBarTrailing) {
                 Button {
@@ -226,31 +242,56 @@ private struct FavoritesCollectionPage: View {
         }
     }
 
-    private var filteredComics: [ComicListItem] {
-        let keyword = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !keyword.isEmpty else { return comics }
-        return comics.filter { comic in
-            favoriteSearchFields(for: comic).contains { field in
-                field.localizedCaseInsensitiveContains(keyword)
-            }
+    private var visibleComics: [ComicListItem] {
+        guard source.usesLocalBatching else {
+            return filteredComics
+        }
+        return Array(filteredComics.prefix(visibleLocalComicCount))
+    }
+
+    private var canLoadMoreLocalComics: Bool {
+        source.usesLocalBatching && visibleLocalComicCount < filteredComics.count
+    }
+
+    private var localLoadMoreAction: (() -> Void)? {
+        guard canLoadMoreLocalComics else { return nil }
+        return {
+            loadMoreLocalComics()
         }
     }
 
-    private func favoriteSearchFields(for comic: ComicListItem) -> [String] {
-        [
-            comic.title,
-            comic.subtitle,
-            comic.id,
-            comic.platformTitle,
-            comic.pageText ?? "",
-            comic.metadataText
-        ] + comic.tags
+    private func loadMoreLocalComics() {
+        guard source.usesLocalBatching, visibleLocalComicCount < filteredComics.count else { return }
+        visibleLocalComicCount = min(filteredComics.count, visibleLocalComicCount + Self.localFavoriteBatchSize)
+    }
+
+    private func refreshFilteredComics(resetVisibleCount: Bool) {
+        let keyword = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if keyword.isEmpty {
+            filteredComics = comics
+        } else {
+            filteredComics = comics.filter { comicMatches($0, keyword: keyword) }
+        }
+        if resetVisibleCount {
+            visibleLocalComicCount = Self.localFavoriteInitialCount
+        }
+    }
+
+    private func comicMatches(_ comic: ComicListItem, keyword: String) -> Bool {
+        comic.title.localizedCaseInsensitiveContains(keyword)
+            || comic.subtitle.localizedCaseInsensitiveContains(keyword)
+            || comic.id.localizedCaseInsensitiveContains(keyword)
+            || comic.platformTitle.localizedCaseInsensitiveContains(keyword)
+            || (comic.pageText?.localizedCaseInsensitiveContains(keyword) ?? false)
+            || comic.metadataText.localizedCaseInsensitiveContains(keyword)
+            || comic.tags.contains { $0.localizedCaseInsensitiveContains(keyword) }
     }
 
     @MainActor
     private func load(force: Bool = false) async {
         if !force, !comics.isEmpty {
             isLoading = false
+            refreshFilteredComics(resetVisibleCount: false)
             return
         }
 
@@ -265,8 +306,11 @@ private struct FavoritesCollectionPage: View {
             case .platformFolder(let account, let folder):
                 comics = try await service.loadFavorites(account: account, folder: folder)
             }
+            refreshFilteredComics(resetVisibleCount: true)
         } catch {
             errorMessage = error.localizedDescription
+            comics = []
+            filteredComics = []
         }
         isLoading = false
     }
@@ -327,5 +371,12 @@ private enum FavoriteCollectionSource: Identifiable {
         case .platformFolder(let account, _):
             return account.platform.accentColor
         }
+    }
+
+    var usesLocalBatching: Bool {
+        if case .local = self {
+            return true
+        }
+        return false
     }
 }

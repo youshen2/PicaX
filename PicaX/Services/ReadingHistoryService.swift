@@ -74,9 +74,15 @@ final class ReadingHistoryService: ObservableObject {
         static let maxRecords = "settings.history.maxRecords"
     }
 
-    @Published private(set) var records: [ReadingHistoryRecord] = []
+    @Published private(set) var records: [ReadingHistoryRecord] = [] {
+        didSet {
+            rebuildIndexes()
+        }
+    }
 
     private let defaults: UserDefaults
+    private var recordsByID: [String: ReadingHistoryRecord] = [:]
+    private var readingRecordsByID: [String: ReadingHistoryRecord] = [:]
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -90,10 +96,27 @@ final class ReadingHistoryService: ObservableObject {
             defaults.set(200, forKey: Key.maxRecords)
         }
         records = PicaXSQLiteStore.loadReadingHistory()
+        rebuildIndexes()
     }
 
     func latest(limit: Int) -> [ReadingHistoryRecord] {
         Array(records.prefix(max(limit, 0)))
+    }
+
+    var activeReadingRecordsByID: [String: ReadingHistoryRecord] {
+        readingRecordsByID
+    }
+
+    var hasAnyReadingProgress: Bool {
+        !readingRecordsByID.isEmpty
+    }
+
+    func record(for item: ComicListItem) -> ReadingHistoryRecord? {
+        recordsByID[item.readingHistoryID]
+    }
+
+    func hasReadingProgress(for item: ComicListItem) -> Bool {
+        record(for: item)?.isReadingRecord == true
     }
 
     func recordViewed(_ item: ComicListItem) {
@@ -197,6 +220,11 @@ final class ReadingHistoryService: ObservableObject {
         if records.count > maxRecords {
             records = Array(records.prefix(maxRecords))
         }
+    }
+
+    private func rebuildIndexes() {
+        recordsByID = Dictionary(uniqueKeysWithValues: records.map { ($0.id, $0) })
+        readingRecordsByID = recordsByID.filter { $0.value.isReadingRecord }
     }
 
 }

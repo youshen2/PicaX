@@ -308,7 +308,7 @@ final class DownloadService: ObservableObject {
 
     func localCoverURL(for record: DownloadRecord) -> URL? {
         guard let coverFileName = record.coverFileName,
-              let directoryURL = try? comicDirectory(for: record.item) else {
+              let directoryURL = comicDirectoryURLIfAvailable(for: record.item) else {
             return nil
         }
         let url = directoryURL.appendingPathComponent(coverFileName)
@@ -414,21 +414,17 @@ final class DownloadService: ObservableObject {
     }
 
     func removeRecord(_ record: DownloadRecord) {
-        if let directoryURL = try? comicDirectory(for: record.item) {
-            try? fileManager.removeItem(at: directoryURL)
-        }
+        let directoryURL = comicDirectoryURLIfAvailable(for: record.item)
         records.removeAll { $0.id == record.id }
         PicaXSQLiteStore.deleteDownloadRecord(id: record.id)
+        Self.removeDownloadDirectories([directoryURL].compactMap { $0 })
     }
 
     func clearFinishedDownloads() {
-        for record in records {
-            if let directoryURL = try? comicDirectory(for: record.item) {
-                try? fileManager.removeItem(at: directoryURL)
-            }
-        }
+        let directoryURLs = records.compactMap { comicDirectoryURLIfAvailable(for: $0.item) }
         records.removeAll()
         PicaXSQLiteStore.clearDownloadRecords()
+        Self.removeDownloadDirectories(directoryURLs)
     }
 
     func reloadFromDefaults() {
@@ -815,6 +811,15 @@ final class DownloadService: ObservableObject {
         return directoryURL
     }
 
+    private func comicDirectoryURLIfAvailable(for item: ComicListItem) -> URL? {
+        guard let rootURL = Self.downloadsRootURLIfAvailable(fileManager: fileManager) else {
+            return nil
+        }
+        return rootURL
+            .appendingPathComponent(item.platform.id, isDirectory: true)
+            .appendingPathComponent(Self.safeFileName("\(item.id)-\(item.title)"), isDirectory: true)
+    }
+
     private func chapterDirectory(for item: ComicListItem, chapter: ComicChapter, index: Int) throws -> URL {
         let chapterURL = try comicDirectory(for: item)
             .appendingPathComponent(String(format: "%03d-%@", index + 1, Self.safeFileName(chapter.title)), isDirectory: true)
@@ -835,6 +840,24 @@ final class DownloadService: ObservableObject {
             .appendingPathComponent("Downloads", isDirectory: true)
         try fileManager.createDirectory(at: rootURL, withIntermediateDirectories: true)
         return rootURL
+    }
+
+    private nonisolated static func downloadsRootURLIfAvailable(fileManager: FileManager = .default) -> URL? {
+        guard let baseURL = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+            return nil
+        }
+        return baseURL
+            .appendingPathComponent("PicaX", isDirectory: true)
+            .appendingPathComponent("Downloads", isDirectory: true)
+    }
+
+    private nonisolated static func removeDownloadDirectories(_ directoryURLs: [URL]) {
+        guard !directoryURLs.isEmpty else { return }
+        Task.detached(priority: .utility) {
+            for directoryURL in directoryURLs {
+                try? FileManager.default.removeItem(at: directoryURL)
+            }
+        }
     }
 
     private nonisolated static func downloadsDirectorySize() async -> Int64 {

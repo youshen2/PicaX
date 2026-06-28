@@ -137,7 +137,7 @@ struct DownloadListPage: View {
                 .listRowBackground(Color.clear)
             } else {
                 Section("已下载") {
-                    ForEach(displayRecords) { record in
+                    LazyLocalForEach(items: displayRecords, initialCount: 48, pageSize: 48) { record in
                         Button {
                             selectedRecord = record
                         } label: {
@@ -326,7 +326,7 @@ private struct DownloadQueueSheet: View {
                         .listRowBackground(Color.clear)
                 } else {
                     Section {
-                        ForEach(downloadService.tasks) { task in
+                        LazyLocalForEach(items: downloadService.tasks, initialCount: 32, pageSize: 32) { task in
                             DownloadTaskRow(task: task)
                                 .swipeActions(edge: .leading, allowsFullSwipe: false) {
                                     if task.status == .paused {

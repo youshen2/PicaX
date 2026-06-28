@@ -283,9 +283,7 @@ private struct ComicDetailContent: View {
     }
 
     private func hasReadingProgress(for item: ComicListItem) -> Bool {
-        readingHistory.records.first { record in
-            record.item.platform == item.platform && record.item.id == item.id
-        }?.isReadingRecord == true
+        readingHistory.hasReadingProgress(for: item)
     }
 }
 
@@ -439,9 +437,7 @@ private struct ComicDetailHeader: View {
     }
 
     private var historyProgress: ReadingProgress? {
-        readingHistory.records.first { record in
-            record.item.platform == detail.item.platform && record.item.id == detail.item.id
-        }?.progress
+        readingHistory.record(for: detail.item)?.progress
     }
 
     private var hasReadingProgress: Bool {

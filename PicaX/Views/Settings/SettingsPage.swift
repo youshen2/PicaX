@@ -1966,7 +1966,7 @@ private struct HistorySettingsView: View {
                 } label: {
                     Label("清空阅读进度", systemImage: "bookmark.slash")
                 }
-                .disabled(!readingHistory.records.contains { $0.isReadingRecord })
+                .disabled(!readingHistory.hasAnyReadingProgress)
 
                 Button(role: .destructive) {
                     showsClearConfirmation = true

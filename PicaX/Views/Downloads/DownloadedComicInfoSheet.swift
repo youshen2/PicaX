@@ -98,9 +98,7 @@ struct DownloadedComicInfoSheet: View {
     }
 
     private var historyProgress: ReadingProgress? {
-        readingHistory.records.first { value in
-            value.item.platform == record.item.platform && value.item.id == record.item.id
-        }?.progress
+        readingHistory.record(for: record.item)?.progress
     }
 
     private var readableProgress: ReadingProgress? {

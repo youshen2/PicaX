@@ -84,10 +84,7 @@ struct ComicListSection: View {
     }
 
     private func makeRenderSnapshot() -> ComicListRenderSnapshot {
-        let readingRecordsByID = readingHistory.records.reduce(into: [String: ReadingHistoryRecord]()) { result, record in
-            guard record.isReadingRecord, result[record.id] == nil else { return }
-            result[record.id] = record
-        }
+        let readingRecordsByID = readingHistory.activeReadingRecordsByID
         var readingProgressIDs = Set<String>()
         var readingProgressTextByID: [String: String] = [:]
         readingProgressIDs.reserveCapacity(readingRecordsByID.count)
