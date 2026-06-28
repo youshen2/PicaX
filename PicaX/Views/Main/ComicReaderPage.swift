@@ -20,6 +20,7 @@ struct ComicReaderPage: View {
     @AppStorage(ReaderSettingsKey.progressPosition) private var progressPosition = ReaderProgressPosition.trailing.rawValue
     @AppStorage(ReaderSettingsKey.showsPageLabel) private var showsPageLabel = true
     @AppStorage(ReaderSettingsKey.progressFollowsUIVisibility) private var progressFollowsUIVisibility = false
+    @AppStorage(ReaderSettingsKey.progressTapSelectionEnabled) private var progressTapSelectionEnabled = false
     @AppStorage(ReaderSettingsKey.progressBackgroundOpacity) private var progressBackgroundOpacity = 0.78
     @AppStorage(ReaderSettingsKey.progressBottomInset) private var progressBottomInset = 16.0
     @AppStorage(ReaderSettingsKey.readingMode) private var readingMode = ReaderReadingMode.topToBottomContinuous.rawValue
@@ -74,6 +75,7 @@ struct ComicReaderPage: View {
     @State private var continuousScrollPosition = ScrollPosition()
     @State private var continuousScrollTracker = ReaderContinuousScrollTracker()
     @State private var continuousScrollRestoreTask: Task<Void, Never>?
+    @State private var continuousLoadableImageIDs = Set<String>()
     @State private var continuousLoadedImageIDs = Set<String>()
     @State private var continuousAspectRatioImageIDs = Set<String>()
     @State private var isAutoPaging = false
@@ -83,6 +85,8 @@ struct ComicReaderPage: View {
     @State private var readerToastTask: Task<Void, Never>?
     @State private var historyRecordTask: Task<Void, Never>?
     @State private var pendingHistoryRecord: ReaderHistoryRecordSnapshot?
+    @State private var progressSelectionContext: ReaderProgressSelectionContext?
+    @State private var progressJumpRequest: ReaderProgressJumpRequest?
     @State private var readingDurationSessionStart: Date?
     @State private var didShowInitialToast = false
 
@@ -161,7 +165,13 @@ struct ComicReaderPage: View {
                 )
                 .padding(.horizontal, 16)
                 .padding(.bottom, progressBottomPadding)
-                .allowsHitTesting(false)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    presentProgressSelection()
+                }
+                .accessibilityLabel("选择阅读进度")
+                .accessibilityAddTraits(progressTapSelectionEnabled ? .isButton : [])
+                .allowsHitTesting(progressTapSelectionEnabled)
             }
         }
         .overlay(alignment: readerSystemStatusPosition.alignment) {
@@ -246,6 +256,13 @@ struct ComicReaderPage: View {
                 }
             }
             .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+        }
+        .sheet(item: $progressSelectionContext) { context in
+            ReaderProgressSelectionDialog(context: context) { pageIndex in
+                requestProgressJump(to: pageIndex, chapterIndex: context.chapterIndex)
+            }
+            .presentationDetents([.height(280), .medium])
             .presentationDragIndicator(.visible)
         }
         .task {
@@ -362,6 +379,7 @@ struct ComicReaderPage: View {
                                 targetPixelWidth: targetPixelWidth,
                                 displayWidth: geometry.size.width,
                                 containerSize: nil,
+                                isLoadAllowed: continuousLoadableImageIDs.contains(images[index].urlString),
                                 zoomConfiguration: readerZoomConfiguration,
                                 dimsImage: dimsReaderImages,
                                 onAspectRatioResolved: { aspectRatio in
@@ -382,6 +400,11 @@ struct ComicReaderPage: View {
                                             )
                                         )
                                     }
+                                    updateContinuousLoadableImages(
+                                        images: images,
+                                        displayWidth: geometry.size.width,
+                                        fallbackViewportHeight: geometry.size.height
+                                    )
                                     syncContinuousVisiblePage(
                                         images: images,
                                         displayWidth: geometry.size.width,
@@ -423,6 +446,11 @@ struct ComicReaderPage: View {
                     if let point = newValue.point {
                         continuousScrollTracker.updateScrollY(point.y)
                     }
+                    updateContinuousLoadableImages(
+                        images: images,
+                        displayWidth: geometry.size.width,
+                        fallbackViewportHeight: geometry.size.height
+                    )
                     syncContinuousVisiblePage(
                         images: images,
                         displayWidth: geometry.size.width,
@@ -438,6 +466,11 @@ struct ComicReaderPage: View {
                     )
                 } action: { _, metrics in
                     continuousScrollTracker.updateMetrics(metrics)
+                    updateContinuousLoadableImages(
+                        images: images,
+                        displayWidth: geometry.size.width,
+                        fallbackViewportHeight: metrics.visibleHeight > 0 ? metrics.visibleHeight : geometry.size.height
+                    )
                     syncContinuousVisiblePage(
                         images: images,
                         displayWidth: geometry.size.width,
@@ -476,6 +509,7 @@ struct ComicReaderPage: View {
                 .onAppear {
                     resetContinuousImageState()
                     continuousScrollTracker.reset()
+                    focusContinuousLoadableImage(viewModel.currentPageIndex, images: images)
                     updateReadingPage(viewModel.currentPageIndex, totalPages: images.count, targetPixelWidth: targetPixelWidth, force: true)
                     scrollToInitialPage(proxy: proxy)
                 }
@@ -483,7 +517,18 @@ struct ComicReaderPage: View {
                     resetContinuousImageState()
                     continuousScrollTracker.reset()
                     continuousScrollPosition.scrollTo(y: 0)
+                    focusContinuousLoadableImage(viewModel.currentPageIndex, images: images)
                     scrollToInitialPage(proxy: proxy)
+                }
+                .onChange(of: progressJumpRequest) { _, request in
+                    handleProgressJumpRequest(
+                        request,
+                        images: images,
+                        targetPixelWidth: targetPixelWidth
+                    ) { pageIndex in
+                        focusContinuousLoadableImage(pageIndex, images: images)
+                        scrollToPage(pageIndex, proxy: proxy, animated: true)
+                    }
                 }
                 .readerContinuousZoom(
                     configuration: readerZoomConfiguration,
@@ -505,10 +550,11 @@ struct ComicReaderPage: View {
                         image: images[index],
                         retryCount: boundedImageRetryCount,
                         retryInterval: boundedImageRetryInterval,
-                        targetPixelWidth: targetPixelWidth,
-                        containerSize: geometry.size,
-                        zoomConfiguration: readerZoomConfiguration,
-                        dimsImage: dimsReaderImages
+                                targetPixelWidth: targetPixelWidth,
+                                containerSize: geometry.size,
+                                isLoadAllowed: index == pagedPageIndex,
+                                zoomConfiguration: readerZoomConfiguration,
+                                dimsImage: dimsReaderImages
                     )
                     .frame(width: geometry.size.width, height: geometry.size.height)
                     .tag(index)
@@ -567,6 +613,17 @@ struct ComicReaderPage: View {
                     updateReadingPage(newValue, totalPages: images.count, targetPixelWidth: targetPixelWidth)
                 }
             }
+            .onChange(of: progressJumpRequest) { _, request in
+                handleProgressJumpRequest(
+                    request,
+                    images: images,
+                    targetPixelWidth: targetPixelWidth
+                ) { pageIndex in
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        pagedPageIndex = pageIndex
+                    }
+                }
+            }
         }
     }
 
@@ -623,6 +680,16 @@ struct ComicReaderPage: View {
                             updateReadingPage(newValue, totalPages: images.count, targetPixelWidth: targetPixelWidth)
                         }
                     }
+                    .onChange(of: progressJumpRequest) { _, request in
+                        handleProgressJumpRequest(
+                            request,
+                            images: images,
+                            targetPixelWidth: targetPixelWidth
+                        ) { pageIndex in
+                            pagedPageIndex = pageIndex
+                            scrollToPage(pageIndex, proxy: proxy, animated: true)
+                        }
+                    }
             }
         }
         .ignoresSafeArea(.container)
@@ -639,6 +706,7 @@ struct ComicReaderPage: View {
                         retryInterval: boundedImageRetryInterval,
                         targetPixelWidth: targetPixelWidth,
                         containerSize: size,
+                        isLoadAllowed: index == pagedPageIndex,
                         zoomConfiguration: readerZoomConfiguration,
                         dimsImage: dimsReaderImages
                     )
@@ -1005,6 +1073,51 @@ struct ComicReaderPage: View {
         scheduleReadingHistoryRecord(pageIndex: index, totalPages: totalPages)
     }
 
+    private func presentProgressSelection() {
+        guard progressTapSelectionEnabled,
+              case .loaded(let images) = viewModel.state,
+              !images.isEmpty else {
+            return
+        }
+
+        let pageIndex = min(max(viewModel.currentPageIndex, 0), images.count - 1)
+        progressSelectionContext = ReaderProgressSelectionContext(
+            chapterIndex: viewModel.currentChapterIndex,
+            chapterTitle: viewModel.navigationTitle,
+            pageIndex: pageIndex,
+            pageCount: images.count
+        )
+    }
+
+    private func requestProgressJump(to pageIndex: Int, chapterIndex: Int) {
+        progressJumpRequest = ReaderProgressJumpRequest(
+            chapterIndex: chapterIndex,
+            pageIndex: pageIndex
+        )
+    }
+
+    private func handleProgressJumpRequest(
+        _ request: ReaderProgressJumpRequest?,
+        images: [ComicChapterImage],
+        targetPixelWidth: Int?,
+        performJump: (Int) -> Void
+    ) {
+        guard let request else { return }
+        defer {
+            if progressJumpRequest?.id == request.id {
+                progressJumpRequest = nil
+            }
+        }
+        guard request.chapterIndex == viewModel.currentChapterIndex,
+              !images.isEmpty else {
+            return
+        }
+
+        let pageIndex = min(max(request.pageIndex, 0), images.count - 1)
+        performJump(pageIndex)
+        updateReadingPage(pageIndex, totalPages: images.count, targetPixelWidth: targetPixelWidth, force: true)
+    }
+
     private func syncContinuousVisiblePage(
         images: [ComicChapterImage],
         displayWidth: CGFloat,
@@ -1030,6 +1143,43 @@ struct ComicReaderPage: View {
         continuousAspectRatioImageIDs.insert(urlString)
     }
 
+    private func updateContinuousLoadableImages(
+        images: [ComicChapterImage],
+        displayWidth: CGFloat,
+        fallbackViewportHeight: CGFloat
+    ) {
+        let indices = continuousScrollTracker.visiblePageIndices(
+            images: images,
+            displayWidth: displayWidth,
+            imageSpacing: CGFloat(imageSpacing),
+            firstImageTopPadding: CGFloat(firstImageTopPadding),
+            lastImageBottomPadding: CGFloat(lastImageBottomPadding),
+            fallbackViewportHeight: fallbackViewportHeight
+        )
+        guard !indices.isEmpty else {
+            if continuousLoadableImageIDs.isEmpty {
+                focusContinuousLoadableImage(viewModel.currentPageIndex, images: images)
+            }
+            return
+        }
+
+        let imageIDs = Set(indices.map { images[$0].urlString })
+        guard continuousLoadableImageIDs != imageIDs else { return }
+        continuousLoadableImageIDs = imageIDs
+    }
+
+    private func focusContinuousLoadableImage(_ pageIndex: Int, images: [ComicChapterImage]) {
+        guard !images.isEmpty else {
+            continuousLoadableImageIDs.removeAll(keepingCapacity: true)
+            return
+        }
+
+        let boundedIndex = min(max(pageIndex, 0), images.count - 1)
+        let imageIDs = Set([images[boundedIndex].urlString])
+        guard continuousLoadableImageIDs != imageIDs else { return }
+        continuousLoadableImageIDs = imageIDs
+    }
+
     private func updateContinuousImageLoadPhase(_ phase: ReaderImageLoadingPhase, for urlString: String) {
         switch phase {
         case .loading, .failed:
@@ -1040,6 +1190,7 @@ struct ComicReaderPage: View {
     }
 
     private func resetContinuousImageState() {
+        continuousLoadableImageIDs.removeAll(keepingCapacity: true)
         continuousLoadedImageIDs.removeAll(keepingCapacity: true)
         continuousAspectRatioImageIDs.removeAll(keepingCapacity: true)
     }
@@ -1595,6 +1746,52 @@ private final class ReaderContinuousScrollTracker {
         max(contentHeight - max(visibleHeight, fallbackViewportHeight, 1), 0)
     }
 
+    func visiblePageIndices(
+        images: [ComicChapterImage],
+        displayWidth: CGFloat,
+        imageSpacing: CGFloat,
+        firstImageTopPadding: CGFloat,
+        lastImageBottomPadding: CGFloat,
+        fallbackViewportHeight: CGFloat
+    ) -> Set<Int> {
+        guard isReady, !images.isEmpty, displayWidth.isFinite, displayWidth > 0 else {
+            return []
+        }
+
+        let viewportHeight = max(visibleHeight > 0 ? visibleHeight : fallbackViewportHeight, 0)
+        guard viewportHeight > 0 else { return [] }
+
+        let viewportPadding: CGFloat = 8
+        let viewportTop = max(scrollY - viewportPadding, 0)
+        let viewportBottom = scrollY + viewportHeight + viewportPadding
+        var visibleIndices = Set<Int>()
+        var pageTop = Self.verticalPadding
+
+        for index in images.indices {
+            let pageHeight = pageHeight(
+                for: index,
+                imageCount: images.count,
+                displayWidth: displayWidth,
+                aspectRatio: aspectRatio(for: index, image: images[index]),
+                firstImageTopPadding: firstImageTopPadding,
+                lastImageBottomPadding: lastImageBottomPadding
+            )
+            let pageBottom = pageTop + pageHeight
+            if pageBottom >= viewportTop, pageTop <= viewportBottom {
+                visibleIndices.insert(index)
+            } else if pageTop > viewportBottom {
+                break
+            }
+
+            pageTop = pageBottom
+            if index != images.index(before: images.endIndex) {
+                pageTop += max(imageSpacing, 0)
+            }
+        }
+
+        return visibleIndices
+    }
+
     func visiblePageIndex(
         images: [ComicChapterImage],
         displayWidth: CGFloat,
@@ -1882,6 +2079,7 @@ private struct ReaderImageView: View {
     let targetPixelWidth: Int?
     var displayWidth: CGFloat? = nil
     var containerSize: CGSize? = nil
+    var isLoadAllowed = true
     let zoomConfiguration: ReaderZoomConfiguration
     let dimsImage: Bool
     var onAspectRatioResolved: ((Double) -> Void)? = nil
@@ -1912,7 +2110,11 @@ private struct ReaderImageView: View {
         }
         .frame(maxWidth: .infinity)
         .background(Color.black)
-        .task(id: "\(image.urlString)-\(targetPixelWidth ?? 0)-\(retryID)") {
+        .task(id: "\(image.urlString)-\(targetPixelWidth ?? 0)-\(retryID)-\(isLoadAllowed)") {
+            guard isLoadAllowed else {
+                loadCachedAspectRatio()
+                return
+            }
             await loadImage()
         }
     }
@@ -1926,6 +2128,16 @@ private struct ReaderImageView: View {
             return max(displayWidth * 1.42, 120)
         }
         return max(displayWidth * CGFloat(aspectRatio), 120)
+    }
+
+    @MainActor
+    private func loadCachedAspectRatio() {
+        guard knownAspectRatio == nil,
+              let cachedAspectRatio = ReaderImageAspectRatioCache.shared.aspectRatio(for: image.urlString) else {
+            return
+        }
+        knownAspectRatio = cachedAspectRatio
+        onAspectRatioResolved?(cachedAspectRatio)
     }
 
     @MainActor
@@ -2557,6 +2769,20 @@ private struct ReaderHistoryRecordSnapshot: Equatable {
     let totalChapters: Int
 }
 
+private struct ReaderProgressSelectionContext: Identifiable, Equatable {
+    let id = UUID()
+    let chapterIndex: Int
+    let chapterTitle: String
+    let pageIndex: Int
+    let pageCount: Int
+}
+
+private struct ReaderProgressJumpRequest: Equatable {
+    let id = UUID()
+    let chapterIndex: Int
+    let pageIndex: Int
+}
+
 private enum ReaderImageMemoryCache {
     nonisolated(unsafe) private static let cache: NSCache<NSString, PicaXPlatformImage> = {
         let cache = NSCache<NSString, PicaXPlatformImage>()
@@ -2940,6 +3166,7 @@ enum ReaderSettingsKey {
     static let progressPosition = "settings.reader.progressPosition"
     static let showsPageLabel = "settings.reader.showsPageLabel"
     static let progressFollowsUIVisibility = "settings.reader.progressFollowsUIVisibility"
+    static let progressTapSelectionEnabled = "settings.reader.progressTapSelectionEnabled"
     static let progressBackgroundOpacity = "settings.reader.progressBackgroundOpacity"
     static let progressBottomInset = "settings.reader.progressBottomInset"
     static let readingMode = "settings.reader.readingMode"
@@ -3418,6 +3645,75 @@ private struct ReaderAutoPagingModifier: ViewModifier {
                 guard isEnabled else { return }
                 onTick()
             }
+    }
+}
+
+private struct ReaderProgressSelectionDialog: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let context: ReaderProgressSelectionContext
+    let onSelect: (Int) -> Void
+    @State private var selectedPage: Int
+
+    init(context: ReaderProgressSelectionContext, onSelect: @escaping (Int) -> Void) {
+        self.context = context
+        self.onSelect = onSelect
+        _selectedPage = State(initialValue: min(max(context.pageIndex + 1, 1), max(context.pageCount, 1)))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Label("选择阅读进度", systemImage: "slider.horizontal.3")
+                        .font(.headline)
+                    Text(context.chapterTitle)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+
+                Spacer(minLength: 16)
+
+                Text("\(selectedPage)/\(max(context.pageCount, 1))")
+                    .font(.title3.weight(.semibold))
+                    .monospacedDigit()
+            }
+
+            if context.pageCount > 1 {
+                Slider(value: selectedPageValue, in: 1...Double(context.pageCount), step: 1)
+            }
+
+            Stepper(value: $selectedPage, in: 1...max(context.pageCount, 1)) {
+                Text("第 \(selectedPage) 页")
+                    .font(.body.weight(.medium))
+                    .monospacedDigit()
+            }
+
+            HStack {
+                Button("取消") {
+                    dismiss()
+                }
+                .buttonStyle(.bordered)
+
+                Spacer()
+
+                Button("跳转") {
+                    onSelect(selectedPage - 1)
+                    dismiss()
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(20)
+    }
+
+    private var selectedPageValue: Binding<Double> {
+        Binding {
+            Double(selectedPage)
+        } set: { value in
+            selectedPage = min(max(Int(value.rounded()), 1), max(context.pageCount, 1))
+        }
     }
 }
 

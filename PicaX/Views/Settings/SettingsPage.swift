@@ -1641,6 +1641,7 @@ private struct ReaderSettingsView: View {
     @AppStorage(ReaderSettingsKey.progressPosition) private var progressPosition = ReaderProgressPosition.trailing.rawValue
     @AppStorage(ReaderSettingsKey.showsPageLabel) private var showsPageLabel = true
     @AppStorage(ReaderSettingsKey.progressFollowsUIVisibility) private var progressFollowsUIVisibility = false
+    @AppStorage(ReaderSettingsKey.progressTapSelectionEnabled) private var progressTapSelectionEnabled = false
     @AppStorage(ReaderSettingsKey.progressBackgroundOpacity) private var progressBackgroundOpacity = 0.78
     @AppStorage(ReaderSettingsKey.progressBottomInset) private var progressBottomInset = 16.0
     @AppStorage(ReaderSettingsKey.readingMode) private var readingMode = ReaderReadingMode.topToBottomContinuous.rawValue
@@ -1889,6 +1890,8 @@ private struct ReaderSettingsView: View {
                 .pickerStyle(.segmented)
 
                 Toggle("显示页码", isOn: $showsPageLabel)
+
+                Toggle("点击进度选择页码", isOn: $progressTapSelectionEnabled)
 
                 Toggle("液体玻璃背景", isOn: $usesProgressGlassBackground)
 
