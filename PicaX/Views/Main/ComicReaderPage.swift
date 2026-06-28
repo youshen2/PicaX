@@ -169,6 +169,7 @@ struct ComicReaderPage: View {
             }
         }
         .animation(.easeInOut(duration: 0.18), value: showsSystemStatus)
+        .animation(readerChromeAnimation, value: showsReaderUI)
         .animation(.easeInOut(duration: 0.16), value: readerToastMessage)
         .toolbar {
             ToolbarItemGroup(placement: .picaxTopBarTrailing) {
@@ -1011,7 +1012,9 @@ struct ComicReaderPage: View {
     }
 
     private func toggleReaderUI() {
-        hidesReaderUI.toggle()
+        withAnimation(readerChromeAnimation) {
+            hidesReaderUI.toggle()
+        }
     }
 
     private func toggleAutoPaging() {
@@ -1082,6 +1085,10 @@ struct ComicReaderPage: View {
 
     private var readerUIToggleMode: ReaderUIToggleMode {
         ReaderUIToggleMode(rawValue: uiToggleMode) ?? .single
+    }
+
+    private var readerChromeAnimation: Animation {
+        .easeInOut(duration: 0.22)
     }
 
     private func migrateReaderVisibilityDefaultsIfNeeded() {
