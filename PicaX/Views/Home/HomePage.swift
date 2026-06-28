@@ -17,6 +17,7 @@ struct HomePage: View {
     @AppStorage(HomeSettingsKey.showsDownloadSection) private var showsDownloadSection = true
     @AppStorage(HomeSettingsKey.showsAccountManagementEntry) private var showsAccountManagementEntry = true
     @AppStorage(AppBehaviorSettingsKey.checksClipboardForComicLinks) private var checksClipboardForComicLinks = true
+    @AppStorage(AppBehaviorSettingsKey.checksClipboardOnlyOnLaunch) private var checksClipboardOnlyOnLaunch = false
 
     private let contentService = ComicContentService()
     @State private var downloadedReaderRequest: DownloadedComicReaderRequest?
@@ -26,6 +27,7 @@ struct HomePage: View {
     @State private var toolInputText = ""
     @State private var toolErrorMessage: String?
     @State private var clipboardCandidate: HomeClipboardCandidate?
+    @State private var hasCheckedClipboardOnLaunch = false
     @State private var lastCheckedClipboardValue = ""
 
     var body: some View {
@@ -94,10 +96,10 @@ struct HomePage: View {
             }
         }
         .onAppear {
-            checkClipboardIfNeeded()
+            checkClipboardOnAppearIfNeeded()
         }
         .onChange(of: scenePhase) { _, newValue in
-            if newValue == .active {
+            if newValue == .active, !checksClipboardOnlyOnLaunch {
                 checkClipboardIfNeeded()
             }
         }
@@ -241,6 +243,14 @@ struct HomePage: View {
             toolDetailRequest = HomeToolDetailRequest(item: HomeToolLinkParser.jmComicItem(id: id))
             return nil
         }
+    }
+
+    private func checkClipboardOnAppearIfNeeded() {
+        if checksClipboardOnlyOnLaunch {
+            guard !hasCheckedClipboardOnLaunch else { return }
+            hasCheckedClipboardOnLaunch = true
+        }
+        checkClipboardIfNeeded()
     }
 
     private func checkClipboardIfNeeded() {

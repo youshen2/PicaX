@@ -262,6 +262,7 @@ private enum SettingsSearchItem: CaseIterable {
 private struct AppBehaviorSettingsView: View {
     @AppStorage(AppAppearanceSettingsKey.colorScheme) private var colorScheme = AppAppearanceMode.system.rawValue
     @AppStorage(AppBehaviorSettingsKey.checksClipboardForComicLinks) private var checksClipboardForComicLinks = true
+    @AppStorage(AppBehaviorSettingsKey.checksClipboardOnlyOnLaunch) private var checksClipboardOnlyOnLaunch = false
     @AppStorage(AppBehaviorSettingsKey.checksUpdatesOnLaunch) private var checksUpdatesOnLaunch = true
 
     var body: some View {
@@ -280,9 +281,12 @@ private struct AppBehaviorSettingsView: View {
 
             Section {
                 Toggle("检查剪贴板链接", isOn: $checksClipboardForComicLinks)
+                if checksClipboardForComicLinks {
+                    Toggle("仅启动应用时检查", isOn: $checksClipboardOnlyOnLaunch)
+                }
                 Toggle("启动时检查更新", isOn: $checksUpdatesOnLaunch)
             } footer: {
-                Text("剪贴板检查会在回到首页时提示打开支持链接或 JM 车牌号。启动更新检查只会在发现新版本时提示，检查失败不会打断启动。")
+                Text("剪贴板检查会提示打开支持链接或 JM 车牌号。启动更新检查只会在发现新版本时提示，检查失败不会打断启动。")
             }
         }
         .picaxInsetGroupedListStyle()
