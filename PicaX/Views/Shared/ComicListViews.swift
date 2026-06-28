@@ -414,9 +414,11 @@ struct ComicCoverView: View {
     var storesInCache = true
 
     var body: some View {
-        CachedRemoteImageView(url: url, accentColor: accentColor, contentMode: .fill, storesInCache: storesInCache, maxPixelSize: 512)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .clipped()
+        GeometryReader { proxy in
+            CachedRemoteImageView(url: url, accentColor: accentColor, contentMode: .fill, storesInCache: storesInCache, maxPixelSize: 512)
+                .frame(width: proxy.size.width, height: proxy.size.height)
+                .clipped()
+        }
         .background(AppColor.secondaryGroupedBackground)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay {
