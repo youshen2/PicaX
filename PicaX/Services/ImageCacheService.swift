@@ -13,7 +13,7 @@ struct ImageCacheUsage: Equatable {
 
 enum ImageCacheService {
     nonisolated static let defaultMaxDiskSizeMB = 400
-    private static let lock = NSLock()
+    nonisolated(unsafe) private static let lock = NSLock()
     nonisolated(unsafe) private static var diskCapacityBytes = defaultMaxDiskSizeMB * 1024 * 1024
     private static let uncachedSession: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral

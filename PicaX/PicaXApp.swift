@@ -40,6 +40,7 @@ struct PicaXApp: App {
                 .environmentObject(searchHistoryService)
                 .task {
                     ImageCacheService.configure()
+                    ComicDetailCacheService.configure()
                     downloadService.configure { platform in
                         platformAccountService.account(for: platform)
                     }

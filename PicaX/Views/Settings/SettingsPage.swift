@@ -246,7 +246,7 @@ private enum SettingsSearchItem: CaseIterable {
         case .blockingKeywords:
             "通用与 JMComic 专用关键词"
         case .storage:
-            "空间占用与图片缓存"
+            "空间占用、图片缓存与详情缓存"
         case .backup:
             "导出或导入本地数据"
         case .appDisplay:
@@ -271,7 +271,7 @@ private enum SettingsSearchItem: CaseIterable {
         case .home:
             ["阅读时长", "阅读历史", "下载", "折叠", "首页卡片"]
         case .storage:
-            ["缓存", "图片缓存", "空间", "清空缓存"]
+            ["缓存", "图片缓存", "详情缓存", "空间", "清空缓存"]
         case .blockingKeywords:
             ["屏蔽", "黑名单", "关键词", "标签"]
         case .search:
@@ -672,9 +672,13 @@ private struct StorageManagementView: View {
     @EnvironmentObject private var downloadService: DownloadService
     @EnvironmentObject private var readingHistory: ReadingHistoryService
     @AppStorage(ImageCacheSettingsKey.maxDiskSizeMB) private var maxDiskSizeMB = ImageCacheService.defaultMaxDiskSizeMB
+    @AppStorage(DetailCacheSettingsKey.isEnabled) private var detailCacheEnabled = true
+    @AppStorage(DetailCacheSettingsKey.maxDiskSizeMB) private var maxDetailCacheDiskSizeMB = ComicDetailCacheService.defaultMaxDiskSizeMB
     @State private var showsClearCacheConfirmation = false
+    @State private var showsClearDetailCacheConfirmation = false
     @State private var showsClearDownloadsConfirmation = false
     @State private var usage = ImageCacheUsage(memoryBytes: 0, diskBytes: 0)
+    @State private var detailCacheUsage = ComicDetailCacheUsage(diskBytes: 0)
     @State private var downloadUsage = DownloadStorageUsage(filesBytes: 0, recordsBytes: 0, tasksBytes: 0)
 
     var body: some View {
@@ -682,13 +686,13 @@ private struct StorageManagementView: View {
             Section("总览") {
                 SettingsValueRow(title: "总占用", value: ImageCacheService.formattedSize(totalDiskUsage))
                 SettingsValueRow(title: "图片缓存", value: ImageCacheService.formattedSize(usage.diskBytes))
+                SettingsValueRow(title: "详情缓存", value: ImageCacheService.formattedSize(detailCacheUsage.diskBytes))
                 SettingsValueRow(title: "下载文件", value: ImageCacheService.formattedSize(downloadUsage.filesBytes))
                 SettingsValueRow(title: "本地数据", value: ImageCacheService.formattedSize(localDataBytes))
             }
 
             Section {
-                SettingsValueRow(title: "磁盘缓存", value: ImageCacheService.formattedSize(usage.diskBytes))
-                SettingsValueRow(title: "内存缓存", value: ImageCacheService.formattedSize(usage.memoryBytes))
+                SettingsValueRow(title: "当前占用", value: ImageCacheService.formattedSize(usage.diskBytes))
 
                 IntegerSettingsInputRow(
                     title: "最大缓存",
@@ -696,8 +700,26 @@ private struct StorageManagementView: View {
                     unit: "MB",
                     lowerBound: 50
                 )
+            } header: {
+                Text("图片缓存")
             } footer: {
                 Text("封面、分类图和阅读图片会优先使用已缓存的数据。调整容量后会应用到之后的图片请求。")
+            }
+
+            Section {
+                Toggle("启用详情缓存", isOn: $detailCacheEnabled)
+                SettingsValueRow(title: "当前占用", value: ImageCacheService.formattedSize(detailCacheUsage.diskBytes))
+
+                IntegerSettingsInputRow(
+                    title: "最大缓存",
+                    value: $maxDetailCacheDiskSizeMB,
+                    unit: "MB",
+                    lowerBound: 5
+                )
+            } header: {
+                Text("详情缓存")
+            } footer: {
+                Text("开启后，第二次打开同一漫画会先显示已缓存的基础详情，再从网络补齐章节和相关推荐。章节、相关推荐和 PicACG 上传者信息不会保存到详情缓存。")
             }
 
             Section("下载") {
@@ -722,6 +744,12 @@ private struct StorageManagementView: View {
                 }
 
                 Button(role: .destructive) {
+                    showsClearDetailCacheConfirmation = true
+                } label: {
+                    Label("清空详情缓存", systemImage: "trash")
+                }
+
+                Button(role: .destructive) {
                     showsClearDownloadsConfirmation = true
                 } label: {
                     Label("删除已下载文件", systemImage: "trash")
@@ -736,13 +764,29 @@ private struct StorageManagementView: View {
             if maxDiskSizeMB <= 0 {
                 maxDiskSizeMB = ImageCacheService.defaultMaxDiskSizeMB
             }
+            if maxDetailCacheDiskSizeMB <= 0 {
+                maxDetailCacheDiskSizeMB = ComicDetailCacheService.defaultMaxDiskSizeMB
+            }
             ImageCacheService.configure()
+            ComicDetailCacheService.configure()
             Task {
                 await refreshStorageUsage()
             }
         }
         .onChange(of: maxDiskSizeMB) { _, _ in
             ImageCacheService.configure()
+            Task {
+                await refreshStorageUsage()
+            }
+        }
+        .onChange(of: detailCacheEnabled) { _, _ in
+            ComicDetailCacheService.configure()
+            Task {
+                await refreshStorageUsage()
+            }
+        }
+        .onChange(of: maxDetailCacheDiskSizeMB) { _, _ in
+            ComicDetailCacheService.configure()
             Task {
                 await refreshStorageUsage()
             }
@@ -757,6 +801,17 @@ private struct StorageManagementView: View {
             Button("取消", role: .cancel) {}
         } message: {
             Text("此操作会删除本地缓存的封面、分类图和阅读图片，不会影响下载、收藏或历史记录。")
+        }
+        .alert("清空详情缓存？", isPresented: $showsClearDetailCacheConfirmation) {
+            Button("清空缓存", role: .destructive) {
+                ComicDetailCacheService.clear()
+                Task {
+                    await refreshStorageUsage()
+                }
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("此操作会删除本地缓存的漫画基础详情，不会影响下载、收藏或历史记录。")
         }
         .alert("删除所有已下载文件？", isPresented: $showsClearDownloadsConfirmation) {
             Button("删除已下载文件", role: .destructive) {
@@ -784,12 +839,13 @@ private struct StorageManagementView: View {
     }
 
     private var totalDiskUsage: Int64 {
-        Int64(usage.diskBytes) + downloadUsage.filesBytes + localDataBytes
+        Int64(usage.diskBytes + detailCacheUsage.diskBytes) + downloadUsage.filesBytes + localDataBytes
     }
 
     @MainActor
     private func refreshStorageUsage() async {
         usage = ImageCacheService.usage
+        detailCacheUsage = ComicDetailCacheService.usage
         downloadUsage = await downloadService.storageUsage()
     }
 }
@@ -1043,6 +1099,7 @@ private struct BackupSettingsView: View {
         blockingKeywords.reloadFromDefaults()
         searchHistory.reloadFromDefaults()
         ImageCacheService.configure()
+        ComicDetailCacheService.configure()
     }
 
     private static let fileNameFormatter: DateFormatter = {

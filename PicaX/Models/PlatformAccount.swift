@@ -9,7 +9,7 @@ enum ComicPlatform: String, CaseIterable, Codable, Identifiable {
     case hitomi
     case htManga
 
-    var id: String { rawValue }
+    nonisolated var id: String { rawValue }
 
     var title: String {
         switch self {

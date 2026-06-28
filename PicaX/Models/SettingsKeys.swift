@@ -195,6 +195,11 @@ enum DetailSettingsKey {
     static let usesCoverAccent = "settings.detail.usesCoverAccent"
 }
 
+enum DetailCacheSettingsKey {
+    nonisolated static let isEnabled = "settings.detailCache.isEnabled"
+    nonisolated static let maxDiskSizeMB = "settings.detailCache.maxDiskSizeMB"
+}
+
 enum ReadFilterSettingsKey {
     nonisolated static let hidesReadComicsInLists = "settings.readFilter.hidesReadComicsInLists"
     nonisolated static let hiddenProgressThreshold = "settings.readFilter.hiddenProgressThreshold"

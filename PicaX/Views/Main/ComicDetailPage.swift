@@ -31,7 +31,9 @@ struct ComicDetailPage: View {
             case .idle, .loading:
                 LoadingComicDetailView(accentColor: item.accentColor)
             case .loaded(let detail):
-                ComicDetailContent(detail: detail, service: service)
+                ComicDetailContent(detail: detail, service: service) {
+                    await load(force: true)
+                }
             case .failed(let message):
                 ContentUnavailableView {
                     Label("加载失败", systemImage: "exclamationmark.triangle")
@@ -72,7 +74,7 @@ struct ComicDetailPage: View {
                 } label: {
                     Image(systemName: "arrow.down.circle")
                 }
-                .disabled(viewModel.loadedDetail == nil)
+                .disabled(!canDownloadLoadedDetail)
                 .accessibilityLabel("下载")
 
                 if service.supportsLike(platform: item.platform) {
@@ -101,6 +103,11 @@ struct ComicDetailPage: View {
         .task {
             await load()
         }
+        .onReceive(viewModel.$state) { state in
+            if case .loaded(let detail) = state, let loadedIsLiked = detail.isLiked {
+                isLiked = loadedIsLiked
+            }
+        }
         .alert("点赞失败", isPresented: likeErrorBinding) {
             Button("好", role: .cancel) {}
         } message: {
@@ -117,6 +124,11 @@ struct ComicDetailPage: View {
         if let loadedIsLiked = viewModel.loadedDetail?.isLiked {
             isLiked = loadedIsLiked
         }
+    }
+
+    private var canDownloadLoadedDetail: Bool {
+        guard let detail = viewModel.loadedDetail else { return false }
+        return !detail.chapters.isEmpty
     }
 
     @ViewBuilder
@@ -156,6 +168,7 @@ struct ComicDetailPage: View {
                 account: platformAccounts.account(for: detail.item.platform)
             )
             isLiked = newValue
+            await viewModel.updateLikeState(newValue, account: platformAccounts.account(for: detail.item.platform))
         } catch {
             likeErrorMessage = error.localizedDescription
         }
@@ -172,6 +185,7 @@ private struct ComicDetailContent: View {
     @State private var selectedTag: ComicTagReference?
     @State private var relatedDetailRequest: ComicListDetailRequest?
     @State private var relatedReaderRequest: ComicListReaderRequest?
+    let onRefresh: () async -> Void
 
     var body: some View {
         Group {
@@ -255,6 +269,9 @@ private struct ComicDetailContent: View {
                 }
             }
             .picaxInsetGroupedListStyle()
+            .refreshable {
+                await onRefresh()
+            }
         }
         .navigationDestination(item: $readerTarget) { target in
             ComicReaderPage(
@@ -425,6 +442,27 @@ private struct ComicDetailHeader: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
+
+                    if let readingProgressText {
+                        VStack(alignment: .leading, spacing: 5) {
+                            HStack(spacing: 5) {
+                                Image(systemName: readingProgressSystemImage)
+                                Text(readingProgressText)
+                                    .lineLimit(1)
+                                if let readingProgressPercentText {
+                                    Text(readingProgressPercentText)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(detail.item.accentColor)
+
+                            if let readingProgressFraction {
+                                ProgressView(value: readingProgressFraction)
+                                    .tint(detail.item.accentColor)
+                            }
+                        }
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -442,8 +480,9 @@ private struct ComicDetailHeader: View {
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(.white)
-                    .background(accentColor, in: Capsule())
-                    .glassProminentIfAvailable(tint: accentColor)
+                    .background(readButtonColor(accentColor), in: Capsule())
+                    .glassProminentIfAvailable(tint: readButtonColor(accentColor))
+                    .disabled(detail.chapters.isEmpty)
 
                     Button {
                         showsChapters = true
@@ -476,6 +515,7 @@ private struct ComicDetailHeader: View {
             } label: {
                 Label("忽略阅读进度", systemImage: "arrow.counterclockwise")
             }
+            .disabled(detail.chapters.isEmpty)
         }
         .sheet(isPresented: $showsCoverPreview) {
             ZoomableCoverPreview(url: detail.item.coverURL, accentColor: detail.item.accentColor)
@@ -507,7 +547,36 @@ private struct ComicDetailHeader: View {
     }
 
     private var readButtonTitle: String {
-        hasReadingProgress ? "继续阅读" : "阅读"
+        if detail.chapters.isEmpty {
+            return "加载章节中"
+        }
+        return hasReadingProgress ? "继续阅读" : "阅读"
+    }
+
+    private var readingProgressText: String? {
+        guard let record = readingHistory.record(for: detail.item), record.isReadingRecord else { return nil }
+        return record.progressText
+    }
+
+    private var readingProgressSystemImage: String {
+        historyProgress?.status == .finished ? "checkmark.circle.fill" : "book.circle"
+    }
+
+    private var readingProgressPercentText: String? {
+        guard let readingProgressFraction else { return nil }
+        return "\(Int((readingProgressFraction * 100).rounded()))%"
+    }
+
+    private var readingProgressFraction: Double? {
+        guard let progress = historyProgress else { return nil }
+        switch progress.status {
+        case .viewed:
+            return nil
+        case .finished:
+            return 1
+        case .reading:
+            return readingProgressFraction(for: progress)
+        }
     }
 
     private var titleText: String {
@@ -521,6 +590,27 @@ private struct ComicDetailHeader: View {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(value, forType: .string)
         #endif
+    }
+
+    private func readButtonColor(_ accentColor: Color) -> Color {
+        detail.chapters.isEmpty ? accentColor.opacity(0.38) : accentColor
+    }
+
+    private func readingProgressFraction(for progress: ReadingProgress) -> Double? {
+        let currentPageFraction: Double
+        if progress.totalPages > 0 {
+            currentPageFraction = Double(min(max(progress.pageIndex + 1, 0), progress.totalPages)) / Double(progress.totalPages)
+        } else {
+            currentPageFraction = 0
+        }
+
+        if progress.totalChapters > 0 {
+            let completedChapters = progress.readChapterIndexes.subtracting([progress.chapterIndex]).count
+            return min(max((Double(completedChapters) + currentPageFraction) / Double(progress.totalChapters), 0), 1)
+        }
+
+        guard progress.totalPages > 0 else { return nil }
+        return min(max(currentPageFraction, 0), 1)
     }
 }
 
@@ -1269,10 +1359,15 @@ private final class ComicDetailViewModel: ObservableObject {
 
     private let item: ComicListItem
     private let service: ComicContentService
+    private var refreshTask: Task<Void, Never>?
 
     init(item: ComicListItem, service: ComicContentService) {
         self.item = item
         self.service = service
+    }
+
+    deinit {
+        refreshTask?.cancel()
     }
 
     func load(account: PlatformAccount?, force: Bool = false) async {
@@ -1280,13 +1375,45 @@ private final class ComicDetailViewModel: ObservableObject {
             return
         }
 
-        state = .loading
+        refreshTask?.cancel()
+
+        if !force, let cachedDetail = await ComicDetailCacheService.detail(for: item, account: account) {
+            state = .loaded(cachedDetail)
+            refreshTask = Task { [weak self] in
+                await self?.loadFromNetwork(account: account, showsLoading: false)
+            }
+            return
+        }
+
+        await loadFromNetwork(account: account, showsLoading: true)
+    }
+
+    private func loadFromNetwork(account: PlatformAccount?, showsLoading: Bool) async {
+        if showsLoading {
+            state = .loading
+        }
+
         do {
             let detail = try await service.loadDetail(item: item, account: account)
+            try Task.checkCancellation()
             state = .loaded(detail)
+            await ComicDetailCacheService.store(detail, account: account)
+        } catch is CancellationError {
+            return
+        } catch let error as URLError where error.code == .cancelled {
+            return
         } catch {
-            state = .failed(error.localizedDescription)
+            if showsLoading {
+                state = .failed(error.localizedDescription)
+            }
         }
+    }
+
+    func updateLikeState(_ isLiked: Bool, account: PlatformAccount?) async {
+        guard var detail = loadedDetail else { return }
+        detail.isLiked = isLiked
+        state = .loaded(detail)
+        await ComicDetailCacheService.store(detail, account: account)
     }
 }
 
