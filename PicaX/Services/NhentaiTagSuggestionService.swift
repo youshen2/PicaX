@@ -23,7 +23,11 @@ struct NhentaiTagSuggestion: Identifiable, Hashable {
     var id: String { "\(group):\(tag)" }
 
     var query: String {
-        group == "language" ? "language:\(tag)" : tag
+        group == "language" ? "language:\(tag)" : quotedTagIfNeeded
+    }
+
+    private var quotedTagIfNeeded: String {
+        tag.contains(" ") ? "\"\(tag)\"" : tag
     }
 }
 

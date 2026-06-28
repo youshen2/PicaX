@@ -21,11 +21,14 @@ struct EhTagSuggestion: Identifiable, Hashable {
     }
 
     var id: String { "\(namespace):\(tag)" }
-    var query: String { "\(namespace):\(tag)" }
+    var query: String { "\(namespace):\(quotedTagIfNeeded)" }
 
     var categoryQuery: String {
-        let value = tag.contains(" ") ? "\"\(tag)\"" : tag
-        return "\(namespace):\(value)"
+        query
+    }
+
+    private var quotedTagIfNeeded: String {
+        tag.contains(" ") ? "\"\(tag)\"" : tag
     }
 }
 

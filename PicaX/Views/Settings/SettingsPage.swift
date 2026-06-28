@@ -262,7 +262,7 @@ private enum SettingsSearchItem: CaseIterable {
         case .blockingKeywords:
             ["屏蔽", "黑名单", "关键词", "标签"]
         case .search:
-            ["默认搜索源", "搜索历史", "聚合搜索", "搜索补全", "标签建议"]
+            ["默认搜索源", "搜索历史", "聚合搜索", "搜索补全", "标签建议", "填入", "直接搜索"]
         case .comicList:
             ["已读隐藏", "阅读进度", "收藏状态", "标签"]
         case .downloads:
@@ -1132,6 +1132,7 @@ private struct SearchSettingsView: View {
     @EnvironmentObject private var searchHistory: SearchHistoryService
     @AppStorage(SearchSettingsKey.focusesSearchFieldOnOpen) private var focusesSearchFieldOnOpen = false
     @AppStorage(SearchSettingsKey.enablesSearchSuggestions) private var enablesSearchSuggestions = true
+    @AppStorage(SearchSettingsKey.suggestionSelectionBehavior) private var suggestionSelectionBehavior = SearchSuggestionSelectionBehavior.fill.rawValue
     @AppStorage(SearchSettingsKey.defaultTargetMode) private var defaultTargetMode = SearchDefaultTargetMode.platform.rawValue
     @AppStorage(SearchSettingsKey.defaultPlatform) private var defaultSearchPlatformID = ComicPlatform.picacg.rawValue
     @AppStorage(SearchSettingsKey.defaultAggregatePlatforms) private var defaultAggregatePlatformIDs = ComicPlatform.allCases.map(\.rawValue).joined(separator: ",")
@@ -1181,8 +1182,17 @@ private struct SearchSettingsView: View {
 
             Section {
                 Toggle("搜索补全", isOn: $enablesSearchSuggestions)
+
+                if enablesSearchSuggestions {
+                    Picker("点击补全后", selection: $suggestionSelectionBehavior) {
+                        ForEach(SearchSuggestionSelectionBehavior.allCases) { behavior in
+                            Text(behavior.title)
+                                .tag(behavior.rawValue)
+                        }
+                    }
+                }
             } footer: {
-                Text("开启后，E-Hentai 和 NHentai 搜索会根据本地标签数据提供补全建议。")
+                Text("开启后，E-Hentai 和 NHentai 搜索会根据本地标签数据提供补全建议；填入模式会在关键词末尾自动加空格。")
             }
 
             Section {

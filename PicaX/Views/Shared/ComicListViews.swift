@@ -570,6 +570,7 @@ struct ComicSearchPage: View {
     @EnvironmentObject private var searchHistory: SearchHistoryService
     @AppStorage(SearchSettingsKey.focusesSearchFieldOnOpen) private var focusesSearchFieldOnOpen = false
     @AppStorage(SearchSettingsKey.enablesSearchSuggestions) private var enablesSearchSuggestions = true
+    @AppStorage(SearchSettingsKey.suggestionSelectionBehavior) private var suggestionSelectionBehavior = SearchSuggestionSelectionBehavior.fill.rawValue
     @AppStorage(SearchSettingsKey.defaultTargetMode) private var defaultTargetMode = SearchDefaultTargetMode.platform.rawValue
     @AppStorage(SearchSettingsKey.defaultPlatform) private var defaultSearchPlatformID = ComicPlatform.picacg.rawValue
     @AppStorage(SearchSettingsKey.defaultAggregatePlatforms) private var defaultAggregatePlatformIDs = ComicPlatform.allCases.map(\.rawValue).joined(separator: ",")
@@ -838,7 +839,11 @@ struct ComicSearchPage: View {
                 Section("E-Hentai 标签") {
                     ForEach(suggestions) { suggestion in
                         Button {
-                            applyEhentaiSuggestion(suggestion)
+                            applyTagSuggestion(
+                                query: suggestion.query,
+                                tag: suggestion.tag,
+                                translatedTitle: suggestion.translatedTitle
+                            )
                         } label: {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(suggestion.query)
@@ -856,7 +861,11 @@ struct ComicSearchPage: View {
                 Section("NHentai 标签") {
                     ForEach(suggestions) { suggestion in
                         Button {
-                            applyNhentaiSuggestion(suggestion)
+                            applyTagSuggestion(
+                                query: suggestion.query,
+                                tag: suggestion.tag,
+                                translatedTitle: suggestion.translatedTitle
+                            )
                         } label: {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(suggestion.query)
@@ -871,22 +880,26 @@ struct ComicSearchPage: View {
         }
     }
 
-    private func applyEhentaiSuggestion(_ suggestion: EhTagSuggestion) {
-        query = query.replacingLastSearchFragment(
-            with: "\(suggestion.query) ",
-            suggestionTag: suggestion.tag,
-            translatedTitle: suggestion.translatedTitle
-        )
-        isSearchFocused = true
+    private func applyTagSuggestion(query suggestionQuery: String, tag: String, translatedTitle: String) {
+        switch selectedSuggestionSelectionBehavior {
+        case .fill:
+            query = query.replacingLastSearchFragment(
+                with: "\(suggestionQuery) ",
+                suggestionTag: tag,
+                translatedTitle: translatedTitle
+            )
+            isSearchFocused = true
+        case .search:
+            query = suggestionQuery
+            isSearchFocused = false
+            Task {
+                await search(force: true)
+            }
+        }
     }
 
-    private func applyNhentaiSuggestion(_ suggestion: NhentaiTagSuggestion) {
-        query = query.replacingLastSearchFragment(
-            with: "\(suggestion.query) ",
-            suggestionTag: suggestion.tag,
-            translatedTitle: suggestion.translatedTitle
-        )
-        isSearchFocused = true
+    private var selectedSuggestionSelectionBehavior: SearchSuggestionSelectionBehavior {
+        SearchSuggestionSelectionBehavior(rawValue: suggestionSelectionBehavior) ?? .fill
     }
 }
 
@@ -896,10 +909,11 @@ private extension String {
         guard !trimmed.isEmpty else { return replacement }
 
         let words = trimmed.split(whereSeparator: \.isWhitespace).map(String.init)
-        let twoWordFragment = words.suffix(2).joined(separator: " ").lowercased()
-        let removesTwoWords = words.count >= 2
-            && (suggestionTag.lowercased().hasPrefix(twoWordFragment) || translatedTitle.lowercased().contains(twoWordFragment))
-        let wordsToRemove = removesTwoWords ? 2 : 1
+        let wordsToRemove = matchedTrailingWordCount(
+            words: words,
+            suggestionTag: suggestionTag,
+            translatedTitle: translatedTitle
+        )
         var prefixEnd = trimmed.endIndex
 
         for _ in 0..<wordsToRemove {
@@ -913,6 +927,27 @@ private extension String {
 
         let prefix = String(trimmed[..<prefixEnd]).trimmingCharacters(in: .whitespacesAndNewlines)
         return prefix.isEmpty ? replacement : "\(prefix) \(replacement)"
+    }
+
+    private func matchedTrailingWordCount(words: [String], suggestionTag: String, translatedTitle: String) -> Int {
+        let maxWordCount = min(words.count, max(suggestionTag.split(separator: " ").count, 1))
+        let normalizedTag = suggestionTag.lowercased()
+        let normalizedTranslation = translatedTitle.lowercased()
+
+        for count in stride(from: maxWordCount, through: 1, by: -1) {
+            let fragment = words.suffix(count).joined(separator: " ").lowercased()
+            let comparableFragment = fragment.suggestionComparableFragment
+            guard !comparableFragment.isEmpty else { continue }
+            if normalizedTag.hasPrefix(comparableFragment) || normalizedTranslation.hasPrefix(comparableFragment) {
+                return count
+            }
+        }
+        return 1
+    }
+
+    private var suggestionComparableFragment: String {
+        guard let separatorIndex = lastIndex(of: ":") else { return self }
+        return String(self[index(after: separatorIndex)...])
     }
 }
 

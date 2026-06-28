@@ -129,6 +129,7 @@ enum DownloadSettingsKey {
 enum SearchSettingsKey {
     static let focusesSearchFieldOnOpen = "settings.search.focusesSearchFieldOnOpen"
     static let enablesSearchSuggestions = "settings.search.enablesSearchSuggestions"
+    static let suggestionSelectionBehavior = "settings.search.suggestionSelectionBehavior"
     static let defaultTargetMode = "settings.search.defaultTargetMode"
     static let defaultPlatform = "settings.search.defaultPlatform"
     static let defaultAggregatePlatforms = "settings.search.defaultAggregatePlatforms"
@@ -146,6 +147,22 @@ enum SearchDefaultTargetMode: String, CaseIterable, Identifiable {
             "单平台"
         case .aggregate:
             "多平台聚合"
+        }
+    }
+}
+
+enum SearchSuggestionSelectionBehavior: String, CaseIterable, Identifiable {
+    case fill
+    case search
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .fill:
+            "填入"
+        case .search:
+            "直接搜索"
         }
     }
 }
