@@ -101,12 +101,14 @@ private enum CachedRemoteImageMemoryCache {
 
 private enum CachedRemoteImageDecoder {
     nonisolated static func cachedImage(url: URL, storesInCache: Bool, maxPixelSize: Int?) -> CachedDecodedRemoteImage? {
-        CachedRemoteImageMemoryCache.image(for: cacheKey(url: url, storesInCache: storesInCache, maxPixelSize: maxPixelSize))
+        guard usesMemoryCache(url: url, storesInCache: storesInCache) else { return nil }
+        return CachedRemoteImageMemoryCache.image(for: cacheKey(url: url, storesInCache: storesInCache, maxPixelSize: maxPixelSize))
     }
 
     nonisolated static func image(url: URL, storesInCache: Bool, maxPixelSize: Int?) async throws -> CachedDecodedRemoteImage {
+        let usesMemoryCache = usesMemoryCache(url: url, storesInCache: storesInCache)
         let cacheKey = cacheKey(url: url, storesInCache: storesInCache, maxPixelSize: maxPixelSize)
-        if let cached = CachedRemoteImageMemoryCache.image(for: cacheKey) {
+        if usesMemoryCache, let cached = CachedRemoteImageMemoryCache.image(for: cacheKey) {
             return cached
         }
 
@@ -125,7 +127,9 @@ private enum CachedRemoteImageDecoder {
         if storesInCache {
             ImageCacheService.storeDecodedImageData(data, for: url)
         }
-        CachedRemoteImageMemoryCache.store(decoded, key: cacheKey)
+        if usesMemoryCache {
+            CachedRemoteImageMemoryCache.store(decoded, key: cacheKey)
+        }
         return decoded
     }
 
@@ -161,5 +165,9 @@ private enum CachedRemoteImageDecoder {
 
     private nonisolated static func cacheKey(url: URL, storesInCache: Bool, maxPixelSize: Int?) -> String {
         "\(url.absoluteString)#\(storesInCache ? "cached" : "fresh")#\(maxPixelSize ?? 0)"
+    }
+
+    private nonisolated static func usesMemoryCache(url: URL, storesInCache: Bool) -> Bool {
+        storesInCache && url.picaxLocalFileURL == nil
     }
 }

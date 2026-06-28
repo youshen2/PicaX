@@ -203,7 +203,7 @@ private extension WatchPlatformAccountProfile {
 }
 
 private extension WatchLocalFavoriteItem {
-    nonisolated init(_ favorite: StoredLocalFavorite) {
+    init(_ favorite: StoredLocalFavorite) {
         self.init(
             id: favorite.id,
             platformID: favorite.platform.id,

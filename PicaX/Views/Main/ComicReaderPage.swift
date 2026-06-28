@@ -2893,8 +2893,9 @@ private enum ReaderImageDecoder {
         decodePriority: TaskPriority = .userInitiated,
         onAspectRatioResolved: (@MainActor (Double) -> Void)? = nil
     ) async throws -> ReaderDecodedImage {
+        let usesMemoryCache = url.picaxLocalFileURL == nil
         let cacheKey = cacheKey(url: url, targetPixelWidth: targetPixelWidth)
-        if let cached = ReaderImageMemoryCache.image(for: cacheKey) {
+        if usesMemoryCache, let cached = ReaderImageMemoryCache.image(for: cacheKey) {
             return cached
         }
 
@@ -2916,7 +2917,9 @@ private enum ReaderImageDecoder {
             decoded = try await decode(data: data, url: url, targetPixelWidth: targetPixelWidth, priority: decodePriority)
         }
         ImageCacheService.storeDecodedImageData(data, for: url)
-        ReaderImageMemoryCache.store(decoded, key: cacheKey)
+        if usesMemoryCache {
+            ReaderImageMemoryCache.store(decoded, key: cacheKey)
+        }
         return decoded
     }
 
@@ -2924,6 +2927,7 @@ private enum ReaderImageDecoder {
         for urlString in urlStrings {
             guard !Task.isCancelled,
                   let url = URL.picaxResolved(from: urlString),
+                  url.picaxLocalFileURL == nil,
                   ReaderImageMemoryCache.image(for: cacheKey(url: url, targetPixelWidth: targetPixelWidth)) == nil else {
                 continue
             }

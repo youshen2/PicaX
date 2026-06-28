@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import ImageIO
 
@@ -12,6 +13,8 @@ struct ImageCacheUsage: Equatable {
 
 enum ImageCacheService {
     nonisolated static let defaultMaxDiskSizeMB = 400
+    nonisolated(unsafe) private static let lock = NSLock()
+    nonisolated(unsafe) private static var diskCapacityBytes = defaultMaxDiskSizeMB * 1024 * 1024
     nonisolated(unsafe) private static let uncachedSession: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
@@ -28,21 +31,30 @@ enum ImageCacheService {
 
         let storedSize = defaults.integer(forKey: ImageCacheSettingsKey.maxDiskSizeMB)
         let diskCapacity = max(storedSize, 50) * 1024 * 1024
-        let memoryCapacity = min(max(diskCapacity / 4, 16 * 1024 * 1024), 128 * 1024 * 1024)
-        URLCache.shared = URLCache(memoryCapacity: memoryCapacity, diskCapacity: diskCapacity)
+        URLCache.shared.removeAllCachedResponses()
+        URLCache.shared = URLCache(memoryCapacity: 0, diskCapacity: 0)
+        withDiskCacheLock {
+            diskCapacityBytes = diskCapacity
+            prepareDiskCacheDirectoryLocked()
+            trimDiskCacheIfNeededLocked()
+        }
     }
 
     @MainActor
     static func clear() {
         URLCache.shared.removeAllCachedResponses()
+        withDiskCacheLock {
+            let directoryURL = cacheDirectoryURL
+            try? FileManager.default.removeItem(at: directoryURL)
+            prepareDiskCacheDirectoryLocked()
+        }
     }
 
     @MainActor
     static var usage: ImageCacheUsage {
-        ImageCacheUsage(
-            memoryBytes: URLCache.shared.currentMemoryUsage,
-            diskBytes: URLCache.shared.currentDiskUsage
-        )
+        withDiskCacheLock {
+            ImageCacheUsage(memoryBytes: 0, diskBytes: Int(min(diskUsageBytesLocked(), Int64(Int.max))))
+        }
     }
 
     nonisolated static func formattedSize(_ bytes: Int) -> String {
@@ -65,9 +77,8 @@ enum ImageCacheService {
             throw URLError(.unsupportedURL)
         }
 
-        let request = cacheRequest(for: url)
-        if storesInCache, let cachedResponse = URLCache.shared.cachedResponse(for: request) {
-            return cachedResponse.data
+        if storesInCache, let cachedData = await cachedImageData(for: url) {
+            return cachedData
         }
 
         let (data, response) = try await uncachedData(for: url)
@@ -75,37 +86,39 @@ enum ImageCacheService {
            !(200...299).contains(httpResponse.statusCode) {
             throw URLError(.badServerResponse)
         }
+        guard isDecodableImageData(data) else {
+            throw URLError(.cannotDecodeContentData)
+        }
+        if storesInCache {
+            await storeImageData(data, for: url)
+        }
         return data
     }
 
     nonisolated static func storeDecodedImageData(_ data: Data, for url: URL) {
-        guard url.picaxLocalFileURL == nil, url.picaxSupportsURLCache, !data.isEmpty else {
+        guard url.picaxLocalFileURL == nil,
+              url.picaxSupportsURLCache,
+              isDecodableImageData(data) else {
             return
         }
-        let response = URLResponse(
-            url: url,
-            mimeType: nil,
-            expectedContentLength: data.count,
-            textEncodingName: nil
-        )
-        URLCache.shared.storeCachedResponse(
-            CachedURLResponse(response: response, data: data),
-            for: cacheRequest(for: url)
-        )
+        withDiskCacheLock {
+            prepareDiskCacheDirectoryLocked()
+            let fileURL = cacheFileURL(for: url)
+            try? data.write(to: fileURL, options: [.atomic])
+            touchCacheFileLocked(fileURL)
+            trimDiskCacheIfNeededLocked()
+        }
     }
 
     nonisolated static func removeCachedImageData(for url: URL) {
         guard url.picaxSupportsURLCache else { return }
-        URLCache.shared.removeCachedResponse(for: cacheRequest(for: url))
+        withDiskCacheLock {
+            try? FileManager.default.removeItem(at: cacheFileURL(for: url))
+        }
     }
 
     nonisolated static func prefetchImageData(for url: URL) async throws {
-        let data = try await data(for: url)
-        guard isDecodableImageData(data) else {
-            removeCachedImageData(for: url)
-            throw URLError(.cannotDecodeContentData)
-        }
-        storeDecodedImageData(data, for: url)
+        _ = try await data(for: url)
     }
 
     private nonisolated static func uncachedData(for url: URL) async throws -> (Data, URLResponse) {
@@ -120,8 +133,37 @@ enum ImageCacheService {
         }.value
     }
 
-    private nonisolated static func cacheRequest(for url: URL) -> URLRequest {
-        URLRequest(url: url, cachePolicy: .returnCacheDataElseLoad, timeoutInterval: 30)
+    private nonisolated static func cachedImageData(for url: URL) async -> Data? {
+        await Task.detached(priority: .utility) {
+            diskCachedImageData(for: url)
+        }.value
+    }
+
+    private nonisolated static func storeImageData(_ data: Data, for url: URL) async {
+        await Task.detached(priority: .utility) {
+            storeDecodedImageData(data, for: url)
+        }.value
+    }
+
+    private nonisolated static func diskCachedImageData(for url: URL) -> Data? {
+        guard url.picaxLocalFileURL == nil, url.picaxSupportsURLCache else {
+            return nil
+        }
+
+        return withDiskCacheLock {
+            let fileURL = cacheFileURL(for: url)
+            guard FileManager.default.fileExists(atPath: fileURL.path) else {
+                return nil
+            }
+
+            guard let data = try? Data(contentsOf: fileURL), isDecodableImageData(data) else {
+                try? FileManager.default.removeItem(at: fileURL)
+                return nil
+            }
+
+            touchCacheFileLocked(fileURL)
+            return data
+        }
     }
 
     private nonisolated static func isDecodableImageData(_ data: Data) -> Bool {
@@ -130,6 +172,81 @@ enum ImageCacheService {
             return false
         }
         return CGImageSourceGetCount(source) > 0
+    }
+
+    private nonisolated static func withDiskCacheLock<T>(_ body: () throws -> T) rethrows -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return try body()
+    }
+
+    private nonisolated static var cacheDirectoryURL: URL {
+        let baseURL = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+            ?? FileManager.default.temporaryDirectory
+        return baseURL.appendingPathComponent("ImageCache", isDirectory: true)
+    }
+
+    private nonisolated static func cacheFileURL(for url: URL) -> URL {
+        let digest = SHA256.hash(data: Data(url.absoluteString.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+        return cacheDirectoryURL.appendingPathComponent(digest, isDirectory: false)
+    }
+
+    private nonisolated static func prepareDiskCacheDirectoryLocked() {
+        try? FileManager.default.createDirectory(at: cacheDirectoryURL, withIntermediateDirectories: true)
+    }
+
+    private nonisolated static func touchCacheFileLocked(_ fileURL: URL) {
+        try? FileManager.default.setAttributes(
+            [.modificationDate: Date()],
+            ofItemAtPath: fileURL.path
+        )
+    }
+
+    private nonisolated static func trimDiskCacheIfNeededLocked() {
+        let files = cacheFilesLocked()
+        var totalBytes = files.reduce(Int64(0)) { $0 + $1.byteCount }
+        guard totalBytes > Int64(diskCapacityBytes) else { return }
+
+        for file in files.sorted(by: { $0.modificationDate < $1.modificationDate }) {
+            try? FileManager.default.removeItem(at: file.url)
+            totalBytes -= file.byteCount
+            if totalBytes <= Int64(diskCapacityBytes) {
+                break
+            }
+        }
+    }
+
+    private nonisolated static func diskUsageBytesLocked() -> Int64 {
+        cacheFilesLocked().reduce(Int64(0)) { $0 + $1.byteCount }
+    }
+
+    private nonisolated static func cacheFilesLocked() -> [DiskCacheFile] {
+        let keys: Set<URLResourceKey> = [.contentModificationDateKey, .fileSizeKey, .isRegularFileKey]
+        let urls = (try? FileManager.default.contentsOfDirectory(
+            at: cacheDirectoryURL,
+            includingPropertiesForKeys: Array(keys),
+            options: [.skipsHiddenFiles]
+        )) ?? []
+
+        return urls.compactMap { url in
+            guard let values = try? url.resourceValues(forKeys: keys),
+                  values.isRegularFile == true else {
+                return nil
+            }
+            return DiskCacheFile(
+                url: url,
+                byteCount: Int64(values.fileSize ?? 0),
+                modificationDate: values.contentModificationDate ?? .distantPast
+            )
+        }
+    }
+
+    private nonisolated struct DiskCacheFile {
+        let url: URL
+        let byteCount: Int64
+        let modificationDate: Date
     }
 
 }
