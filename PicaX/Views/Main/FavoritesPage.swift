@@ -30,7 +30,11 @@ struct FavoritesPage: View {
                 } else {
                     ForEach(platformAccounts.loggedInAccounts.filter { service.supportsPlatformFavorite(platform: $0.platform) }) { account in
                         NavigationLink {
-                            FavoritesCollectionPage(source: .platform(account), service: service)
+                            if service.supportsPlatformFavoriteFolders(platform: account.platform) {
+                                FavoritePlatformFoldersPage(account: account, service: service)
+                            } else {
+                                FavoritesCollectionPage(source: .platform(account), service: service)
+                            }
                         } label: {
                             FavoriteSourceRow(
                                 title: account.platform.title,
@@ -73,6 +77,95 @@ private struct FavoriteSourceRow: View {
             Spacer()
         }
         .padding(.vertical, 5)
+    }
+}
+
+private struct FavoritePlatformFoldersPage: View {
+    let account: PlatformAccount
+    let service: ComicContentService
+    @State private var folders: [PlatformFavoriteFolder] = []
+    @State private var isLoading = true
+    @State private var errorMessage: String?
+
+    var body: some View {
+        Group {
+            if isLoading {
+                LoadingFavoriteListView(accentColor: account.platform.accentColor)
+            } else if let errorMessage {
+                ContentUnavailableView {
+                    Label("加载失败", systemImage: "exclamationmark.triangle")
+                } description: {
+                    Text(errorMessage)
+                } actions: {
+                    Button("重试") {
+                        Task {
+                            await load(force: true)
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+            } else if folders.isEmpty {
+                ContentUnavailableView("暂无收藏夹", systemImage: "folder", description: Text("这个平台当前没有返回收藏夹"))
+            } else {
+                List {
+                    Section("平台收藏夹") {
+                        ForEach(folders) { folder in
+                            NavigationLink {
+                                FavoritesCollectionPage(source: .platformFolder(account, folder), service: service)
+                            } label: {
+                                FavoriteSourceRow(
+                                    title: folder.title,
+                                    subtitle: folder.subtitle,
+                                    systemImage: account.platform.systemImage,
+                                    accentColor: account.platform.accentColor
+                                )
+                            }
+                        }
+                    }
+                }
+                .picaxInsetGroupedListStyle()
+                .background(AppColor.groupedBackground)
+                .refreshable {
+                    await load(force: true)
+                }
+            }
+        }
+        .navigationTitle(account.platform.title)
+        .picaxNavigationBarTitleDisplayModeInline()
+        .picaxHidesTabBar()
+        .toolbar {
+            ToolbarItem(placement: .picaxTopBarTrailing) {
+                Button {
+                    Task {
+                        await load(force: true)
+                    }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .accessibilityLabel("刷新")
+            }
+        }
+        .task {
+            await load()
+        }
+    }
+
+    @MainActor
+    private func load(force: Bool = false) async {
+        if !force, !folders.isEmpty {
+            isLoading = false
+            return
+        }
+
+        isLoading = true
+        errorMessage = nil
+        do {
+            folders = try await service.loadPlatformFavoriteFolders(platform: account.platform, account: account)
+        } catch {
+            errorMessage = error.localizedDescription
+            folders = []
+        }
+        isLoading = false
     }
 }
 
@@ -169,6 +262,8 @@ private struct FavoritesCollectionPage: View {
                 comics = service.loadLocalFavorites(folder: folder)
             case .platform(let account):
                 comics = try await service.loadFavorites(account: account)
+            case .platformFolder(let account, let folder):
+                comics = try await service.loadFavorites(account: account, folder: folder)
             }
         } catch {
             errorMessage = error.localizedDescription
@@ -188,6 +283,7 @@ private struct LoadingFavoriteListView: View {
 private enum FavoriteCollectionSource: Identifiable {
     case local(LocalFavoriteFolder)
     case platform(PlatformAccount)
+    case platformFolder(PlatformAccount, PlatformFavoriteFolder)
 
     var id: String {
         switch self {
@@ -195,6 +291,8 @@ private enum FavoriteCollectionSource: Identifiable {
             return "local-\(folder.id)"
         case .platform(let account):
             return "platform-\(account.platform.id)"
+        case .platformFolder(let account, let folder):
+            return "platform-\(account.platform.id)-folder-\(folder.id)"
         }
     }
 
@@ -204,6 +302,8 @@ private enum FavoriteCollectionSource: Identifiable {
             return folder.title
         case .platform(let account):
             return account.platform.title
+        case .platformFolder(_, let folder):
+            return folder.title
         }
     }
 
@@ -213,6 +313,8 @@ private enum FavoriteCollectionSource: Identifiable {
             return "folder"
         case .platform(let account):
             return account.platform.systemImage
+        case .platformFolder(let account, _):
+            return account.platform.systemImage
         }
     }
 
@@ -221,6 +323,8 @@ private enum FavoriteCollectionSource: Identifiable {
         case .local:
             return .orange
         case .platform(let account):
+            return account.platform.accentColor
+        case .platformFolder(let account, _):
             return account.platform.accentColor
         }
     }

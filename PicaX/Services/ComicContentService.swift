@@ -93,18 +93,18 @@ struct ComicContentService {
         try await loadEhentaiWatched(page: page)
     }
 
-    func loadFavorites(account: PlatformAccount) async throws -> [ComicListItem] {
+    func loadFavorites(account: PlatformAccount, folder: PlatformFavoriteFolder? = nil) async throws -> [ComicListItem] {
         switch account.platform {
         case .picacg:
             return try await loadPicacgFavorites(account: account)
         case .nhentai:
             return try await loadNhentaiFavorites(account: account)
         case .eHentai:
-            return try await loadEhentaiFavorites(account: account)
+            return try await loadEhentaiFavorites(account: account, folderID: folder?.id)
         case .htManga:
-            return try await loadHtMangaFavorites(account: account)
+            return try await loadHtMangaFavorites(account: account, folderID: folder?.id)
         case .jmComic:
-            return try await loadJmComicFavorites(account: account)
+            return try await loadJmComicFavorites(account: account, folderID: folder?.id)
         case .hitomi:
             throw ComicContentError.unsupported("Hitomi 没有平台收藏接口。")
         }
@@ -123,6 +123,15 @@ struct ComicContentService {
         case .picacg, .nhentai, .eHentai, .jmComic, .htManga:
             true
         case .hitomi:
+            false
+        }
+    }
+
+    func supportsPlatformFavoriteFolders(platform: ComicPlatform) -> Bool {
+        switch platform {
+        case .eHentai, .jmComic, .htManga:
+            true
+        case .picacg, .nhentai, .hitomi:
             false
         }
     }
@@ -161,7 +170,11 @@ struct ComicContentService {
     }
 
     func loadPlatformFavoriteFolders(item: ComicListItem, account: PlatformAccount?) async throws -> [PlatformFavoriteFolder] {
-        switch item.platform {
+        try await loadPlatformFavoriteFolders(platform: item.platform, account: account)
+    }
+
+    func loadPlatformFavoriteFolders(platform: ComicPlatform, account: PlatformAccount?) async throws -> [PlatformFavoriteFolder] {
+        switch platform {
         case .picacg:
             _ = try await picacgToken(account: account)
             return [PlatformFavoriteFolder(id: "default", title: "云端收藏夹", subtitle: "PicACG 默认收藏", platform: .picacg)]
@@ -177,7 +190,7 @@ struct ComicContentService {
         case .htManga:
             return try await loadHtMangaFavoriteFolders(account: account)
         case .hitomi:
-            throw ComicContentError.unsupported("\(item.platformTitle) 当前没有可用平台收藏写入接口。")
+            throw ComicContentError.unsupported("\(platform.title) 当前没有可用平台收藏写入接口。")
         }
     }
 
@@ -1196,9 +1209,10 @@ private extension ComicContentService {
         return parseEhentaiGalleries(html)
     }
 
-    func loadEhentaiFavorites(account: PlatformAccount) async throws -> [ComicListItem] {
+    func loadEhentaiFavorites(account: PlatformAccount, folderID: String? = nil) async throws -> [ComicListItem] {
         let headers = try ehentaiAccountHeaders(account: account, referer: ehentaiBaseURL)
-        guard let url = URL(string: "\(ehentaiBaseURL)/favorites.php") else {
+        let path = folderID == nil || folderID == "-1" ? "favorites.php" : "favorites.php?favcat=\(folderID?.urlEncoded ?? "")"
+        guard let url = URL(string: "\(ehentaiBaseURL)/\(path)") else {
             throw ComicContentError.invalidURL("ehentai favorites")
         }
         let html = try await requestString(url: url, headers: headers)
@@ -1456,10 +1470,11 @@ private extension ComicContentService {
         return parseHtMangaList(html, baseURL: base)
     }
 
-    func loadHtMangaFavorites(account: PlatformAccount) async throws -> [ComicListItem] {
+    func loadHtMangaFavorites(account: PlatformAccount, folderID: String? = nil) async throws -> [ComicListItem] {
         let base = htMangaBaseURL
         let cookies = try htMangaCookieStorage(account: account)
-        guard let url = URL(string: "\(base)/users-users_fav-page-1-c-0.html") else {
+        let folderID = folderID?.nilIfEmpty ?? "0"
+        guard let url = URL(string: "\(base)/users-users_fav-page-1-c-\(folderID.urlEncoded).html") else {
             throw ComicContentError.invalidURL("htmanga favorites")
         }
         let html = try await requestString(url: url, headers: webHeaders(referer: base), cookies: cookies)
@@ -1736,12 +1751,13 @@ private extension ComicContentService {
         }
     }
 
-    func loadJmComicFavorites(account: PlatformAccount) async throws -> [ComicListItem] {
+    func loadJmComicFavorites(account: PlatformAccount, folderID: String? = nil) async throws -> [ComicListItem] {
         let context = try await jmAuthenticatedContext(account: account)
         let cookies = context.cookies
         let baseURL = context.loginInfo.baseURL
         let sort = PlatformFeatureSettings.jmFavoriteSort()
-        let json = try await jmJSON(path: "favorite?page=1&folder_id=0&o=\(sort)", cookies: cookies, baseURL: baseURL)
+        let folderID = folderID?.nilIfEmpty ?? "0"
+        let json = try await jmJSON(path: "favorite?page=1&folder_id=\(folderID.urlEncoded)&o=\(sort)", cookies: cookies, baseURL: baseURL)
         return try jmComicItems(from: json, favoriteDate: Date())
     }
 
