@@ -452,11 +452,11 @@ private struct HomeSettingsView: View {
 
             Section {
                 if showsHistorySection {
-                    Stepper("阅读历史显示 \(homeLimit) 条", value: $homeLimit, in: 1...30)
+                    IntegerSettingsInputRow(title: "阅读历史显示", value: $homeLimit, unit: "条", lowerBound: 1, upperBound: 30)
                 }
 
                 if showsDownloadSection {
-                    Stepper("下载显示 \(downloadHomeLimit) 条", value: $downloadHomeLimit, in: 1...30)
+                    IntegerSettingsInputRow(title: "下载显示", value: $downloadHomeLimit, unit: "条", lowerBound: 1, upperBound: 30)
                 }
             } footer: {
                 Text("只影响首页详细卡片数量，不影响完整列表和本地数据。")
@@ -486,8 +486,8 @@ private struct DownloadSettingsView: View {
             }
 
             Section {
-                Stepper("同时下载数 \(concurrentDownloadCount)", value: $concurrentDownloadCount, in: 1...6)
-                Stepper("图片重试 \(imageRetryCount) 次", value: $imageRetryCount, in: 0...8)
+                IntegerSettingsInputRow(title: "同时下载数", value: $concurrentDownloadCount, lowerBound: 1, upperBound: 6)
+                IntegerSettingsInputRow(title: "图片重试", value: $imageRetryCount, unit: "次", lowerBound: 0, upperBound: 8)
             } header: {
                 Text("任务")
             } footer: {
@@ -498,7 +498,7 @@ private struct DownloadSettingsView: View {
                 Toggle("启用限速", isOn: $speedLimitEnabled)
 
                 if speedLimitEnabled {
-                    Stepper("速度上限 \(speedLimitKBPerSecond) KB/s", value: $speedLimitKBPerSecond, in: 64...10240, step: 64)
+                    IntegerSettingsInputRow(title: "速度上限", value: $speedLimitKBPerSecond, unit: "KB/s", lowerBound: 64, upperBound: 10240)
                 }
             } header: {
                 Text("限速")
@@ -534,9 +534,12 @@ private struct StorageManagementView: View {
                 SettingsValueRow(title: "磁盘缓存", value: ImageCacheService.formattedSize(usage.diskBytes))
                 SettingsValueRow(title: "内存缓存", value: ImageCacheService.formattedSize(usage.memoryBytes))
 
-                Stepper(value: $maxDiskSizeMB, in: 50...2048, step: 50) {
-                    SettingsValueRow(title: "最大缓存", value: "\(maxDiskSizeMB) MB")
-                }
+                IntegerSettingsInputRow(
+                    title: "最大缓存",
+                    value: $maxDiskSizeMB,
+                    unit: "MB",
+                    lowerBound: 50
+                )
             } footer: {
                 Text("封面、分类图和阅读图片会优先使用已缓存的数据。调整容量后会应用到之后的图片请求。")
             }
@@ -1028,7 +1031,7 @@ private struct SearchSettingsView: View {
                 Toggle("保存搜索历史", isOn: $savesSearchHistory)
 
                 if savesSearchHistory {
-                    Stepper("最多保留 \(maxSearchHistoryRecords) 条", value: $maxSearchHistoryRecords, in: 1...200, step: 5)
+                    IntegerSettingsInputRow(title: "最多保留", value: $maxSearchHistoryRecords, unit: "条", lowerBound: 1, upperBound: 200)
                 }
             } footer: {
                 Text("搜索历史会记录关键词和平台选择，用于在搜索页快速重新搜索。")
@@ -1100,7 +1103,7 @@ private struct ComicListSettingsView: View {
                 Toggle("显示标签", isOn: $showsTags)
 
                 if showsTags {
-                    Stepper("最多显示 \(maxVisibleTags) 个标签", value: $maxVisibleTags, in: 1...10)
+                    IntegerSettingsInputRow(title: "最多显示", value: $maxVisibleTags, unit: "个标签", lowerBound: 1, upperBound: 10)
                 }
 
                 Toggle("显示热度", isOn: $showsPopularity)
@@ -1531,19 +1534,16 @@ private struct ReaderSettingsView: View {
                     Slider(value: $imageSpacing, in: 0...24, step: 2)
                 }
 
-                Stepper(value: $preloadImageCount, in: 0...12) {
-                    SettingsValueRow(
-                        title: "预加载图片",
-                        value: preloadImageCount == 0 ? "关闭" : "\(preloadImageCount) 张"
-                    )
-                }
+                IntegerSettingsInputRow(
+                    title: "预加载图片",
+                    value: $preloadImageCount,
+                    unit: "张",
+                    lowerBound: 0,
+                    upperBound: 12,
+                    detail: preloadImageCount == 0 ? "关闭" : nil
+                )
 
-                Stepper(value: $imageRetryCount, in: 0...8) {
-                    SettingsValueRow(
-                        title: "图片重试次数",
-                        value: "\(imageRetryCount) 次"
-                    )
-                }
+                IntegerSettingsInputRow(title: "图片重试次数", value: $imageRetryCount, unit: "次", lowerBound: 0, upperBound: 8)
 
                 VStack(alignment: .leading, spacing: 8) {
                     Text("重试间隔 \(imageRetryInterval, specifier: "%.1f") 秒")
@@ -1755,7 +1755,7 @@ private struct NetworkSettingsView: View {
             }
 
             Section("连接") {
-                Stepper("失败重试 \(retryCount) 次", value: $retryCount, in: 0...5)
+                IntegerSettingsInputRow(title: "失败重试", value: $retryCount, unit: "次", lowerBound: 0, upperBound: 5)
             }
         }
         .picaxInsetGroupedListStyle()
@@ -1824,7 +1824,7 @@ private struct HistorySettingsView: View {
         List {
             Section {
                 Toggle("记录历史记录", isOn: $isEnabled)
-                Stepper("最多保存 \(maxRecords) 条", value: $maxRecords, in: 20...500, step: 10)
+                IntegerSettingsInputRow(title: "最多保存", value: $maxRecords, unit: "条", lowerBound: 20, upperBound: 500)
             } header: {
                 Text("记录")
             } footer: {
@@ -2116,6 +2116,94 @@ private struct SettingsValueRow: View {
         } label: {
             Text(title)
         }
+    }
+}
+
+private struct IntegerSettingsInputRow: View {
+    let title: String
+    @Binding var value: Int
+    var unit: String?
+    var lowerBound: Int?
+    var upperBound: Int?
+    var detail: String?
+
+    @State private var text = ""
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            LabeledContent {
+                HStack(spacing: 6) {
+                    TextField("", text: $text)
+                        .multilineTextAlignment(.trailing)
+                        .picaxKeyboardType(.numberPad)
+                        .focused($isFocused)
+                        .frame(width: 92)
+                        .onChange(of: text) { _, newValue in
+                            updateValue(from: newValue)
+                        }
+
+                    if let unit {
+                        Text(unit)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            } label: {
+                Text(title)
+            }
+
+            if let detail, !detail.isEmpty {
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .onAppear {
+            text = "\(value)"
+        }
+        .onChange(of: value) { _, newValue in
+            guard !isFocused else { return }
+            text = "\(bounded(newValue))"
+        }
+        .onChange(of: isFocused) { _, focused in
+            if !focused {
+                let nextValue = bounded(value)
+                if nextValue != value {
+                    value = nextValue
+                }
+                text = "\(nextValue)"
+            }
+        }
+    }
+
+    private func updateValue(from newValue: String) {
+        let filtered = String(newValue.filter(\.isNumber))
+        if filtered != newValue {
+            text = filtered
+            return
+        }
+
+        guard let rawValue = Int(filtered) else {
+            return
+        }
+        let nextValue = upperBound.map { min(rawValue, $0) } ?? rawValue
+        if nextValue != value {
+            value = nextValue
+        }
+        if nextValue != rawValue {
+            text = "\(nextValue)"
+        }
+    }
+
+    private func bounded(_ rawValue: Int) -> Int {
+        var result = rawValue
+        if let lowerBound {
+            result = max(result, lowerBound)
+        }
+        if let upperBound {
+            result = min(result, upperBound)
+        }
+        return result
     }
 }
 
