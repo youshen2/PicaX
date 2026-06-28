@@ -64,6 +64,7 @@ struct ComicReaderPage: View {
     let service: ComicContentService
     let localChapterImageProvider: ((ComicChapter, Int) async -> [ComicChapterImage])?
     let localChapterCommentsProvider: ((ComicChapter, Int) async -> [ComicComment])?
+    let historyChapterIndexResolver: (Int) -> Int
     let listContext: ComicReaderListContext?
     let initialToastMessage: String?
     @StateObject private var viewModel: ComicReaderViewModel
@@ -74,12 +75,15 @@ struct ComicReaderPage: View {
     @State private var continuousScrollY: CGFloat = 0
     @State private var continuousContentHeight: CGFloat = 0
     @State private var continuousVisibleHeight: CGFloat = 0
+    @State private var continuousPageFrames: [Int: CGRect] = [:]
+    @State private var continuousFrameTrackingReady = false
     @State private var isAutoPaging = false
     @State private var isAutoPagingTurnInFlight = false
     @State private var autoPagingCommentActionChapterIndex: Int?
     @State private var readerToastMessage: String?
     @State private var readerToastTask: Task<Void, Never>?
     @State private var historyRecordTask: Task<Void, Never>?
+    @State private var pendingHistoryRecord: ReaderHistoryRecordSnapshot?
     @State private var readingDurationSessionStart: Date?
     @State private var didShowInitialToast = false
 
@@ -91,6 +95,7 @@ struct ComicReaderPage: View {
         service: ComicContentService,
         localChapterImageProvider: ((ComicChapter, Int) async -> [ComicChapterImage])? = nil,
         localChapterCommentsProvider: ((ComicChapter, Int) async -> [ComicComment])? = nil,
+        historyChapterIndexResolver: @escaping (Int) -> Int = { $0 },
         listContext: ComicReaderListContext? = nil,
         initialToastMessage: String? = nil
     ) {
@@ -101,6 +106,7 @@ struct ComicReaderPage: View {
         self.service = service
         self.localChapterImageProvider = localChapterImageProvider
         self.localChapterCommentsProvider = localChapterCommentsProvider
+        self.historyChapterIndexResolver = historyChapterIndexResolver
         self.listContext = listContext
         self.initialToastMessage = initialToastMessage
         _viewModel = StateObject(wrappedValue: ComicReaderViewModel(
@@ -250,9 +256,9 @@ struct ComicReaderPage: View {
             await load()
         }
         .onDisappear {
+            flushPendingHistoryRecord()
             flushReadingDurationSession()
             readerToastTask?.cancel()
-            historyRecordTask?.cancel()
             isAutoPaging = false
             isAutoPagingTurnInFlight = false
             autoPagingCommentActionChapterIndex = nil
@@ -262,6 +268,7 @@ struct ComicReaderPage: View {
             case .active:
                 startReadingDurationSessionIfNeeded()
             case .inactive, .background:
+                flushPendingHistoryRecord()
                 flushReadingDurationSession()
             @unknown default:
                 break
@@ -360,10 +367,8 @@ struct ComicReaderPage: View {
                             )
                                 .padding(.top, index == images.startIndex ? CGFloat(firstImageTopPadding) : 0)
                                 .padding(.bottom, index == images.index(before: images.endIndex) ? CGFloat(lastImageBottomPadding) : 0)
+                                .background(ReaderContinuousPageFrameReporter(index: index))
                                 .id(readerPageID(index))
-                                .onAppear {
-                                    updateReadingPage(index, totalPages: images.count, targetPixelWidth: targetPixelWidth)
-                                }
                         }
                         if shouldShowChapterCommentsAtEnd,
                            let chapter = currentChapter {
@@ -383,14 +388,26 @@ struct ComicReaderPage: View {
                         }
                     }
                     .padding(.vertical, 10)
+                    .coordinateSpace(name: ReaderContinuousCoordinateSpace.name)
                 }
                 .background(Color.black)
                 .ignoresSafeArea(.container)
                 .scrollPosition($continuousScrollPosition)
                 .onChange(of: continuousScrollPosition) { _, newValue in
+                    let scrollY: CGFloat
                     if let point = newValue.point {
-                        continuousScrollY = max(point.y, 0)
+                        scrollY = max(point.y, 0)
+                        continuousScrollY = scrollY
+                    } else {
+                        scrollY = continuousScrollY
                     }
+                    syncContinuousVisiblePage(
+                        frames: continuousPageFrames,
+                        scrollY: scrollY,
+                        viewportHeight: geometry.size.height,
+                        totalPages: images.count,
+                        targetPixelWidth: targetPixelWidth
+                    )
                 }
                 .onScrollGeometryChange(for: ReaderScrollMetrics.self) { geometry in
                     ReaderScrollMetrics(
@@ -402,6 +419,23 @@ struct ComicReaderPage: View {
                     continuousScrollY = metrics.offsetY
                     continuousContentHeight = metrics.contentHeight
                     continuousVisibleHeight = metrics.visibleHeight
+                    syncContinuousVisiblePage(
+                        frames: continuousPageFrames,
+                        scrollY: metrics.offsetY,
+                        viewportHeight: metrics.visibleHeight,
+                        totalPages: images.count,
+                        targetPixelWidth: targetPixelWidth
+                    )
+                }
+                .onPreferenceChange(ReaderContinuousPageFramePreferenceKey.self) { frames in
+                    continuousPageFrames = frames
+                    syncContinuousVisiblePage(
+                        frames: frames,
+                        scrollY: continuousScrollY,
+                        viewportHeight: continuousVisibleHeight > 0 ? continuousVisibleHeight : geometry.size.height,
+                        totalPages: images.count,
+                        targetPixelWidth: targetPixelWidth
+                    )
                 }
                 .readerInteractionGesture(
                     size: geometry.size,
@@ -432,11 +466,14 @@ struct ComicReaderPage: View {
                     )
                 }
                 .onAppear {
+                    continuousFrameTrackingReady = false
                     updateReadingPage(viewModel.currentPageIndex, totalPages: images.count, targetPixelWidth: targetPixelWidth, force: true)
                     scrollToInitialPage(proxy: proxy)
                 }
                 .onChange(of: viewModel.currentChapterIndex) { _, _ in
                     continuousScrollY = 0
+                    continuousPageFrames.removeAll()
+                    continuousFrameTrackingReady = false
                     continuousScrollPosition.scrollTo(y: 0)
                     scrollToInitialPage(proxy: proxy)
                 }
@@ -649,6 +686,7 @@ struct ComicReaderPage: View {
         let pageIndex = max(viewModel.requestedPageIndex, 0)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
             scrollToPage(pageIndex, proxy: proxy, animated: true)
+            continuousFrameTrackingReady = true
         }
     }
 
@@ -960,29 +998,97 @@ struct ComicReaderPage: View {
         scheduleReadingHistoryRecord(pageIndex: index, totalPages: totalPages)
     }
 
+    private func syncContinuousVisiblePage(
+        frames: [Int: CGRect],
+        scrollY rawScrollY: CGFloat,
+        viewportHeight rawViewportHeight: CGFloat,
+        totalPages: Int,
+        targetPixelWidth: Int?
+    ) {
+        guard continuousFrameTrackingReady,
+              readerReadingMode == .topToBottomContinuous,
+              totalPages > 0,
+              !frames.isEmpty else {
+            return
+        }
+
+        let viewportHeight = max(rawViewportHeight, 0)
+        guard viewportHeight > 0 else { return }
+        let viewportTop = max(rawScrollY, 0)
+        let viewportBottom = viewportTop + viewportHeight
+
+        var bestIndex: Int?
+        var bestVisibleHeight: CGFloat = 0
+        var bestDistanceFromCenter = CGFloat.greatestFiniteMagnitude
+        let viewportCenterY = viewportTop + viewportHeight / 2
+
+        for (index, frame) in frames where index >= 0 && index < totalPages {
+            guard frame.height.isFinite, frame.height > 0 else { continue }
+            let visibleTop = max(frame.minY, viewportTop)
+            let visibleBottom = min(frame.maxY, viewportBottom)
+            let visibleHeight = max(visibleBottom - visibleTop, 0)
+            guard visibleHeight > 1 else { continue }
+
+            let distanceFromCenter = abs(frame.midY - viewportCenterY)
+            if visibleHeight > bestVisibleHeight + 1
+                || (abs(visibleHeight - bestVisibleHeight) <= 1 && distanceFromCenter < bestDistanceFromCenter) {
+                bestIndex = index
+                bestVisibleHeight = visibleHeight
+                bestDistanceFromCenter = distanceFromCenter
+            }
+        }
+
+        guard let bestIndex else { return }
+        updateReadingPage(bestIndex, totalPages: totalPages, targetPixelWidth: targetPixelWidth)
+    }
+
     private func readerTargetPixelWidth(for width: CGFloat) -> Int? {
         guard width.isFinite, width > 0, displayScale > 0 else { return nil }
         return max(Int((width * displayScale).rounded(.up)), 1)
     }
 
     private func scheduleReadingHistoryRecord(pageIndex: Int, totalPages: Int) {
-        let item = detail.item
-        let chapterIndex = viewModel.currentChapterIndex
-        let totalChapters = detail.chapters.count
+        let snapshot = ReaderHistoryRecordSnapshot(
+            item: detail.item,
+            chapterIndex: historyChapterIndexResolver(viewModel.currentChapterIndex),
+            pageIndex: pageIndex,
+            totalPages: totalPages,
+            totalChapters: detail.chapters.count
+        )
+        pendingHistoryRecord = snapshot
         historyRecordTask?.cancel()
-        historyRecordTask = Task {
+        historyRecordTask = Task { [snapshot] in
             try? await Task.sleep(nanoseconds: 350_000_000)
             guard !Task.isCancelled else { return }
             await MainActor.run {
-                readingHistory.recordReading(
-                    item: item,
-                    chapterIndex: chapterIndex,
-                    pageIndex: pageIndex,
-                    totalPages: totalPages,
-                    totalChapters: totalChapters
-                )
+                persistPendingHistoryRecord(matching: snapshot)
             }
         }
+    }
+
+    private func flushPendingHistoryRecord() {
+        historyRecordTask?.cancel()
+        historyRecordTask = nil
+        guard let pendingHistoryRecord else { return }
+        persistHistoryRecord(pendingHistoryRecord)
+        self.pendingHistoryRecord = nil
+    }
+
+    private func persistPendingHistoryRecord(matching snapshot: ReaderHistoryRecordSnapshot) {
+        guard pendingHistoryRecord == snapshot else { return }
+        persistHistoryRecord(snapshot)
+        pendingHistoryRecord = nil
+        historyRecordTask = nil
+    }
+
+    private func persistHistoryRecord(_ snapshot: ReaderHistoryRecordSnapshot) {
+        readingHistory.recordReading(
+            item: snapshot.item,
+            chapterIndex: snapshot.chapterIndex,
+            pageIndex: snapshot.pageIndex,
+            totalPages: snapshot.totalPages,
+            totalChapters: snapshot.totalChapters
+        )
     }
 
     private func startReadingDurationSessionIfNeeded() {
@@ -1281,6 +1387,31 @@ private struct ReaderScrollMetrics: Equatable {
         self.offsetY = max(offsetY, 0)
         self.contentHeight = max(contentHeight, 0)
         self.visibleHeight = max(visibleHeight, 0)
+    }
+}
+
+private enum ReaderContinuousCoordinateSpace {
+    static let name = "reader.continuous"
+}
+
+private struct ReaderContinuousPageFrameReporter: View {
+    let index: Int
+
+    var body: some View {
+        GeometryReader { proxy in
+            Color.clear.preference(
+                key: ReaderContinuousPageFramePreferenceKey.self,
+                value: [index: proxy.frame(in: .named(ReaderContinuousCoordinateSpace.name))]
+            )
+        }
+    }
+}
+
+private struct ReaderContinuousPageFramePreferenceKey: PreferenceKey {
+    static var defaultValue: [Int: CGRect] = [:]
+
+    static func reduce(value: inout [Int: CGRect], nextValue: () -> [Int: CGRect]) {
+        value.merge(nextValue()) { _, new in new }
     }
 }
 
@@ -2100,6 +2231,14 @@ private struct ReaderDecodedImage: @unchecked Sendable {
     }
 }
 
+private struct ReaderHistoryRecordSnapshot: Equatable {
+    let item: ComicListItem
+    let chapterIndex: Int
+    let pageIndex: Int
+    let totalPages: Int
+    let totalChapters: Int
+}
+
 private enum ReaderImageMemoryCache {
     nonisolated(unsafe) private static let cache: NSCache<NSString, PicaXPlatformImage> = {
         let cache = NSCache<NSString, PicaXPlatformImage>()
@@ -2152,9 +2291,18 @@ private enum ReaderImageDecoder {
             return cached
         }
 
-        let data = try await ImageCacheService.data(for: url)
+        var data = try await ImageCacheService.data(for: url)
         guard !Task.isCancelled else { throw CancellationError() }
-        let decoded = try await decode(data: data, url: url, targetPixelWidth: targetPixelWidth)
+        let decoded: ReaderDecodedImage
+        do {
+            decoded = try await decode(data: data, url: url, targetPixelWidth: targetPixelWidth)
+        } catch {
+            ImageCacheService.removeCachedImageData(for: url)
+            data = try await ImageCacheService.data(for: url, storesInCache: false)
+            guard !Task.isCancelled else { throw CancellationError() }
+            decoded = try await decode(data: data, url: url, targetPixelWidth: targetPixelWidth)
+        }
+        ImageCacheService.storeDecodedImageData(data, for: url)
         ReaderImageMemoryCache.store(decoded, key: cacheKey)
         return decoded
     }

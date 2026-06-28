@@ -177,6 +177,7 @@ struct ReadingListReaderPage: View {
         let entry = loadedEntry.entry
         let imageProvider: ((ComicChapter, Int) async -> [ComicChapterImage])?
         let commentsProvider: ((ComicChapter, Int) async -> [ComicComment])?
+        let historyChapterIndexResolver: (Int) -> Int
         if let record = entry.downloadedRecord {
             imageProvider = { _, chapterIndex in
                 guard let localChapterIndexes = entry.localChapterIndexes,
@@ -190,9 +191,15 @@ struct ReadingListReaderPage: View {
                 let localChapterIndex = localChapterIndexes[chapterIndex]
                 return await downloadService.localChapterComments(for: record, chapterIndex: localChapterIndex)
             }
+            historyChapterIndexResolver = { chapterIndex in
+                guard let localChapterIndexes = entry.localChapterIndexes,
+                      localChapterIndexes.indices.contains(chapterIndex) else { return chapterIndex }
+                return localChapterIndexes[chapterIndex]
+            }
         } else {
             imageProvider = nil
             commentsProvider = nil
+            historyChapterIndexResolver = { $0 }
         }
 
         return ComicReaderPage(
@@ -203,6 +210,7 @@ struct ReadingListReaderPage: View {
             service: service,
             localChapterImageProvider: imageProvider,
             localChapterCommentsProvider: commentsProvider,
+            historyChapterIndexResolver: historyChapterIndexResolver,
             listContext: listContext(for: loadedEntry.entryID),
             initialToastMessage: pendingBookToastTitle
         )

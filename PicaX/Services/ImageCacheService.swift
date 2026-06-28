@@ -1,4 +1,5 @@
 import Foundation
+import ImageIO
 
 struct ImageCacheUsage: Equatable {
     let memoryBytes: Int
@@ -57,22 +58,47 @@ enum ImageCacheService {
             throw URLError(.unsupportedURL)
         }
 
-        let request = URLRequest(url: url, cachePolicy: .returnCacheDataElseLoad, timeoutInterval: 30)
-        if let cachedResponse = URLCache.shared.cachedResponse(for: request) {
+        let request = cacheRequest(for: url)
+        if storesInCache, let cachedResponse = URLCache.shared.cachedResponse(for: request) {
             return cachedResponse.data
         }
 
-        let (data, response) = storesInCache
-            ? try await URLSession.shared.data(for: request)
-            : try await uncachedData(for: url)
+        let (data, response) = try await uncachedData(for: url)
         if let httpResponse = response as? HTTPURLResponse,
            !(200...299).contains(httpResponse.statusCode) {
             throw URLError(.badServerResponse)
         }
-        if storesInCache {
-            URLCache.shared.storeCachedResponse(CachedURLResponse(response: response, data: data), for: request)
-        }
         return data
+    }
+
+    nonisolated static func storeDecodedImageData(_ data: Data, for url: URL) {
+        guard url.picaxLocalFileURL == nil, url.picaxSupportsURLCache, !data.isEmpty else {
+            return
+        }
+        let response = URLResponse(
+            url: url,
+            mimeType: nil,
+            expectedContentLength: data.count,
+            textEncodingName: nil
+        )
+        URLCache.shared.storeCachedResponse(
+            CachedURLResponse(response: response, data: data),
+            for: cacheRequest(for: url)
+        )
+    }
+
+    nonisolated static func removeCachedImageData(for url: URL) {
+        guard url.picaxSupportsURLCache else { return }
+        URLCache.shared.removeCachedResponse(for: cacheRequest(for: url))
+    }
+
+    nonisolated static func prefetchImageData(for url: URL) async throws {
+        let data = try await data(for: url)
+        guard isDecodableImageData(data) else {
+            removeCachedImageData(for: url)
+            throw URLError(.cannotDecodeContentData)
+        }
+        storeDecodedImageData(data, for: url)
     }
 
     private nonisolated static func uncachedData(for url: URL) async throws -> (Data, URLResponse) {
@@ -91,4 +117,17 @@ enum ImageCacheService {
             try Data(contentsOf: fileURL)
         }.value
     }
+
+    private nonisolated static func cacheRequest(for url: URL) -> URLRequest {
+        URLRequest(url: url, cachePolicy: .returnCacheDataElseLoad, timeoutInterval: 30)
+    }
+
+    private nonisolated static func isDecodableImageData(_ data: Data) -> Bool {
+        guard !data.isEmpty,
+              let source = CGImageSourceCreateWithData(data as CFData, nil) else {
+            return false
+        }
+        return CGImageSourceGetCount(source) > 0
+    }
+
 }

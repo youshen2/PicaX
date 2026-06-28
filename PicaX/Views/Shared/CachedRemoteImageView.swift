@@ -110,9 +110,21 @@ private enum CachedRemoteImageDecoder {
             return cached
         }
 
-        let data = try await ImageCacheService.data(for: url, storesInCache: storesInCache)
+        var data = try await ImageCacheService.data(for: url, storesInCache: storesInCache)
         guard !Task.isCancelled else { throw CancellationError() }
-        let decoded = try await decode(data: data, maxPixelSize: maxPixelSize)
+        let decoded: CachedDecodedRemoteImage
+        do {
+            decoded = try await decode(data: data, maxPixelSize: maxPixelSize)
+        } catch {
+            guard storesInCache else { throw error }
+            ImageCacheService.removeCachedImageData(for: url)
+            data = try await ImageCacheService.data(for: url, storesInCache: false)
+            guard !Task.isCancelled else { throw CancellationError() }
+            decoded = try await decode(data: data, maxPixelSize: maxPixelSize)
+        }
+        if storesInCache {
+            ImageCacheService.storeDecodedImageData(data, for: url)
+        }
         CachedRemoteImageMemoryCache.store(decoded, key: cacheKey)
         return decoded
     }

@@ -453,7 +453,7 @@ struct ComicContentService {
         for urlString in urlStrings {
             guard !Task.isCancelled, let url = URL.picaxResolved(from: urlString) else { continue }
             guard url.picaxLocalFileURL == nil else { continue }
-            _ = try? await ImageCacheService.data(for: url)
+            _ = try? await ImageCacheService.prefetchImageData(for: url)
         }
     }
 
@@ -754,7 +754,7 @@ private extension ComicContentService {
                 platform: .picacg,
                 title: doc["title"] as? String ?? "Unknown",
                 subtitle: doc["author"] as? String ?? "Unknown",
-                coverURLString: fileServer.isEmpty || path.isEmpty ? "" : "\(fileServer)/static/\(path)",
+                coverURLString: picacgImageURL(fileServer: fileServer, path: path) ?? "",
                 tags: tags,
                 pageCount: doc.intValue(for: "pagesCount"),
                 likesCount: doc.intValue(for: "likesCount") ?? doc.intValue(for: "totalLikes"),
@@ -780,7 +780,7 @@ private extension ComicContentService {
             let thumb = category["thumb"] as? [String: Any]
             let fileServer = thumb?["fileServer"] as? String ?? ""
             let path = thumb?["path"] as? String ?? ""
-            let coverURLString = fileServer.isEmpty || path.isEmpty ? nil : "\(fileServer)/static/\(path)"
+            let coverURLString = picacgImageURL(fileServer: fileServer, path: path)
 
             return ComicCategoryItem(
                 title: title,
@@ -945,7 +945,7 @@ private extension ComicContentService {
                 guard let media = doc["media"] as? [String: Any] else { return nil }
                 let fileServer = media["fileServer"] as? String ?? ""
                 let path = media["path"] as? String ?? ""
-                return fileServer.isEmpty || path.isEmpty ? nil : "\(fileServer)/static/\(path)"
+                return picacgImageURL(fileServer: fileServer, path: path)
             })
             let pagesCount = pages.intValue(for: "pages") ?? page
             if page >= pagesCount { break }
@@ -986,7 +986,34 @@ private extension ComicContentService {
     func picacgImageURL(from data: [String: Any]?) -> String? {
         let fileServer = data?["fileServer"] as? String ?? ""
         let path = data?["path"] as? String ?? ""
-        return fileServer.isEmpty || path.isEmpty ? nil : "\(fileServer)/static/\(path)"
+        return picacgImageURL(fileServer: fileServer, path: path)
+    }
+
+    func picacgImageURL(fileServer: String, path: String) -> String? {
+        var server = fileServer.trimmingCharacters(in: .whitespacesAndNewlines)
+        var imagePath = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !server.isEmpty, !imagePath.isEmpty else { return nil }
+
+        while server.hasSuffix("/") {
+            server.removeLast()
+        }
+        if server.hasSuffix("/static") {
+            server.removeLast("/static".count)
+        }
+        while imagePath.hasPrefix("/") {
+            imagePath.removeFirst()
+        }
+
+        var allowedPathSegment = CharacterSet.urlPathAllowed
+        allowedPathSegment.remove(charactersIn: "#?")
+        let encodedPath = imagePath
+            .split(separator: "/", omittingEmptySubsequences: false)
+            .map { segment in
+                String(segment).addingPercentEncoding(withAllowedCharacters: allowedPathSegment) ?? String(segment)
+            }
+            .joined(separator: "/")
+
+        return "\(server)/static/\(encodedPath)"
     }
 }
 

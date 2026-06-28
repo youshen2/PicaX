@@ -103,6 +103,10 @@ struct DownloadListPage: View {
                 localChapterCommentsProvider: { _, chapterIndex in
                     guard request.localChapterIndexes.indices.contains(chapterIndex) else { return [] }
                     return await downloadService.localChapterComments(for: request.record, chapterIndex: request.localChapterIndexes[chapterIndex])
+                },
+                historyChapterIndexResolver: { chapterIndex in
+                    guard request.localChapterIndexes.indices.contains(chapterIndex) else { return chapterIndex }
+                    return request.localChapterIndexes[chapterIndex]
                 }
             )
         }
