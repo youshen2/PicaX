@@ -23,7 +23,9 @@ struct ComicReaderPage: View {
     @AppStorage(ReaderSettingsKey.progressBackgroundOpacity) private var progressBackgroundOpacity = 0.78
     @AppStorage(ReaderSettingsKey.progressBottomInset) private var progressBottomInset = 16.0
     @AppStorage(ReaderSettingsKey.readingMode) private var readingMode = ReaderReadingMode.topToBottomContinuous.rawValue
-    @AppStorage(ReaderSettingsKey.imageSpacing) private var imageSpacing = 10.0
+    @AppStorage(ReaderSettingsKey.imageSpacing) private var imageSpacing = 0.0
+    @AppStorage(ReaderSettingsKey.firstImageTopPadding) private var firstImageTopPadding = 115.0
+    @AppStorage(ReaderSettingsKey.lastImageBottomPadding) private var lastImageBottomPadding = 0.0
     @AppStorage(ReaderSettingsKey.preloadImageCount) private var preloadImageCount = 3
     @AppStorage(ReaderSettingsKey.pagedPreloadDelay) private var pagedPreloadDelay = 1.2
     @AppStorage(ReaderSettingsKey.imageRetryCount) private var imageRetryCount = 2
@@ -356,6 +358,8 @@ struct ComicReaderPage: View {
                                 zoomConfiguration: readerZoomConfiguration,
                                 dimsImage: dimsReaderImages
                             )
+                                .padding(.top, index == images.startIndex ? CGFloat(firstImageTopPadding) : 0)
+                                .padding(.bottom, index == images.index(before: images.endIndex) ? CGFloat(lastImageBottomPadding) : 0)
                                 .id(readerPageID(index))
                                 .onAppear {
                                     updateReadingPage(index, totalPages: images.count, targetPixelWidth: targetPixelWidth)
@@ -2443,6 +2447,8 @@ enum ReaderSettingsKey {
     static let progressBottomInset = "settings.reader.progressBottomInset"
     static let readingMode = "settings.reader.readingMode"
     static let imageSpacing = "settings.reader.imageSpacing"
+    static let firstImageTopPadding = "settings.reader.firstImageTopPadding"
+    static let lastImageBottomPadding = "settings.reader.lastImageBottomPadding"
     static let preloadImageCount = "settings.reader.preloadImageCount"
     static let pagedPreloadDelay = "settings.reader.pagedPreloadDelay"
     static let imageRetryCount = "settings.reader.imageRetryCount"

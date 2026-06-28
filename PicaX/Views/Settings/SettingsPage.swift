@@ -1460,7 +1460,9 @@ private struct ReaderSettingsView: View {
     @AppStorage(ReaderSettingsKey.progressBackgroundOpacity) private var progressBackgroundOpacity = 0.78
     @AppStorage(ReaderSettingsKey.progressBottomInset) private var progressBottomInset = 16.0
     @AppStorage(ReaderSettingsKey.readingMode) private var readingMode = ReaderReadingMode.topToBottomContinuous.rawValue
-    @AppStorage(ReaderSettingsKey.imageSpacing) private var imageSpacing = 10.0
+    @AppStorage(ReaderSettingsKey.imageSpacing) private var imageSpacing = 0.0
+    @AppStorage(ReaderSettingsKey.firstImageTopPadding) private var firstImageTopPadding = 115.0
+    @AppStorage(ReaderSettingsKey.lastImageBottomPadding) private var lastImageBottomPadding = 0.0
     @AppStorage(ReaderSettingsKey.preloadImageCount) private var preloadImageCount = 3
     @AppStorage(ReaderSettingsKey.pagedPreloadDelay) private var pagedPreloadDelay = 1.2
     @AppStorage(ReaderSettingsKey.imageRetryCount) private var imageRetryCount = 2
@@ -1503,6 +1505,8 @@ private struct ReaderSettingsView: View {
                     backgroundOpacity: progressBackgroundOpacity,
                     progressBottomInset: progressBottomInset,
                     imageSpacing: imageSpacing,
+                    firstImageTopPadding: firstImageTopPadding,
+                    lastImageBottomPadding: lastImageBottomPadding,
                     showsSystemStatus: showsSystemStatus,
                     systemStatusStyle: selectedSystemStatusStyle,
                     systemStatusPosition: selectedSystemStatusPosition,
@@ -1700,6 +1704,16 @@ private struct ReaderSettingsView: View {
                     Slider(value: $imageSpacing, in: 0...24, step: 2)
                 }
 
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("首图顶部留白 \(Int(firstImageTopPadding))")
+                    Slider(value: $firstImageTopPadding, in: 0...160, step: 4)
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("末图底部留白 \(Int(lastImageBottomPadding))")
+                    Slider(value: $lastImageBottomPadding, in: 0...160, step: 4)
+                }
+
                 IntegerSettingsInputRow(
                     title: "预加载图片",
                     value: $preloadImageCount,
@@ -1784,6 +1798,8 @@ private struct ReaderSettingsPreview: View {
     let backgroundOpacity: Double
     let progressBottomInset: Double
     let imageSpacing: Double
+    let firstImageTopPadding: Double
+    let lastImageBottomPadding: Double
     let showsSystemStatus: Bool
     let systemStatusStyle: ReaderSystemStatusStyle
     let systemStatusPosition: ReaderOverlayPosition
@@ -1797,9 +1813,11 @@ private struct ReaderSettingsPreview: View {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(.white.opacity(0.18))
                     .frame(height: 118)
+                    .padding(.top, CGFloat(firstImageTopPadding * 0.22))
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(.white.opacity(0.12))
                     .frame(height: 86)
+                    .padding(.bottom, CGFloat(lastImageBottomPadding * 0.22))
             }
             .padding(12)
             .frame(maxWidth: .infinity)
