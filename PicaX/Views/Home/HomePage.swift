@@ -19,6 +19,7 @@ struct HomePage: View {
     @AppStorage(HomeSettingsKey.showsReadingDurationSection) private var showsReadingDurationSection = true
     @AppStorage(HomeSettingsKey.showsDownloadSection) private var showsDownloadSection = true
     @AppStorage(HomeSettingsKey.showsAccountManagementEntry) private var showsAccountManagementEntry = true
+    @AppStorage(HomeSettingsKey.sectionOrder) private var homeSectionOrderRaw = HomeSectionKind.defaultRawValue
     @AppStorage(AppBehaviorSettingsKey.checksClipboardForComicLinks) private var checksClipboardForComicLinks = true
     @AppStorage(AppBehaviorSettingsKey.checksClipboardOnlyOnLaunch) private var checksClipboardOnlyOnLaunch = false
 
@@ -110,6 +111,22 @@ struct HomePage: View {
 
     private var homeList: some View {
         List {
+            ForEach(homeSections) { section in
+                homeSection(section)
+            }
+        }
+        .picaxInsetGroupedListStyle()
+        .background(AppColor.groupedBackground)
+    }
+
+    private var homeSections: [HomeSectionKind] {
+        HomeSectionKind.normalizedOrder(from: homeSectionOrderRaw)
+    }
+
+    @ViewBuilder
+    private func homeSection(_ section: HomeSectionKind) -> some View {
+        switch section {
+        case .history:
             if showsHistorySection {
                 Section {
                     HomeHistoryCard(
@@ -125,6 +142,7 @@ struct HomePage: View {
                 }
             }
 
+        case .readingDuration:
             if showsReadingDurationSection {
                 Section {
                     HomeReadingDurationCard(
@@ -147,6 +165,7 @@ struct HomePage: View {
                 }
             }
 
+        case .downloads:
             if showsDownloadSection {
                 Section {
                     HomeDownloadsCard(
@@ -164,6 +183,7 @@ struct HomePage: View {
                 }
             }
 
+        case .comicSources:
             if showsAccountManagementEntry || !platformAccounts.loggedInAccounts.isEmpty {
                 Section("漫画源") {
                     if showsAccountManagementEntry {
@@ -193,14 +213,13 @@ struct HomePage: View {
                 }
             }
 
+        case .tools:
             HomeToolsSection(
                 service: contentService,
                 requestInput: presentToolInputDialog,
                 showError: { toolErrorMessage = $0 }
             )
         }
-        .picaxInsetGroupedListStyle()
-        .background(AppColor.groupedBackground)
     }
 
     private var toolErrorBinding: Binding<Bool> {

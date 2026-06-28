@@ -459,6 +459,8 @@ private struct HomeSettingsView: View {
     @AppStorage(HomeSettingsKey.showsReadingDurationSection) private var showsReadingDurationSection = true
     @AppStorage(HomeSettingsKey.showsDownloadSection) private var showsDownloadSection = true
     @AppStorage(HomeSettingsKey.showsAccountManagementEntry) private var showsAccountManagementEntry = true
+    @AppStorage(HomeSettingsKey.sectionOrder) private var sectionOrderRaw = HomeSectionKind.defaultRawValue
+    @State private var sectionOrder = HomeSectionKind.defaultOrder
 
     var body: some View {
         List {
@@ -488,10 +490,45 @@ private struct HomeSettingsView: View {
             } footer: {
                 Text("只影响首页详细卡片数量，不影响完整列表和本地数据。")
             }
+
+            Section {
+                ForEach(sectionOrder) { section in
+                    Label(section.title, systemImage: section.systemImage)
+                }
+                .onMove(perform: moveSections)
+
+                Button("恢复默认排序") {
+                    sectionOrder = HomeSectionKind.defaultOrder
+                    saveSectionOrder()
+                }
+            } header: {
+                Text("排序")
+            } footer: {
+                Text("点按编辑后拖动项目调整首页显示顺序。")
+            }
         }
         .picaxInsetGroupedListStyle()
         .navigationTitle("首页")
         .picaxHidesTabBar()
+        .toolbar {
+            EditButton()
+        }
+        .onAppear {
+            sectionOrder = HomeSectionKind.normalizedOrder(from: sectionOrderRaw)
+            saveSectionOrder()
+        }
+        .onChange(of: sectionOrderRaw) { _, newValue in
+            sectionOrder = HomeSectionKind.normalizedOrder(from: newValue)
+        }
+    }
+
+    private func moveSections(from source: IndexSet, to destination: Int) {
+        sectionOrder.move(fromOffsets: source, toOffset: destination)
+        saveSectionOrder()
+    }
+
+    private func saveSectionOrder() {
+        sectionOrderRaw = HomeSectionKind.rawValue(for: sectionOrder)
     }
 }
 

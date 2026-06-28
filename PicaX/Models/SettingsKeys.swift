@@ -6,6 +6,70 @@ enum HomeSettingsKey {
     static let showsReadingDurationSection = "settings.home.showsReadingDurationSection"
     static let showsDownloadSection = "settings.home.showsDownloadSection"
     static let showsAccountManagementEntry = "settings.home.showsAccountManagementEntry"
+    static let sectionOrder = "settings.home.sectionOrder"
+}
+
+enum HomeSectionKind: String, CaseIterable, Identifiable {
+    case history
+    case readingDuration
+    case downloads
+    case comicSources
+    case tools
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .history:
+            "历史记录"
+        case .readingDuration:
+            "阅读时长"
+        case .downloads:
+            "下载"
+        case .comicSources:
+            "漫画源"
+        case .tools:
+            "快捷工具"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .history:
+            "clock.arrow.circlepath"
+        case .readingDuration:
+            "timer"
+        case .downloads:
+            "arrow.down.circle"
+        case .comicSources:
+            "square.grid.2x2"
+        case .tools:
+            "wrench.and.screwdriver"
+        }
+    }
+
+    static let defaultOrder: [HomeSectionKind] = [.history, .readingDuration, .downloads, .comicSources, .tools]
+
+    static var defaultRawValue: String {
+        rawValue(for: defaultOrder)
+    }
+
+    static func rawValue(for order: [HomeSectionKind]) -> String {
+        order.map(\.rawValue).joined(separator: ",")
+    }
+
+    static func normalizedOrder(from rawValue: String) -> [HomeSectionKind] {
+        var seen = Set<HomeSectionKind>()
+        var result = rawValue
+            .split(separator: ",")
+            .compactMap { HomeSectionKind(rawValue: String($0)) }
+            .filter { seen.insert($0).inserted }
+
+        for section in defaultOrder where !seen.contains(section) {
+            result.append(section)
+        }
+        return result
+    }
 }
 
 enum AppAppearanceSettingsKey {
