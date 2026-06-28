@@ -7,8 +7,8 @@ import zlib
 private let backupSQLiteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
 extension UTType {
-    static let picaxBackup = UTType(filenameExtension: "picax") ?? UTType(exportedAs: "moye.picax.backup", conformingTo: .zip)
-    static let picaComicBackup = UTType(filenameExtension: "picadata") ?? UTType(exportedAs: "moye.picacomic.backup", conformingTo: .zip)
+    static let picaxBackup = UTType(exportedAs: "moye.picax.backup", conformingTo: .data)
+    static let picaComicBackup = UTType(importedAs: "moye.picacomic.backup", conformingTo: .data)
 }
 
 enum BackupImportMode {

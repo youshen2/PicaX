@@ -1,5 +1,8 @@
 import SwiftUI
 import UniformTypeIdentifiers
+#if os(iOS)
+import UIKit
+#endif
 
 struct SettingsPage: View {
     @EnvironmentObject private var platformAccounts: PlatformAccountService
@@ -761,12 +764,13 @@ private struct BackupSettingsView: View {
 
     @State private var selectedBackupContent = BackupContentKind.defaultSelection
     @State private var isPreparingExport = false
+    @State private var isPreparingImport = false
     @State private var isImporting = false
     @State private var exportDocument = PicaXBackupDocument()
     @State private var exportFileName = "PicaX-Backup"
     @State private var showsExporter = false
     @State private var showsImporter = false
-    @State private var showsPicaComicImporter = false
+    @State private var activeImportSource = BackupImportSource.picax
     @State private var pendingImport: BackupImportPreview?
     @State private var operationResult: BackupOperationResult?
 
@@ -804,23 +808,37 @@ private struct BackupSettingsView: View {
                         Label("导出备份", systemImage: "square.and.arrow.up")
                     }
                 }
-                .disabled(isPreparingExport || isImporting || selectedBackupContent.isEmpty)
+                .disabled(isPreparingExport || isPreparingImport || isImporting || selectedBackupContent.isEmpty)
             } footer: {
                 Text(selectedBackupContent.isEmpty ? "至少选择一项内容后才能导出。" : "备份文件会保存为 .picax。")
             }
 
             Section {
                 Button {
-                    showsPicaComicImporter = true
-                } label: {
-                    Label("从 PicaComic 备份导入", systemImage: "tray.and.arrow.down")
-                }
-                .disabled(isPreparingExport || isImporting)
-
-                Button {
+                    activeImportSource = .picaComic
                     showsImporter = true
                 } label: {
-                    if isImporting {
+                    if isPreparingImport, activeImportSource == .picaComic {
+                        HStack {
+                            ProgressView()
+                            Text("正在读取 PicaComic 备份")
+                        }
+                    } else {
+                        Label("从 PicaComic 备份导入", systemImage: "tray.and.arrow.down")
+                    }
+                }
+                .disabled(isPreparingExport || isPreparingImport || isImporting)
+
+                Button {
+                    activeImportSource = .picax
+                    showsImporter = true
+                } label: {
+                    if isPreparingImport, activeImportSource == .picax {
+                        HStack {
+                            ProgressView()
+                            Text("正在读取备份")
+                        }
+                    } else if isImporting {
                         HStack {
                             ProgressView()
                             Text("正在导入")
@@ -829,7 +847,7 @@ private struct BackupSettingsView: View {
                         Label("导入备份", systemImage: "square.and.arrow.down")
                     }
                 }
-                .disabled(isPreparingExport || isImporting)
+                .disabled(isPreparingExport || isPreparingImport || isImporting)
             } footer: {
                 Text("导入时可以选择完全覆盖或合并本地数据。合并会保留本地已有设置，并合并历史、收藏、账号、屏蔽词和下载记录。")
             }
@@ -850,11 +868,11 @@ private struct BackupSettingsView: View {
                 operationResult = BackupOperationResult(title: "导出失败", message: error.localizedDescription)
             }
         }
-        .fileImporter(isPresented: $showsImporter, allowedContentTypes: [.picaxBackup], allowsMultipleSelection: false) { result in
+        .backupDocumentImporter(
+            isPresented: $showsImporter,
+            allowedContentTypes: activeImportSource.allowedContentTypes
+        ) { result in
             handleImporterResult(result)
-        }
-        .fileImporter(isPresented: $showsPicaComicImporter, allowedContentTypes: [.picaComicBackup], allowsMultipleSelection: false) { result in
-            handlePicaComicImporterResult(result)
         }
         .sheet(item: $pendingImport) { preview in
             BackupImportPreviewSheet(
@@ -912,29 +930,28 @@ private struct BackupSettingsView: View {
     }
 
     private func handleImporterResult(_ result: Result<[URL], Error>) {
-        do {
-            guard let url = try result.get().first else { return }
-            Task {
-                await loadBackupPreview(from: url, source: .picax)
-            }
-        } catch {
-            operationResult = BackupOperationResult(title: "读取备份失败", message: error.localizedDescription)
-        }
-    }
+        let source = activeImportSource
 
-    private func handlePicaComicImporterResult(_ result: Result<[URL], Error>) {
         do {
             guard let url = try result.get().first else { return }
+            guard source.accepts(url) else {
+                operationResult = BackupOperationResult(title: source.failureTitle, message: source.invalidFileMessage)
+                return
+            }
             Task {
-                await loadBackupPreview(from: url, source: .picaComic)
+                await loadBackupPreview(from: url, source: source)
             }
         } catch {
-            operationResult = BackupOperationResult(title: "读取 PicaComic 备份失败", message: error.localizedDescription)
+            operationResult = BackupOperationResult(title: source.failureTitle, message: error.localizedDescription)
         }
     }
 
     @MainActor
     private func loadBackupPreview(from url: URL, source: BackupImportSource) async {
+        guard !isPreparingImport else { return }
+        isPreparingImport = true
+        defer { isPreparingImport = false }
+
         do {
             let data = try await Self.readSecurityScopedData(from: url)
             pendingImport = try source.preview(from: data)
@@ -997,6 +1014,33 @@ private enum BackupImportSource {
     case picax
     case picaComic
 
+    var allowedContentTypes: [UTType] {
+        switch self {
+        case .picax:
+            [.picaxBackup]
+        case .picaComic:
+            [.picaComicBackup]
+        }
+    }
+
+    var expectedFileExtension: String {
+        switch self {
+        case .picax:
+            "picax"
+        case .picaComic:
+            "picadata"
+        }
+    }
+
+    var invalidFileMessage: String {
+        switch self {
+        case .picax:
+            "请选择 .picax 备份文件。"
+        case .picaComic:
+            "请选择 .picadata 备份文件。"
+        }
+    }
+
     var failureTitle: String {
         switch self {
         case .picax:
@@ -1004,6 +1048,10 @@ private enum BackupImportSource {
         case .picaComic:
             "读取 PicaComic 备份失败"
         }
+    }
+
+    func accepts(_ url: URL) -> Bool {
+        url.pathExtension.compare(expectedFileExtension, options: [.caseInsensitive]) == .orderedSame
     }
 
     func preview(from data: Data) throws -> BackupImportPreview {
@@ -1015,6 +1063,67 @@ private enum BackupImportSource {
         }
     }
 }
+
+private extension View {
+    @ViewBuilder
+    func backupDocumentImporter(
+        isPresented: Binding<Bool>,
+        allowedContentTypes: [UTType],
+        onCompletion: @escaping (Result<[URL], Error>) -> Void
+    ) -> some View {
+#if os(iOS)
+        sheet(isPresented: isPresented) {
+            BackupDocumentPicker(allowedContentTypes: allowedContentTypes) { result in
+                isPresented.wrappedValue = false
+                onCompletion(result)
+            }
+        }
+#else
+        fileImporter(
+            isPresented: isPresented,
+            allowedContentTypes: allowedContentTypes,
+            allowsMultipleSelection: false,
+            onCompletion: onCompletion
+        )
+#endif
+    }
+}
+
+#if os(iOS)
+private struct BackupDocumentPicker: UIViewControllerRepresentable {
+    let allowedContentTypes: [UTType]
+    let onCompletion: (Result<[URL], Error>) -> Void
+
+    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: allowedContentTypes, asCopy: true)
+        picker.delegate = context.coordinator
+        picker.allowsMultipleSelection = false
+        return picker
+    }
+
+    func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onCompletion: onCompletion)
+    }
+
+    final class Coordinator: NSObject, UIDocumentPickerDelegate {
+        let onCompletion: (Result<[URL], Error>) -> Void
+
+        init(onCompletion: @escaping (Result<[URL], Error>) -> Void) {
+            self.onCompletion = onCompletion
+        }
+
+        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+            onCompletion(.success(urls))
+        }
+
+        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+            onCompletion(.success([]))
+        }
+    }
+}
+#endif
 
 private struct BackupImportPreviewSheet: View {
     let preview: BackupImportPreview
