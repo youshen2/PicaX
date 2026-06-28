@@ -1960,7 +1960,7 @@ private struct ReaderSettingsView: View {
                     value: $preloadImageCount,
                     unit: "张",
                     lowerBound: 0,
-                    upperBound: 12,
+                    upperBound: 15,
                     detail: preloadImageCount == 0 ? "关闭" : nil
                 )
 

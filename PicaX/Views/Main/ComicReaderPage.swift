@@ -636,7 +636,7 @@ struct ComicReaderPage: View {
                         retryInterval: boundedImageRetryInterval,
                         targetPixelWidth: targetPixelWidth,
                         containerSize: size,
-                        isLoadAllowed: index == pagedPageIndex,
+                        isLoadAllowed: isImageInPreloadWindow(index, around: pagedPageIndex, imageCount: images.count),
                         zoomConfiguration: readerZoomConfiguration,
                         dimsImage: dimsReaderImages
                     )
@@ -764,7 +764,7 @@ struct ComicReaderPage: View {
                         retryInterval: boundedImageRetryInterval,
                         targetPixelWidth: targetPixelWidth,
                         containerSize: size,
-                        isLoadAllowed: index == pagedPageIndex,
+                        isLoadAllowed: isImageInPreloadWindow(index, around: pagedPageIndex, imageCount: images.count),
                         zoomConfiguration: readerZoomConfiguration,
                         dimsImage: dimsReaderImages
                     )
@@ -1192,7 +1192,7 @@ struct ComicReaderPage: View {
         let didChange = viewModel.updateCurrentPage(index)
         guard didChange || force else { return }
         viewModel.scheduleImagePreload(
-            afterPage: index,
+            aroundPage: index,
             count: boundedPreloadImageCount,
             delay: readerPreloadDelay,
             targetPixelWidth: targetPixelWidth
@@ -1285,7 +1285,8 @@ struct ComicReaderPage: View {
             return
         }
 
-        let imageIDs = Set(indices.map { images[$0].urlString })
+        let loadableIndices = expandedPreloadIndices(around: indices, imageCount: images.count)
+        let imageIDs = Set(loadableIndices.map { images[$0].urlString })
         guard continuousLoadableImageIDs != imageIDs else { return }
         continuousLoadableImageIDs = imageIDs
     }
@@ -1296,10 +1297,31 @@ struct ComicReaderPage: View {
             return
         }
 
-        let boundedIndex = min(max(pageIndex, 0), images.count - 1)
-        let imageIDs = Set([images[boundedIndex].urlString])
+        let imageIDs = Set(preloadIndices(around: pageIndex, imageCount: images.count).map { images[$0].urlString })
         guard continuousLoadableImageIDs != imageIDs else { return }
         continuousLoadableImageIDs = imageIDs
+    }
+
+    private func isImageInPreloadWindow(_ index: Int, around pageIndex: Int, imageCount: Int) -> Bool {
+        preloadIndices(around: pageIndex, imageCount: imageCount).contains(index)
+    }
+
+    private func expandedPreloadIndices(around indices: Set<Int>, imageCount: Int) -> Set<Int> {
+        guard imageCount > 0 else { return [] }
+        var result = Set<Int>()
+        for index in indices {
+            result.formUnion(preloadIndices(around: index, imageCount: imageCount))
+        }
+        return result
+    }
+
+    private func preloadIndices(around pageIndex: Int, imageCount: Int) -> Set<Int> {
+        guard imageCount > 0 else { return [] }
+        let boundedIndex = min(max(pageIndex, 0), imageCount - 1)
+        let radius = boundedPreloadImageCount
+        let startIndex = max(boundedIndex - radius, 0)
+        let endIndex = min(boundedIndex + radius, imageCount - 1)
+        return Set(startIndex...endIndex)
     }
 
     private func allowsContinuousZoom(images: [ComicChapterImage]) -> Bool {
@@ -1429,7 +1451,7 @@ struct ComicReaderPage: View {
     }
 
     private var boundedPreloadImageCount: Int {
-        min(max(preloadImageCount, 0), 12)
+        min(max(preloadImageCount, 0), 15)
     }
 
     private var boundedPagedPreloadDelay: Double {

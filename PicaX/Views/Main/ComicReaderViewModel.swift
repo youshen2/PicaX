@@ -93,6 +93,12 @@ final class ComicReaderViewModel: ObservableObject {
             state = .loaded(images)
             currentPageIndex = min(currentPageIndex, max(images.count - 1, 0))
             requestedPageIndex = min(requestedPageIndex, max(images.count - 1, 0))
+            scheduleImagePreload(
+                aroundPage: currentPageIndex,
+                count: preloadImageCount,
+                delay: 0,
+                targetPixelWidth: nil
+            )
         } catch {
             state = .failed(error.localizedDescription)
         }
@@ -118,39 +124,44 @@ final class ComicReaderViewModel: ObservableObject {
         return true
     }
 
-    func scheduleImagePreload(afterPage index: Int, count: Int, delay: Double, targetPixelWidth: Int?) {
+    func scheduleImagePreload(aroundPage index: Int, count: Int, delay: Double, targetPixelWidth: Int?) {
         preloadDebounceTask?.cancel()
         guard case .loaded(let images) = state else { return }
-        let boundedCount = min(max(count, 0), 12)
-        guard boundedCount > 0, index + 1 < images.count else {
+        let boundedCount = min(max(count, 0), 15)
+        guard boundedCount > 0, !images.isEmpty else {
             preloadTask?.cancel()
             return
         }
 
-        let startIndex = index + 1
-        let endIndex = min(index + boundedCount, images.count - 1)
-        let preloadItems = images[startIndex...endIndex]
-            .map(\.urlString)
+        let pageIndex = min(max(index, 0), images.count - 1)
+        let startIndex = max(pageIndex - boundedCount, 0)
+        let endIndex = min(pageIndex + boundedCount, images.count - 1)
+        let preloadItems = (startIndex...endIndex)
+            .filter { $0 != pageIndex }
+            .map { images[$0].urlString }
             .map { (urlString: $0, key: preloadKey(urlString: $0, targetPixelWidth: targetPixelWidth)) }
             .filter { !preloadedImageKeys.contains($0.key) }
         let urlStrings = preloadItems.map(\.urlString)
         let preloadKeys = preloadItems.map(\.key)
-        guard !urlStrings.isEmpty else { return }
+        guard !urlStrings.isEmpty else {
+            preloadTask?.cancel()
+            return
+        }
 
         let chapterID = loadedChapterID
         let boundedDelay = min(max(delay, 0), 5)
         if boundedDelay <= 0 {
-            startImagePreload(urlStrings: urlStrings, preloadKeys: preloadKeys, chapterID: chapterID, pageIndex: index, targetPixelWidth: targetPixelWidth)
+            startImagePreload(urlStrings: urlStrings, preloadKeys: preloadKeys, chapterID: chapterID, pageIndex: pageIndex, targetPixelWidth: targetPixelWidth)
             return
         }
 
-        preloadDebounceTask = Task { [weak self, urlStrings, preloadKeys, chapterID, index, boundedDelay, targetPixelWidth] in
+        preloadDebounceTask = Task { [weak self, urlStrings, preloadKeys, chapterID, pageIndex, boundedDelay, targetPixelWidth] in
             let delayNanoseconds = UInt64((boundedDelay * 1_000_000_000).rounded())
             try? await Task.sleep(nanoseconds: delayNanoseconds)
             guard !Task.isCancelled else { return }
             await MainActor.run {
-                guard let self, self.loadedChapterID == chapterID, self.currentPageIndex == index else { return }
-                self.startImagePreload(urlStrings: urlStrings, preloadKeys: preloadKeys, chapterID: chapterID, pageIndex: index, targetPixelWidth: targetPixelWidth)
+                guard let self, self.loadedChapterID == chapterID, self.currentPageIndex == pageIndex else { return }
+                self.startImagePreload(urlStrings: urlStrings, preloadKeys: preloadKeys, chapterID: chapterID, pageIndex: pageIndex, targetPixelWidth: targetPixelWidth)
             }
         }
     }
