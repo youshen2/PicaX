@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import zlib
 
 struct DownloadedChapterRecord: Identifiable, Equatable, Codable {
     let index: Int
@@ -208,6 +209,31 @@ struct DownloadStorageUsage: Equatable {
     }
 }
 
+struct DownloadArchiveExport {
+    let fileURL: URL
+    let fileName: String
+}
+
+enum DownloadArchiveExportError: LocalizedError {
+    case noImages
+    case invalidArchivePath
+    case entryTooLarge
+    case tooManyEntries
+
+    var errorDescription: String? {
+        switch self {
+        case .noImages:
+            "没有可导出的漫画图片。"
+        case .invalidArchivePath:
+            "ZIP 内部文件路径无效。"
+        case .entryTooLarge:
+            "漫画文件过大，无法导出为 ZIP。"
+        case .tooManyEntries:
+            "漫画图片数量过多，无法导出为 ZIP。"
+        }
+    }
+}
+
 private enum DownloadTaskControlError: Error {
     case stopped
 }
@@ -247,6 +273,9 @@ final class DownloadService: ObservableObject {
         }
         if defaults.object(forKey: DownloadSettingsKey.speedLimitKBPerSecond) == nil {
             defaults.set(1024, forKey: DownloadSettingsKey.speedLimitKBPerSecond)
+        }
+        if defaults.object(forKey: DownloadSettingsKey.archiveFileNameTemplate) == nil {
+            defaults.set(DownloadSettingsKey.defaultArchiveFileNameTemplate, forKey: DownloadSettingsKey.archiveFileNameTemplate)
         }
         records = PicaXSQLiteStore.loadDownloadRecords()
         tasks = Self.loadTasks(defaults: defaults, decoder: decoder)
@@ -415,6 +444,15 @@ final class DownloadService: ObservableObject {
             recordsBytes: PicaXSQLiteStore.bytes(for: .downloadRecords),
             tasksBytes: defaults.data(forKey: DownloadSettingsKey.tasks)?.count ?? 0
         )
+    }
+
+    func makeArchiveExport(for record: DownloadRecord) async throws -> DownloadArchiveExport {
+        let storedFileNameTemplate = defaults.string(forKey: DownloadSettingsKey.archiveFileNameTemplate)
+            ?? DownloadSettingsKey.defaultArchiveFileNameTemplate
+        let fileNameTemplate = storedFileNameTemplate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? DownloadSettingsKey.defaultArchiveFileNameTemplate
+            : storedFileNameTemplate
+        return try await Self.makeArchiveExport(for: record, fileNameTemplate: fileNameTemplate)
     }
 
     private func startIfNeeded() {
@@ -889,6 +927,93 @@ final class DownloadService: ObservableObject {
         }.value
     }
 
+    private nonisolated static func makeArchiveExport(for record: DownloadRecord, fileNameTemplate: String) async throws -> DownloadArchiveExport {
+        try await Task.detached(priority: .utility) {
+            let entries = try archiveEntries(for: record)
+            guard !entries.isEmpty else { throw DownloadArchiveExportError.noImages }
+
+            let fileName = archiveFileName(for: record, template: fileNameTemplate)
+            let temporaryDirectoryURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("PicaX-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: temporaryDirectoryURL, withIntermediateDirectories: true)
+            let outputURL = temporaryDirectoryURL.appendingPathComponent(fileName)
+            try StreamingZipArchive.write(entries: entries, to: outputURL)
+            return DownloadArchiveExport(fileURL: outputURL, fileName: fileName)
+        }.value
+    }
+
+    private nonisolated static func archiveEntries(for record: DownloadRecord) throws -> [StreamingZipEntry] {
+        var entries: [StreamingZipEntry] = []
+        var pageNumber = 1
+
+        for chapter in record.chapters.sorted(by: { $0.index < $1.index }) {
+            guard let directoryURL = try? chapterDirectoryURL(item: record.item, chapter: chapter.chapter, index: chapter.index),
+                  let fileURLs = try? FileManager.default.contentsOfDirectory(
+                    at: directoryURL,
+                    includingPropertiesForKeys: [.isRegularFileKey],
+                    options: [.skipsHiddenFiles]
+                  ) else {
+                continue
+            }
+
+            for fileURL in fileURLs
+                .filter({ isImageFile($0) })
+                .sorted(by: { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }) {
+                entries.append(StreamingZipEntry(sourceURL: fileURL, archivePath: archiveFileName(pageNumber: pageNumber, sourceURL: fileURL)))
+                pageNumber += 1
+            }
+        }
+
+        return entries
+    }
+
+    private nonisolated static func archiveFileName(pageNumber: Int, sourceURL: URL) -> String {
+        let ext = sourceURL.pathExtension.trimmingCharacters(in: .whitespacesAndNewlines)
+        return ext.isEmpty ? "\(pageNumber)" : "\(pageNumber).\(ext.lowercased())"
+    }
+
+    private nonisolated static func archiveFileName(for record: DownloadRecord, template: String) -> String {
+        let trimmedTemplate = template.trimmingCharacters(in: .whitespacesAndNewlines)
+        let effectiveTemplate = trimmedTemplate.isEmpty ? "{title}" : trimmedTemplate
+        let renderedName = effectiveTemplate
+            .replacingOccurrences(of: "{title}", with: record.item.title)
+            .replacingOccurrences(of: "{id}", with: record.item.id)
+            .replacingOccurrences(of: "{platform}", with: archivePlatformTitle(for: record.item.platform))
+            .replacingOccurrences(of: "{date}", with: archiveExportDateString())
+
+        var baseName = safeFileName(renderedName)
+        if baseName.lowercased().hasSuffix(".zip") {
+            baseName.removeLast(4)
+            baseName = safeFileName(baseName)
+        }
+        return "\(baseName).zip"
+    }
+
+    private nonisolated static func archiveExportDateString() -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyyMMdd"
+        return formatter.string(from: Date())
+    }
+
+    private nonisolated static func archivePlatformTitle(for platform: ComicPlatform) -> String {
+        switch platform {
+        case .picacg:
+            "PicACG"
+        case .jmComic:
+            "JMComic"
+        case .nhentai:
+            "NHentai"
+        case .eHentai:
+            "E-Hentai"
+        case .hitomi:
+            "Hitomi"
+        case .htManga:
+            "HT Manga"
+        }
+    }
+
     private nonisolated static func safeFileName(_ value: String) -> String {
         let invalidCharacters = CharacterSet(charactersIn: "/\\?%*|\"<>:")
             .union(.newlines)
@@ -898,5 +1023,164 @@ final class DownloadService: ObservableObject {
             .joined(separator: "-")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return cleaned.isEmpty ? "untitled" : String(cleaned.prefix(80))
+    }
+}
+
+private struct StreamingZipEntry {
+    let sourceURL: URL
+    let archivePath: String
+}
+
+private enum StreamingZipArchive {
+    private struct CentralDirectoryRecord {
+        let fileName: Data
+        let crc32: UInt32
+        let size: UInt32
+        let offset: UInt32
+    }
+
+    nonisolated static func write(entries: [StreamingZipEntry], to outputURL: URL) throws {
+        guard entries.count <= Int(UInt16.max) else {
+            throw DownloadArchiveExportError.tooManyEntries
+        }
+
+        try? FileManager.default.removeItem(at: outputURL)
+        FileManager.default.createFile(atPath: outputURL.path, contents: nil)
+        let handle = try FileHandle(forWritingTo: outputURL)
+        var offset: UInt32 = 0
+        var centralRecords: [CentralDirectoryRecord] = []
+
+        do {
+            for entry in entries {
+                let fileName = try fileNameData(for: entry.archivePath)
+                let data = try Data(contentsOf: entry.sourceURL)
+                let size = try uint32Size(data.count)
+                let entryOffset = offset
+                let crc32 = DownloadExportCRC32.checksum(data)
+
+                var header = Data()
+                header.appendUInt32LE(0x04034b50)
+                header.appendUInt16LE(10)
+                header.appendUInt16LE(0)
+                header.appendUInt16LE(0)
+                header.appendUInt16LE(0)
+                header.appendUInt16LE(0)
+                header.appendUInt32LE(crc32)
+                header.appendUInt32LE(size)
+                header.appendUInt32LE(size)
+                header.appendUInt16LE(UInt16(fileName.count))
+                header.appendUInt16LE(0)
+                header.append(fileName)
+                try write(header, to: handle, offset: &offset)
+                try write(data, to: handle, offset: &offset)
+
+                centralRecords.append(CentralDirectoryRecord(
+                    fileName: fileName,
+                    crc32: crc32,
+                    size: size,
+                    offset: entryOffset
+                ))
+            }
+
+            let centralDirectoryOffset = offset
+            var centralDirectory = Data()
+            for record in centralRecords {
+                centralDirectory.appendUInt32LE(0x02014b50)
+                centralDirectory.appendUInt16LE(20)
+                centralDirectory.appendUInt16LE(10)
+                centralDirectory.appendUInt16LE(0)
+                centralDirectory.appendUInt16LE(0)
+                centralDirectory.appendUInt16LE(0)
+                centralDirectory.appendUInt16LE(0)
+                centralDirectory.appendUInt32LE(record.crc32)
+                centralDirectory.appendUInt32LE(record.size)
+                centralDirectory.appendUInt32LE(record.size)
+                centralDirectory.appendUInt16LE(UInt16(record.fileName.count))
+                centralDirectory.appendUInt16LE(0)
+                centralDirectory.appendUInt16LE(0)
+                centralDirectory.appendUInt16LE(0)
+                centralDirectory.appendUInt16LE(0)
+                centralDirectory.appendUInt32LE(0)
+                centralDirectory.appendUInt32LE(record.offset)
+                centralDirectory.append(record.fileName)
+            }
+
+            let centralDirectorySize = try uint32Size(centralDirectory.count)
+            try write(centralDirectory, to: handle, offset: &offset)
+
+            let entryCount = UInt16(centralRecords.count)
+            var footer = Data()
+            footer.appendUInt32LE(0x06054b50)
+            footer.appendUInt16LE(0)
+            footer.appendUInt16LE(0)
+            footer.appendUInt16LE(entryCount)
+            footer.appendUInt16LE(entryCount)
+            footer.appendUInt32LE(centralDirectorySize)
+            footer.appendUInt32LE(centralDirectoryOffset)
+            footer.appendUInt16LE(0)
+            try write(footer, to: handle, offset: &offset)
+
+            try handle.close()
+        } catch {
+            try? handle.close()
+            try? FileManager.default.removeItem(at: outputURL)
+            throw error
+        }
+    }
+
+    private nonisolated static func write(_ data: Data, to handle: FileHandle, offset: inout UInt32) throws {
+        guard UInt64(offset) + UInt64(data.count) <= UInt64(UInt32.max) else {
+            throw DownloadArchiveExportError.entryTooLarge
+        }
+        try handle.write(contentsOf: data)
+        offset += UInt32(data.count)
+    }
+
+    private nonisolated static func fileNameData(for path: String) throws -> Data {
+        guard !path.isEmpty,
+              !path.hasPrefix("/"),
+              !path.split(separator: "/").contains(".."),
+              let data = path.data(using: .utf8),
+              data.count <= Int(UInt16.max) else {
+            throw DownloadArchiveExportError.invalidArchivePath
+        }
+        return data
+    }
+
+    private nonisolated static func uint32Size(_ value: Int) throws -> UInt32 {
+        guard value <= Int(UInt32.max) else {
+            throw DownloadArchiveExportError.entryTooLarge
+        }
+        return UInt32(value)
+    }
+}
+
+private enum DownloadExportCRC32 {
+    nonisolated static func checksum(_ data: Data) -> UInt32 {
+        let initialCRC = crc32(0, nil, 0)
+        return data.withUnsafeBytes { buffer in
+            guard let baseAddress = buffer.bindMemory(to: Bytef.self).baseAddress else {
+                return UInt32(truncatingIfNeeded: initialCRC)
+            }
+            return UInt32(truncatingIfNeeded: crc32(initialCRC, baseAddress, uInt(data.count)))
+        }
+    }
+}
+
+private extension Data {
+    nonisolated mutating func appendUInt16LE(_ value: UInt16) {
+        append(contentsOf: [
+            UInt8(truncatingIfNeeded: value),
+            UInt8(truncatingIfNeeded: value >> 8)
+        ])
+    }
+
+    nonisolated mutating func appendUInt32LE(_ value: UInt32) {
+        append(contentsOf: [
+            UInt8(truncatingIfNeeded: value),
+            UInt8(truncatingIfNeeded: value >> 8),
+            UInt8(truncatingIfNeeded: value >> 16),
+            UInt8(truncatingIfNeeded: value >> 24)
+        ])
     }
 }

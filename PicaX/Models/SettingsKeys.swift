@@ -121,6 +121,9 @@ enum DownloadSettingsKey {
     static let speedLimitEnabled = "settings.download.speedLimitEnabled"
     static let speedLimitKBPerSecond = "settings.download.speedLimitKBPerSecond"
     static let downloadsCommentsByDefault = "settings.download.downloadsCommentsByDefault"
+    static let archiveFileNameTemplate = "settings.download.archiveFileNameTemplate"
+
+    static let defaultArchiveFileNameTemplate = "{title}"
 }
 
 enum SearchSettingsKey {

@@ -256,7 +256,7 @@ private enum SettingsSearchItem: CaseIterable {
         case .comicList:
             ["已读隐藏", "阅读进度", "收藏状态", "标签"]
         case .downloads:
-            ["下载评论", "同时下载", "限速", "队列"]
+            ["下载评论", "同时下载", "限速", "队列", "ZIP", "导出", "文件名"]
         case .appBehavior:
             ["深色", "浅色", "剪贴板", "启动"]
         case .history:
@@ -538,6 +538,7 @@ private struct DownloadSettingsView: View {
     @AppStorage(DownloadSettingsKey.speedLimitEnabled) private var speedLimitEnabled = false
     @AppStorage(DownloadSettingsKey.speedLimitKBPerSecond) private var speedLimitKBPerSecond = 1024
     @AppStorage(DownloadSettingsKey.downloadsCommentsByDefault) private var downloadsCommentsByDefault = false
+    @AppStorage(DownloadSettingsKey.archiveFileNameTemplate) private var archiveFileNameTemplate = DownloadSettingsKey.defaultArchiveFileNameTemplate
 
     var body: some View {
         List {
@@ -547,6 +548,28 @@ private struct DownloadSettingsView: View {
                 Text("下载内容")
             } footer: {
                 Text("开启后，支持评论区的漫画在打开下载面板时会默认一并保存详情评论和章节评论。")
+            }
+
+            Section {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("ZIP 文件名格式")
+                        .font(.subheadline)
+
+                    TextField(DownloadSettingsKey.defaultArchiveFileNameTemplate, text: $archiveFileNameTemplate)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                }
+
+                Button {
+                    archiveFileNameTemplate = DownloadSettingsKey.defaultArchiveFileNameTemplate
+                } label: {
+                    Label("恢复默认格式", systemImage: "arrow.counterclockwise")
+                }
+                .disabled(archiveFileNameTemplate == DownloadSettingsKey.defaultArchiveFileNameTemplate)
+            } header: {
+                Text("导出")
+            } footer: {
+                Text("留空时使用漫画标题。可用：{title}、{id}、{platform}、{date}。")
             }
 
             Section {

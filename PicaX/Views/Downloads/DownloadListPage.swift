@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct DownloadListPage: View {
     @EnvironmentObject private var downloadService: DownloadService
@@ -14,6 +15,11 @@ struct DownloadListPage: View {
     @State private var sortOption: DownloadSortOption = .updatedAt
     @State private var sortDirection: DownloadSortDirection = .descending
     @State private var displayRecords: [DownloadRecord] = []
+    @State private var exportingRecordID: String?
+    @State private var exportDocument = DownloadedComicZipDocument()
+    @State private var exportFileName = "漫画.zip"
+    @State private var showsArchiveExporter = false
+    @State private var exportFeedback: DownloadArchiveExportFeedback?
 
     var body: some View {
         Group {
@@ -51,6 +57,25 @@ struct DownloadListPage: View {
             )
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
+        }
+        .fileExporter(
+            isPresented: $showsArchiveExporter,
+            document: exportDocument,
+            contentType: .zip,
+            defaultFilename: exportFileName
+        ) { result in
+            exportDocument.removeTemporaryFile()
+            exportDocument = DownloadedComicZipDocument()
+            if case .failure(let error) = result {
+                exportFeedback = DownloadArchiveExportFeedback(title: "导出失败", message: error.localizedDescription)
+            }
+        }
+        .alert(item: $exportFeedback) { feedback in
+            Alert(
+                title: Text(feedback.title),
+                message: Text(feedback.message),
+                dismissButton: .default(Text("好"))
+            )
         }
         .sheet(item: $selectedRecord) { record in
             DownloadedComicInfoSheet(record: record, service: service) { request in
@@ -122,6 +147,14 @@ struct DownloadListPage: View {
                             )
                         }
                         .buttonStyle(.plain)
+                        .contextMenu {
+                            Button {
+                                prepareArchiveExport(for: record)
+                            } label: {
+                                Label("以 ZIP 导出", systemImage: "archivebox")
+                            }
+                            .disabled(exportingRecordID != nil)
+                        }
                         .swipeActions(edge: .trailing) {
                             Button(role: .destructive) {
                                 downloadService.removeRecord(record)
@@ -135,6 +168,24 @@ struct DownloadListPage: View {
         }
         .picaxInsetGroupedListStyle()
         .background(AppColor.groupedBackground)
+    }
+
+    private func prepareArchiveExport(for record: DownloadRecord) {
+        guard exportingRecordID == nil else { return }
+        exportingRecordID = record.id
+
+        Task { @MainActor in
+            do {
+                let export = try await downloadService.makeArchiveExport(for: record)
+                exportDocument.removeTemporaryFile()
+                exportDocument = DownloadedComicZipDocument(fileURL: export.fileURL, fileName: export.fileName)
+                exportFileName = export.fileName
+                showsArchiveExporter = true
+            } catch {
+                exportFeedback = DownloadArchiveExportFeedback(title: "导出失败", message: error.localizedDescription)
+            }
+            exportingRecordID = nil
+        }
     }
 
     private func refreshDisplayRecords() {
@@ -210,6 +261,57 @@ struct DownloadListPage: View {
         }
         return "右上角下载队列中有 \(downloadService.tasks.count) 个任务。"
     }
+}
+
+private struct DownloadedComicZipDocument: FileDocument {
+    static var readableContentTypes: [UTType] { [.zip] }
+    static var writableContentTypes: [UTType] { [.zip] }
+
+    var fileURL: URL?
+    var fileName: String?
+
+    init(fileURL: URL? = nil, fileName: String? = nil) {
+        self.fileURL = fileURL
+        self.fileName = fileName
+    }
+
+    init(configuration: ReadConfiguration) throws {
+        fileURL = nil
+        fileName = nil
+    }
+
+    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
+        guard let fileURL else {
+            throw DownloadedComicZipDocumentError.missingFile
+        }
+        let wrapper = try FileWrapper(url: fileURL, options: .immediate)
+        wrapper.preferredFilename = fileName ?? fileURL.lastPathComponent
+        return wrapper
+    }
+
+    func removeTemporaryFile() {
+        guard let fileURL else { return }
+        let directoryURL = fileURL.deletingLastPathComponent()
+        if directoryURL.lastPathComponent.hasPrefix("PicaX-") {
+            try? FileManager.default.removeItem(at: directoryURL)
+        } else {
+            try? FileManager.default.removeItem(at: fileURL)
+        }
+    }
+}
+
+private enum DownloadedComicZipDocumentError: LocalizedError {
+    case missingFile
+
+    var errorDescription: String? {
+        "ZIP 文件尚未生成。"
+    }
+}
+
+private struct DownloadArchiveExportFeedback: Identifiable {
+    let id = UUID()
+    let title: String
+    let message: String
 }
 
 private struct DownloadQueueSheet: View {
