@@ -77,7 +77,7 @@ private struct HistoryCardItem: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            ComicCoverView(url: record.item.coverURL, accentColor: record.item.accentColor, storesInCache: false)
+            ComicCoverView(url: record.item.coverURL, accentColor: record.item.accentColor)
                 .frame(width: 92, height: 124)
 
             Text(record.item.title)
@@ -138,7 +138,7 @@ private struct ReadingHistoryRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            ComicCoverView(url: record.item.coverURL, accentColor: record.item.accentColor, storesInCache: false)
+            ComicCoverView(url: record.item.coverURL, accentColor: record.item.accentColor)
                 .frame(width: 64, height: 86)
 
             VStack(alignment: .leading, spacing: 5) {
