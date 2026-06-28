@@ -1348,17 +1348,47 @@ private extension ComicContentService {
             block.firstRegexCapture(#"src="([^"]+)""#) ??
             ""
         let uploader = block.firstRegexCapture(#"class="[^"]*\bglname\b[^"]*"[^>]*>.*?</[^>]+>"#)?.strippingHTML ?? ""
+        let tags = ehentaiGalleryTags(from: block)
         return ComicListItem(
             id: link,
             platform: .eHentai,
             title: title,
             subtitle: uploader,
             coverURLString: cover,
-            tags: [],
+            tags: tags.map(\.title),
             pageCount: nil,
             likesCount: nil,
             favoriteDate: favoriteDate
         )
+    }
+
+    func ehentaiGalleryTags(from block: String) -> [ComicTagReference] {
+        let tagPattern = #"<div\b[^>]*class="[^"]*\bgt[lr]?\b[^"]*"[^>]*title="([^"]+)"[^>]*>.*?</div>"#
+        var primaryTags = [ComicTagReference]()
+        var secondaryTags = [ComicTagReference]()
+        for tagHTML in block.regexMatches(tagPattern, options: [.dotMatchesLineSeparators]) {
+            guard let rawTitle = tagHTML.firstRegexCapture(#"title="([^"]+)""#)?.htmlDecoded else {
+                continue
+            }
+            let parts = rawTitle.split(separator: ":", maxSplits: 1).map { String($0) }
+            guard parts.count == 2 else { continue }
+            let namespace = parts[0]
+            let value = parts[1].trimmingCharacters(in: .whitespacesAndNewlines)
+            guard namespace != "language", !value.isEmpty else { continue }
+            let query = "\(namespace):\(value)"
+            let tag = ComicTagReference(
+                title: EhTagTranslationService.translatedTagTitle(title: value, query: query, namespace: namespace),
+                query: query,
+                platform: .eHentai,
+                urlString: nil
+            )
+            if ["character", "artist", "cosplayer", "group"].contains(namespace) {
+                secondaryTags.append(tag)
+            } else {
+                primaryTags.append(tag)
+            }
+        }
+        return primaryTags + secondaryTags
     }
 
     func ehentaiHasNextPage(_ html: String) -> Bool {
@@ -1474,15 +1504,22 @@ private extension ComicContentService {
     func parseEhentaiTagGroups(_ html: String, platform: ComicPlatform) -> [ComicTagGroup] {
         html.regexMatches(#"<tr>.*?</tr>"#, options: [.dotMatchesLineSeparators]).compactMap { row in
             guard row.contains(#"class="tc""#) || row.contains(#"id="ta_""#) else { return nil }
-            let title = row.firstRegexCapture(#"<td class="tc">([^<:]+):?</td>"#)?.htmlDecoded ?? "标签"
+            let namespace = row.firstRegexCapture(#"<td class="tc">([^<:]+):?</td>"#)?.htmlDecoded ?? "标签"
+            let translatedTitle = EhTagTranslationService.translatedGroupTitle(namespace)
             let tags = row.regexMatches(#"<div[^>]+id="ta_[^"]+"[^>]*>.*?</div>"#, options: [.dotMatchesLineSeparators]).compactMap { tagHTML -> ComicTagReference? in
                 guard let value = tagHTML.firstRegexCapture(#"onclick="[^"]*'([^']+)'"#) ?? tagHTML.strippingHTML.nilIfEmpty else {
                     return nil
                 }
                 let title = tagHTML.strippingHTML
-                return ComicTagReference(title: title.isEmpty ? value : title, query: value, platform: platform, urlString: nil)
+                let displayTitle = title.isEmpty ? value : title
+                return ComicTagReference(
+                    title: EhTagTranslationService.translatedTagTitle(title: displayTitle, query: value, namespace: namespace),
+                    query: value,
+                    platform: platform,
+                    urlString: nil
+                )
             }
-            return tags.isEmpty ? nil : ComicTagGroup(title: title, tags: tags)
+            return tags.isEmpty ? nil : ComicTagGroup(title: translatedTitle, tags: tags)
         }
     }
 
