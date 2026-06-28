@@ -55,6 +55,7 @@ final class ReadingDurationService: ObservableObject {
             defaults.set(300, forKey: Key.maxRecords)
         }
         records = PicaXSQLiteStore.loadReadingDuration()
+        fillMissingCoversFromReadingHistory()
     }
 
     var todayKey: String {
@@ -92,6 +93,7 @@ final class ReadingDurationService: ObservableObject {
         let key = Self.dayKey(for: date)
         if let index = records.firstIndex(where: { $0.id == id }) {
             var record = records[index]
+            record.item = Self.itemByRefreshingCover(existing: record.item, incoming: item)
             record.totalSeconds += seconds
             record.dailySeconds[key, default: 0] += seconds
             record.lastReadAt = date
@@ -140,6 +142,39 @@ final class ReadingDurationService: ObservableObject {
         if records.count > maxRecords {
             records = Array(records.prefix(maxRecords))
         }
+    }
+
+    private func fillMissingCoversFromReadingHistory() {
+        let historyItemsByID = Dictionary(
+            uniqueKeysWithValues: PicaXSQLiteStore.loadReadingHistory().map { ($0.id, $0.item) }
+        )
+        var didUpdate = false
+        records = records.map { record in
+            guard Self.needsCoverRefresh(record.item),
+                  let historyItem = historyItemsByID[record.id],
+                  !Self.needsCoverRefresh(historyItem) else {
+                return record
+            }
+            var updated = record
+            updated.item = historyItem
+            didUpdate = true
+            return updated
+        }
+        if didUpdate {
+            PicaXSQLiteStore.replaceReadingDuration(records)
+        }
+    }
+
+    private static func itemByRefreshingCover(existing: ComicListItem, incoming: ComicListItem) -> ComicListItem {
+        guard existing.readingHistoryID == incoming.readingHistoryID,
+              !needsCoverRefresh(incoming) else {
+            return existing
+        }
+        return incoming
+    }
+
+    private static func needsCoverRefresh(_ item: ComicListItem) -> Bool {
+        item.coverURLString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     nonisolated static func formattedDuration(_ seconds: TimeInterval) -> String {
