@@ -168,7 +168,6 @@ struct ComicReaderPage: View {
                     .allowsHitTesting(false)
             }
         }
-        .animation(.easeInOut(duration: 0.18), value: shouldHideNavigationBar)
         .animation(.easeInOut(duration: 0.18), value: showsSystemStatus)
         .animation(.easeInOut(duration: 0.16), value: readerToastMessage)
         .toolbar {
@@ -319,6 +318,7 @@ struct ComicReaderPage: View {
                     .padding(.vertical, 10)
                 }
                 .background(Color.black)
+                .ignoresSafeArea(.container)
                 .scrollPosition($continuousScrollPosition)
                 .onChange(of: continuousScrollPosition) { _, newValue in
                     if let point = newValue.point {
@@ -379,6 +379,7 @@ struct ComicReaderPage: View {
                 )
             }
         }
+        .ignoresSafeArea(.container)
     }
 
     @ViewBuilder
@@ -1010,9 +1011,7 @@ struct ComicReaderPage: View {
     }
 
     private func toggleReaderUI() {
-        withAnimation(.easeOut(duration: 0.1)) {
-            hidesReaderUI.toggle()
-        }
+        hidesReaderUI.toggle()
     }
 
     private func toggleAutoPaging() {
@@ -1190,6 +1189,9 @@ private struct ReaderZoomConfiguration: Equatable {
 }
 
 private struct ReaderInteractionGestureModifier: ViewModifier {
+    private static let delayedSingleTapNanoseconds: UInt64 = 320_000_000
+    private static let doubleTapSuppressionDuration: TimeInterval = 0.45
+
     let size: CGSize
     let mode: ReaderUIToggleMode
     let tapPagingEnabled: Bool
@@ -1258,16 +1260,17 @@ private struct ReaderInteractionGestureModifier: ViewModifier {
     private var doubleTapCancellationGesture: some Gesture {
         TapGesture(count: 2)
             .onEnded {
-                delayedTapTask?.cancel()
+                suppressTapAfterDoubleTap()
             }
     }
 
     private func scheduleDelayedTap(at location: CGPoint) {
         delayedTapTask?.cancel()
         delayedTapTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 230_000_000)
+            try? await Task.sleep(nanoseconds: Self.delayedSingleTapNanoseconds)
             guard !Task.isCancelled else { return }
             handleTap(at: location)
+            delayedTapTask = nil
         }
     }
 
@@ -1314,6 +1317,13 @@ private struct ReaderInteractionGestureModifier: ViewModifier {
     private func suppressTapForCurrentMovement() {
         delayedTapTask?.cancel()
         tapSuppressionUntil = Date().addingTimeInterval(0.25)
+    }
+
+    private func suppressTapAfterDoubleTap() {
+        delayedTapTask?.cancel()
+        delayedTapTask = nil
+        tapSuppressionUntil = Date().addingTimeInterval(Self.doubleTapSuppressionDuration)
+        ReaderZoomTapSuppressor.suppressTap(for: Self.doubleTapSuppressionDuration)
     }
 }
 
