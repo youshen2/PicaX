@@ -72,11 +72,40 @@ struct ComicDetailInfo: Identifiable, Equatable, Codable {
     let related: [ComicListItem]
     let updatedText: String?
     var isLiked: Bool? = nil
+    var uploader: ComicUploaderInfo? = nil
 
     var id: String { item.id }
 
     var allTags: [ComicTagReference] {
         tagGroups.flatMap(\.tags)
+    }
+}
+
+struct ComicUploaderInfo: Identifiable, Equatable, Codable {
+    let id: String
+    let name: String
+    let title: String
+    let level: Int
+    let exp: Int
+    let slogan: String?
+    let avatarURLString: String?
+    let frameURLString: String?
+    let tag: ComicTagReference?
+
+    var displayName: String {
+        name.isEmpty ? id : name
+    }
+
+    var levelText: String {
+        "Lv\(level) \(title) Exp\(exp)"
+    }
+
+    var avatarURL: URL? {
+        URL.picaxResolved(from: avatarURLString)
+    }
+
+    var frameURL: URL? {
+        URL.picaxResolved(from: frameURLString)
     }
 }
 

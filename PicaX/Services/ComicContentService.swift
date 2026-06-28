@@ -316,6 +316,12 @@ struct ComicContentService {
     func loadTagComics(tag: ComicTagReference, account: PlatformAccount?, page: Int = 1) async throws -> [ComicListItem] {
         switch tag.platform {
         case .picacg:
+            if let author = tag.query.removingPrefix("picacg:a:") {
+                return try await loadPicacgFilteredComics(filter: "a", value: author, page: page, account: account)
+            }
+            if let creatorID = tag.query.removingPrefix("picacg:ca:") {
+                return try await loadPicacgFilteredComics(filter: "ca", value: creatorID, page: page, account: account)
+            }
             if let category = tag.query.removingPrefix("category:") {
                 return try await loadPicacgCategoryComics(category: category, page: page, account: account)
             }
@@ -773,10 +779,14 @@ private extension ComicContentService {
     }
 
     func loadPicacgCategoryComics(category: String, page: Int, account: PlatformAccount?) async throws -> [ComicListItem] {
+        try await loadPicacgFilteredComics(filter: "c", value: category, page: page, account: account)
+    }
+
+    func loadPicacgFilteredComics(filter: String, value: String, page: Int, account: PlatformAccount?) async throws -> [ComicListItem] {
         let token = try await picacgToken(account: account)
-        let encodedCategory = category.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? category
+        let encodedValue = value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? value
         let sort = PlatformFeatureSettings.picacgDefaultSort()
-        let json = try await picacgJSON(path: "comics?page=\(page)&c=\(encodedCategory)&s=\(sort)", token: token)
+        let json = try await picacgJSON(path: "comics?page=\(page)&\(filter)=\(encodedValue)&s=\(sort)", token: token)
         return try picacgItems(from: json, arrayPath: ["data", "comics", "docs"])
     }
 
@@ -808,6 +818,26 @@ private extension ComicContentService {
         )
     }
 
+    func picacgUploaderInfo(from user: [String: Any]?) -> ComicUploaderInfo? {
+        guard let user,
+              let id = (user["_id"] as? String)?.nilIfEmpty else {
+            return nil
+        }
+
+        let name = (user["name"] as? String)?.nilIfEmpty ?? id
+        return ComicUploaderInfo(
+            id: id,
+            name: name,
+            title: (user["title"] as? String)?.nilIfEmpty ?? "Unknown",
+            level: user.intValue(for: "level") ?? 0,
+            exp: user.intValue(for: "exp") ?? 0,
+            slogan: (user["slogan"] as? String)?.nilIfEmpty,
+            avatarURLString: picacgImageURL(from: user["avatar"] as? [String: Any]),
+            frameURLString: (user["character"] as? String)?.nilIfEmpty,
+            tag: ComicTagReference(title: name, query: "picacg:ca:\(id)", platform: .picacg, urlString: nil)
+        )
+    }
+
     func postPicacgComment(item: ComicListItem, content: String, account: PlatformAccount?) async throws {
         let token = try await picacgToken(account: account)
         let body = try JSONSerialization.data(withJSONObject: ["content": content])
@@ -836,12 +866,17 @@ private extension ComicContentService {
         let eps = try await loadPicacgChapters(comicID: item.id, token: token)
         let relatedDocs = json.value(at: ["data", "recommendation"]) as? [[String: Any]] ?? []
         let related = picacgItems(from: relatedDocs)
+        let author = (doc["author"] as? String)?.nilIfEmpty
+        let chineseTeam = (doc["chineseTeam"] as? String)?.nilIfEmpty
         let categories = doc["categories"] as? [String] ?? []
         let tags = doc["tags"] as? [String] ?? []
         let tagGroups = [
-            ComicTagGroup(title: "分类", tags: tagRefs(categories, platform: .picacg)),
+            ComicTagGroup(title: "作者", tags: picacgScopedTagRefs(author.map { [$0] } ?? [], prefix: "picacg:a:")),
+            ComicTagGroup(title: "汉化", tags: tagRefs(chineseTeam.map { [$0] } ?? [], platform: .picacg)),
+            ComicTagGroup(title: "分类", tags: tagRefs(categories, platform: .picacg, prefix: "category:")),
             ComicTagGroup(title: "标签", tags: tagRefs(tags, platform: .picacg))
         ].filter { !$0.tags.isEmpty }
+        let uploader = picacgUploaderInfo(from: doc["_creator"] as? [String: Any])
 
         return ComicDetailInfo(
             item: detailItem,
@@ -852,7 +887,8 @@ private extension ComicContentService {
             },
             related: related,
             updatedText: doc["updated_at"] as? String,
-            isLiked: doc["isLiked"] as? Bool
+            isLiked: doc["isLiked"] as? Bool,
+            uploader: uploader
         )
     }
 
@@ -3007,11 +3043,18 @@ private extension ComicContentService {
         return value.isEmpty ? "" : "\(baseURL)/\(value)"
     }
 
-    func tagRefs(_ values: [String], platform: ComicPlatform) -> [ComicTagReference] {
+    func tagRefs(_ values: [String], platform: ComicPlatform, prefix: String = "") -> [ComicTagReference] {
         values
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
-            .map { ComicTagReference(title: $0, query: $0, platform: platform, urlString: nil) }
+            .map { ComicTagReference(title: $0, query: "\(prefix)\($0)", platform: platform, urlString: nil) }
+    }
+
+    func picacgScopedTagRefs(_ values: [String], prefix: String) -> [ComicTagReference] {
+        values
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .map { ComicTagReference(title: $0, query: "\(prefix)\($0)", platform: .picacg, urlString: nil) }
     }
 }
 

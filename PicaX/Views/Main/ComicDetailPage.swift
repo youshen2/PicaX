@@ -208,6 +208,14 @@ private struct ComicDetailContent: View {
                     }
                 }
 
+                if let uploader = detail.uploader {
+                    Section("上传者") {
+                        ComicUploaderInfoRow(uploader: uploader, accentColor: detail.item.accentColor) { tag in
+                            selectedTag = tag
+                        }
+                    }
+                }
+
                 Section("信息") {
                     ComicInfoLine(title: "来源", value: detail.item.platformTitle)
                     if let authorText = detail.selectableAuthorText {
@@ -257,7 +265,7 @@ private struct ComicDetailContent: View {
             )
         }
         .navigationDestination(item: $selectedTag) { tag in
-            ComicSearchPage(initialQuery: tag.query, platform: tag.platform, service: service)
+            ComicTagComicsPage(tag: tag, service: service)
         }
         .navigationDestination(item: $relatedDetailRequest) { request in
             ComicDetailPage(item: request.item, service: service)
@@ -284,6 +292,59 @@ private struct ComicDetailContent: View {
 
     private func hasReadingProgress(for item: ComicListItem) -> Bool {
         readingHistory.hasReadingProgress(for: item)
+    }
+}
+
+private struct ComicUploaderInfoRow: View {
+    let uploader: ComicUploaderInfo
+    let accentColor: Color
+    let onSelect: (ComicTagReference) -> Void
+
+    var body: some View {
+        Button {
+            if let tag = uploader.tag {
+                onSelect(tag)
+            }
+        } label: {
+            HStack(spacing: 12) {
+                ZStack {
+                    CachedRemoteImageView(url: uploader.avatarURL, accentColor: accentColor, contentMode: .fill, maxPixelSize: 128)
+                        .frame(width: 48, height: 48)
+                        .clipShape(Circle())
+                    if let frameURL = uploader.frameURL {
+                        CachedRemoteImageView(url: frameURL, accentColor: accentColor, contentMode: .fit, maxPixelSize: 160)
+                            .frame(width: 62, height: 62)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(uploader.displayName)
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+                    Text(uploader.levelText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if let slogan = uploader.slogan, !slogan.isEmpty {
+                        Text(slogan)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+                }
+
+                Spacer(minLength: 0)
+
+                if uploader.tag != nil {
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .padding(.vertical, 4)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(uploader.tag == nil)
     }
 }
 
