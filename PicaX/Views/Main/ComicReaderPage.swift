@@ -73,6 +73,9 @@ struct ComicReaderPage: View {
     @State private var pagedPageIndex = 0
     @State private var continuousScrollPosition = ScrollPosition()
     @State private var continuousScrollTracker = ReaderContinuousScrollTracker()
+    @State private var continuousScrollRestoreTask: Task<Void, Never>?
+    @State private var continuousLoadedImageIDs = Set<String>()
+    @State private var continuousAspectRatioImageIDs = Set<String>()
     @State private var isAutoPaging = false
     @State private var isAutoPagingTurnInFlight = false
     @State private var autoPagingCommentActionChapterIndex: Int?
@@ -252,6 +255,7 @@ struct ComicReaderPage: View {
             await load()
         }
         .onDisappear {
+            continuousScrollRestoreTask?.cancel()
             flushPendingHistoryRecord()
             flushReadingDurationSession()
             readerToastTask?.cancel()
@@ -361,13 +365,32 @@ struct ComicReaderPage: View {
                                 zoomConfiguration: readerZoomConfiguration,
                                 dimsImage: dimsReaderImages,
                                 onAspectRatioResolved: { aspectRatio in
-                                    continuousScrollTracker.updateAspectRatio(aspectRatio, for: index)
+                                    markContinuousImageAspectRatioResolved(images[index].urlString)
+                                    if let adjustedY = continuousScrollTracker.updateAspectRatio(
+                                        aspectRatio,
+                                        for: index,
+                                        images: images,
+                                        displayWidth: geometry.size.width,
+                                        imageSpacing: CGFloat(imageSpacing),
+                                        firstImageTopPadding: CGFloat(firstImageTopPadding),
+                                        lastImageBottomPadding: CGFloat(lastImageBottomPadding)
+                                    ) {
+                                        restoreContinuousScrollPosition(
+                                            ReaderContinuousScrollSnapshot(
+                                                chapterIndex: viewModel.currentChapterIndex,
+                                                scrollY: adjustedY
+                                            )
+                                        )
+                                    }
                                     syncContinuousVisiblePage(
                                         images: images,
                                         displayWidth: geometry.size.width,
                                         fallbackViewportHeight: geometry.size.height,
                                         targetPixelWidth: targetPixelWidth
                                     )
+                                },
+                                onLoadPhaseChanged: { phase in
+                                    updateContinuousImageLoadPhase(phase, for: images[index].urlString)
                                 }
                             )
                                 .padding(.top, index == images.startIndex ? CGFloat(firstImageTopPadding) : 0)
@@ -428,7 +451,7 @@ struct ComicReaderPage: View {
                     tapPagingEnabled: tapPagingEnabled,
                     tapPagingEdgePercent: boundedTapPagingEdgePercent,
                     tapPagingInverted: tapPagingInverted,
-                    doubleTapZoomEnabled: doubleTapZoomEnabled,
+                    doubleTapZoomEnabled: effectiveDoubleTapZoomEnabled,
                     readingMode: readerReadingMode,
                     toggleUI: { toggleReaderUI() },
                     turnPage: { direction in
@@ -451,18 +474,21 @@ struct ComicReaderPage: View {
                     )
                 }
                 .onAppear {
+                    resetContinuousImageState()
                     continuousScrollTracker.reset()
                     updateReadingPage(viewModel.currentPageIndex, totalPages: images.count, targetPixelWidth: targetPixelWidth, force: true)
                     scrollToInitialPage(proxy: proxy)
                 }
                 .onChange(of: viewModel.currentChapterIndex) { _, _ in
+                    resetContinuousImageState()
                     continuousScrollTracker.reset()
                     continuousScrollPosition.scrollTo(y: 0)
                     scrollToInitialPage(proxy: proxy)
                 }
                 .readerContinuousZoom(
                     configuration: readerZoomConfiguration,
-                    resetID: continuousZoomResetID
+                    resetID: continuousZoomResetID,
+                    allowsInteraction: allowsContinuousZoom(images: images)
                 )
             }
         }
@@ -514,7 +540,7 @@ struct ComicReaderPage: View {
                 tapPagingEnabled: tapPagingEnabled,
                 tapPagingEdgePercent: boundedTapPagingEdgePercent,
                 tapPagingInverted: tapPagingInverted,
-                doubleTapZoomEnabled: doubleTapZoomEnabled,
+                doubleTapZoomEnabled: effectiveDoubleTapZoomEnabled,
                 readingMode: readerReadingMode,
                 toggleUI: { toggleReaderUI() },
                 turnPage: { direction in
@@ -558,7 +584,7 @@ struct ComicReaderPage: View {
                         tapPagingEnabled: tapPagingEnabled,
                         tapPagingEdgePercent: boundedTapPagingEdgePercent,
                         tapPagingInverted: tapPagingInverted,
-                        doubleTapZoomEnabled: doubleTapZoomEnabled,
+                        doubleTapZoomEnabled: effectiveDoubleTapZoomEnabled,
                         readingMode: readerReadingMode,
                         toggleUI: { toggleReaderUI() },
                         turnPage: { direction in
@@ -999,6 +1025,85 @@ struct ComicReaderPage: View {
         updateReadingPage(pageIndex, totalPages: images.count, targetPixelWidth: targetPixelWidth)
     }
 
+    private func markContinuousImageAspectRatioResolved(_ urlString: String) {
+        guard !continuousAspectRatioImageIDs.contains(urlString) else { return }
+        continuousAspectRatioImageIDs.insert(urlString)
+    }
+
+    private func updateContinuousImageLoadPhase(_ phase: ReaderImageLoadingPhase, for urlString: String) {
+        switch phase {
+        case .loading, .failed:
+            continuousLoadedImageIDs.remove(urlString)
+        case .loaded:
+            continuousLoadedImageIDs.insert(urlString)
+        }
+    }
+
+    private func resetContinuousImageState() {
+        continuousLoadedImageIDs.removeAll(keepingCapacity: true)
+        continuousAspectRatioImageIDs.removeAll(keepingCapacity: true)
+    }
+
+    private func allowsContinuousZoom(images: [ComicChapterImage]) -> Bool {
+        guard readerReadingMode == .topToBottomContinuous,
+              !images.isEmpty else {
+            return true
+        }
+
+        let pageIndex = min(max(viewModel.currentPageIndex, 0), images.count - 1)
+        guard images.indices.contains(pageIndex),
+              continuousLoadedImageIDs.contains(images[pageIndex].urlString) else {
+            return false
+        }
+
+        for index in images.indices where index <= pageIndex {
+            let urlString = images[index].urlString
+            if continuousAspectRatioImageIDs.contains(urlString)
+                || ReaderImageAspectRatioCache.shared.aspectRatio(for: urlString) != nil {
+                continue
+            }
+            return false
+        }
+        return true
+    }
+
+    private func currentContinuousScrollSnapshot() -> ReaderContinuousScrollSnapshot? {
+        guard readerReadingMode == .topToBottomContinuous else { return nil }
+        let scrollY = continuousScrollTracker.effectiveScrollY(fallback: continuousScrollPosition.point?.y)
+        guard scrollY.isFinite else { return nil }
+        return ReaderContinuousScrollSnapshot(
+            chapterIndex: viewModel.currentChapterIndex,
+            scrollY: max(scrollY, 0)
+        )
+    }
+
+    private func restoreContinuousScrollPosition(_ snapshot: ReaderContinuousScrollSnapshot) {
+        guard readerReadingMode == .topToBottomContinuous,
+              snapshot.chapterIndex == viewModel.currentChapterIndex else {
+            return
+        }
+
+        let scrollY = max(snapshot.scrollY, 0)
+        continuousScrollRestoreTask?.cancel()
+        continuousScrollTracker.updateScrollY(scrollY)
+        continuousScrollPosition.scrollTo(y: scrollY)
+        continuousScrollRestoreTask = Task { @MainActor [snapshot] in
+            let delays: [UInt64] = [70_000_000, 180_000_000, 320_000_000]
+            for delay in delays {
+                try? await Task.sleep(nanoseconds: delay)
+                guard !Task.isCancelled,
+                      readerReadingMode == .topToBottomContinuous,
+                      snapshot.chapterIndex == viewModel.currentChapterIndex else {
+                    return
+                }
+                let scrollY = max(snapshot.scrollY, 0)
+                continuousScrollTracker.updateScrollY(scrollY)
+                continuousScrollPosition.scrollTo(y: scrollY)
+            }
+            continuousScrollRestoreTask = nil
+        }
+    }
+
     private func readerTargetPixelWidth(for width: CGFloat) -> Int? {
         guard width.isFinite, width > 0, displayScale > 0 else { return nil }
         return max(Int((width * displayScale).rounded(.up)), 1)
@@ -1114,11 +1219,15 @@ struct ComicReaderPage: View {
     private var readerZoomConfiguration: ReaderZoomConfiguration {
         ReaderZoomConfiguration(
             pinchEnabled: pinchZoomEnabled,
-            doubleTapEnabled: doubleTapZoomEnabled,
+            doubleTapEnabled: effectiveDoubleTapZoomEnabled,
             doubleTapScale: CGFloat(boundedDoubleTapZoomScale),
             longPressEnabled: longPressZoomEnabled,
             longPressScale: CGFloat(boundedLongPressZoomScale)
         )
+    }
+
+    private var effectiveDoubleTapZoomEnabled: Bool {
+        doubleTapZoomEnabled && readerUIToggleMode != .double
     }
 
     private var boundedAutoPageInterval: Double {
@@ -1173,8 +1282,12 @@ struct ComicReaderPage: View {
     }
 
     private func toggleReaderUI() {
+        let scrollSnapshot = currentContinuousScrollSnapshot()
         withAnimation(readerChromeAnimation) {
             hidesReaderUI.toggle()
+        }
+        if let scrollSnapshot {
+            restoreContinuousScrollPosition(scrollSnapshot)
         }
     }
 
@@ -1347,6 +1460,11 @@ private struct ReaderScrollMetrics: Equatable {
     }
 }
 
+private struct ReaderContinuousScrollSnapshot {
+    let chapterIndex: Int
+    let scrollY: CGFloat
+}
+
 @MainActor
 private final class ReaderContinuousScrollTracker {
     private static let verticalPadding: CGFloat = 10
@@ -1394,9 +1512,83 @@ private final class ReaderContinuousScrollTracker {
         return scrollY
     }
 
-    func updateAspectRatio(_ aspectRatio: Double, for index: Int) {
-        guard index >= 0, aspectRatio.isFinite, aspectRatio > 0 else { return }
+    @discardableResult
+    func updateAspectRatio(
+        _ aspectRatio: Double,
+        for index: Int,
+        images: [ComicChapterImage],
+        displayWidth: CGFloat,
+        imageSpacing: CGFloat,
+        firstImageTopPadding: CGFloat,
+        lastImageBottomPadding: CGFloat
+    ) -> CGFloat? {
+        guard images.indices.contains(index),
+              displayWidth.isFinite,
+              displayWidth > 0,
+              aspectRatio.isFinite,
+              aspectRatio > 0 else {
+            if index >= 0, aspectRatio.isFinite, aspectRatio > 0 {
+                aspectRatios[index] = aspectRatio
+            }
+            return nil
+        }
+
+        let oldAspectRatio = self.aspectRatio(for: index, image: images[index])
+        guard abs(oldAspectRatio - aspectRatio) > 0.001 else {
+            aspectRatios[index] = aspectRatio
+            return nil
+        }
+
+        let oldPageTop = pageTop(
+            for: index,
+            images: images,
+            displayWidth: displayWidth,
+            imageSpacing: imageSpacing,
+            firstImageTopPadding: firstImageTopPadding,
+            lastImageBottomPadding: lastImageBottomPadding
+        )
+        let oldPageHeight = pageHeight(
+            for: index,
+            imageCount: images.count,
+            displayWidth: displayWidth,
+            aspectRatio: oldAspectRatio,
+            firstImageTopPadding: firstImageTopPadding,
+            lastImageBottomPadding: lastImageBottomPadding
+        )
         aspectRatios[index] = aspectRatio
+        let newPageHeight = pageHeight(
+            for: index,
+            imageCount: images.count,
+            displayWidth: displayWidth,
+            aspectRatio: aspectRatio,
+            firstImageTopPadding: firstImageTopPadding,
+            lastImageBottomPadding: lastImageBottomPadding
+        )
+
+        guard isReady,
+              oldPageTop.isFinite,
+              oldPageHeight.isFinite,
+              newPageHeight.isFinite else {
+            return nil
+        }
+
+        let heightDelta = newPageHeight - oldPageHeight
+        guard abs(heightDelta) > 0.5 else { return nil }
+
+        let oldPageBottom = oldPageTop + oldPageHeight
+        let adjustedY: CGFloat?
+        if oldPageBottom <= scrollY + 1 {
+            adjustedY = scrollY + heightDelta
+        } else if oldPageTop < scrollY {
+            let progressInsidePage = min(max((scrollY - oldPageTop) / max(oldPageHeight, 1), 0), 1)
+            adjustedY = scrollY + heightDelta * progressInsidePage
+        } else {
+            adjustedY = nil
+        }
+
+        guard let adjustedY else { return nil }
+        scrollY = max(adjustedY, 0)
+        return scrollY
     }
 
     func maxScrollY(fallbackViewportHeight: CGFloat) -> CGFloat {
@@ -1469,6 +1661,49 @@ private final class ReaderContinuousScrollTracker {
         }
         return Self.defaultAspectRatio
     }
+
+    private func pageTop(
+        for targetIndex: Int,
+        images: [ComicChapterImage],
+        displayWidth: CGFloat,
+        imageSpacing: CGFloat,
+        firstImageTopPadding: CGFloat,
+        lastImageBottomPadding: CGFloat
+    ) -> CGFloat {
+        var pageTop = Self.verticalPadding
+        for index in images.indices {
+            if index == targetIndex {
+                return pageTop
+            }
+            let pageHeight = pageHeight(
+                for: index,
+                imageCount: images.count,
+                displayWidth: displayWidth,
+                aspectRatio: aspectRatio(for: index, image: images[index]),
+                firstImageTopPadding: firstImageTopPadding,
+                lastImageBottomPadding: lastImageBottomPadding
+            )
+            pageTop += pageHeight
+            if index != images.index(before: images.endIndex) {
+                pageTop += max(imageSpacing, 0)
+            }
+        }
+        return pageTop
+    }
+
+    private func pageHeight(
+        for index: Int,
+        imageCount: Int,
+        displayWidth: CGFloat,
+        aspectRatio: Double,
+        firstImageTopPadding: CGFloat,
+        lastImageBottomPadding: CGFloat
+    ) -> CGFloat {
+        let topPadding = index == 0 ? max(firstImageTopPadding, 0) : 0
+        let bottomPadding = index == imageCount - 1 ? max(lastImageBottomPadding, 0) : 0
+        let imageHeight = displayWidth * CGFloat(aspectRatio)
+        return topPadding + max(imageHeight, 120) + bottomPadding
+    }
 }
 
 private struct ReaderZoomConfiguration: Equatable {
@@ -1488,6 +1723,16 @@ private struct ReaderZoomConfiguration: Equatable {
 
     var isZoomEnabled: Bool {
         pinchEnabled || doubleTapEnabled || longPressEnabled
+    }
+
+    var interactionDisabled: ReaderZoomConfiguration {
+        ReaderZoomConfiguration(
+            pinchEnabled: false,
+            doubleTapEnabled: false,
+            doubleTapScale: doubleTapScale,
+            longPressEnabled: false,
+            longPressScale: longPressScale
+        )
     }
 }
 
@@ -1640,6 +1885,7 @@ private struct ReaderImageView: View {
     let zoomConfiguration: ReaderZoomConfiguration
     let dimsImage: Bool
     var onAspectRatioResolved: ((Double) -> Void)? = nil
+    var onLoadPhaseChanged: ((ReaderImageLoadingPhase) -> Void)? = nil
     @State private var retryID = 0
     @State private var loadState: ReaderImageLoadState = .loading
     @State private var knownAspectRatio: Double?
@@ -1686,6 +1932,7 @@ private struct ReaderImageView: View {
     private func loadImage() async {
         guard let url = image.url else {
             loadState = .failed
+            onLoadPhaseChanged?(.failed)
             return
         }
 
@@ -1694,22 +1941,31 @@ private struct ReaderImageView: View {
             onAspectRatioResolved?(knownAspectRatio)
         }
         loadState = .loading
+        onLoadPhaseChanged?(.loading)
         let attempts = max(retryCount, 0) + 1
         for attempt in 0..<attempts {
             do {
                 let decodedImage = try await ReaderImageDecoder.image(
                     url: url,
-                    targetPixelWidth: targetPixelWidth
+                    targetPixelWidth: targetPixelWidth,
+                    onAspectRatioResolved: { aspectRatio in
+                        guard !Task.isCancelled else { return }
+                        knownAspectRatio = aspectRatio
+                        onAspectRatioResolved?(aspectRatio)
+                        ReaderImageAspectRatioCache.shared.store(aspectRatio, for: image.urlString)
+                    }
                 )
                 guard !Task.isCancelled else { return }
                 knownAspectRatio = decodedImage.aspectRatio
-                ReaderImageAspectRatioCache.shared.store(decodedImage.aspectRatio, for: image.urlString)
                 onAspectRatioResolved?(decodedImage.aspectRatio)
+                ReaderImageAspectRatioCache.shared.store(decodedImage.aspectRatio, for: image.urlString)
                 loadState = .loaded(decodedImage.image)
+                onLoadPhaseChanged?(.loaded)
                 return
             } catch {
                 guard attempt < attempts - 1 else {
                     loadState = .failed
+                    onLoadPhaseChanged?(.failed)
                     return
                 }
                 let delay = UInt64(max(retryInterval, 0.2) * 1_000_000_000)
@@ -1840,12 +2096,13 @@ private final class ReaderContinuousZoomUIView<Content: View>: UIView, UIScrollV
 
     func update(rootView: Content, configuration: ReaderZoomConfiguration, resetID: String) {
         hostingController.rootView = rootView
+        let wasZoomEnabled = self.configuration.isZoomEnabled
         self.configuration = configuration
         let shouldReset = self.resetID != resetID
         self.resetID = resetID
         configureGestures()
         configureZoomLimits()
-        if shouldReset {
+        if shouldReset || (wasZoomEnabled && !configuration.isZoomEnabled) {
             resetZoom(animated: false)
         }
         setNeedsLayout()
@@ -2349,7 +2606,8 @@ private enum ReaderImageDecoder {
     nonisolated static func image(
         url: URL,
         targetPixelWidth: Int?,
-        decodePriority: TaskPriority = .userInitiated
+        decodePriority: TaskPriority = .userInitiated,
+        onAspectRatioResolved: (@MainActor (Double) -> Void)? = nil
     ) async throws -> ReaderDecodedImage {
         let cacheKey = cacheKey(url: url, targetPixelWidth: targetPixelWidth)
         if let cached = ReaderImageMemoryCache.image(for: cacheKey) {
@@ -2358,6 +2616,9 @@ private enum ReaderImageDecoder {
 
         var data = try await ImageCacheService.data(for: url)
         guard !Task.isCancelled else { throw CancellationError() }
+        if let aspectRatio = encodedAspectRatio(data: data) {
+            await onAspectRatioResolved?(aspectRatio)
+        }
         let decoded: ReaderDecodedImage
         do {
             decoded = try await decode(data: data, url: url, targetPixelWidth: targetPixelWidth, priority: decodePriority)
@@ -2365,6 +2626,9 @@ private enum ReaderImageDecoder {
             ImageCacheService.removeCachedImageData(for: url)
             data = try await ImageCacheService.data(for: url, storesInCache: false)
             guard !Task.isCancelled else { throw CancellationError() }
+            if let aspectRatio = encodedAspectRatio(data: data) {
+                await onAspectRatioResolved?(aspectRatio)
+            }
             decoded = try await decode(data: data, url: url, targetPixelWidth: targetPixelWidth, priority: decodePriority)
         }
         ImageCacheService.storeDecodedImageData(data, for: url)
@@ -2431,6 +2695,19 @@ private enum ReaderImageDecoder {
             return nil
         }
         return PicaXPlatformImage.picaxImage(cgImage: cgImage)
+    }
+
+    private nonisolated static func encodedAspectRatio(data: Data) -> Double? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let widthNumber = properties[kCGImagePropertyPixelWidth] as? NSNumber,
+              let heightNumber = properties[kCGImagePropertyPixelHeight] as? NSNumber,
+              widthNumber.doubleValue > 0,
+              heightNumber.doubleValue > 0 else {
+            return nil
+        }
+        let aspectRatio = heightNumber.doubleValue / widthNumber.doubleValue
+        return aspectRatio.isFinite && aspectRatio > 0 ? aspectRatio : nil
     }
 
     private nonisolated static func cacheKey(url: URL, targetPixelWidth: Int?) -> String {
@@ -2601,6 +2878,12 @@ private enum JmImageScrambler {
         context.draw(cgImage, in: CGRect(x: 0, y: 0, width: CGFloat(targetPixelWidth), height: CGFloat(targetHeight)))
         return context.makeImage()
     }
+}
+
+private enum ReaderImageLoadingPhase {
+    case loading
+    case loaded
+    case failed
 }
 
 private enum ReaderImageLoadState {
@@ -3177,10 +3460,17 @@ private extension View {
     }
 
     @ViewBuilder
-    func readerContinuousZoom(configuration: ReaderZoomConfiguration, resetID: String) -> some View {
+    func readerContinuousZoom(
+        configuration: ReaderZoomConfiguration,
+        resetID: String,
+        allowsInteraction: Bool = true
+    ) -> some View {
         #if os(iOS)
         if configuration.isZoomEnabled {
-            ReaderContinuousZoomHost(configuration: configuration, resetID: resetID) {
+            ReaderContinuousZoomHost(
+                configuration: allowsInteraction ? configuration : configuration.interactionDisabled,
+                resetID: resetID
+            ) {
                 self
             }
         } else {

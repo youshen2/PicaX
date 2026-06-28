@@ -1735,6 +1735,13 @@ private struct ReaderSettingsView: View {
                     Text("翻页距离 \(autoPagingDistancePercent)% 屏幕高度")
                     Slider(value: autoPagingDistancePercentBinding, in: 10...120, step: 5)
                 }
+                .disabled(selectedReadingMode != .topToBottomContinuous)
+
+                if selectedReadingMode != .topToBottomContinuous {
+                    Text("当前阅读方式会按页切换，自动翻页距离只在连续滚动中生效。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
 
                 Toggle("自动进入下一章", isOn: $autoPagingTurnsChapter)
             }
@@ -1766,6 +1773,13 @@ private struct ReaderSettingsView: View {
                         Text("翻页距离 \(tapPagingDistancePercent)% 屏幕高度")
                         Slider(value: tapPagingDistancePercentBinding, in: 10...120, step: 5)
                     }
+                    .disabled(selectedReadingMode != .topToBottomContinuous)
+
+                    if selectedReadingMode != .topToBottomContinuous {
+                        Text("当前阅读方式会直接切页，点按翻页距离只在连续滚动中生效。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
 
                     Toggle("反转点按翻页", isOn: $tapPagingInverted)
                 }
@@ -1796,8 +1810,15 @@ private struct ReaderSettingsView: View {
                 Toggle("两指缩放", isOn: $pinchZoomEnabled)
 
                 Toggle("双击缩放", isOn: $doubleTapZoomEnabled)
+                    .disabled(selectedUIToggleMode == .double)
 
-                if doubleTapZoomEnabled {
+                if selectedUIToggleMode == .double {
+                    Text("切换控制栏使用双击时，双击缩放会暂停，避免同一手势同时承担两个动作。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                if doubleTapZoomEnabled && selectedUIToggleMode != .double {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("双击放大 \(doubleTapZoomScale, specifier: "%.1f")x")
                         Slider(value: $doubleTapZoomScale, in: 1.2...5, step: 0.1)
@@ -1815,7 +1836,7 @@ private struct ReaderSettingsView: View {
             } header: {
                 Text("缩放")
             } footer: {
-                Text("双击缩放开启时，图片会优先响应双击；长按缩放为按住临时放大，松开恢复。")
+                Text("长按缩放为按住临时放大，松开恢复。双击缩放与双击切换控制栏互斥。")
             }
 
             Section("时间与电量") {
@@ -1933,6 +1954,10 @@ private struct ReaderSettingsView: View {
 
     private var selectedReadingMode: ReaderReadingMode {
         ReaderReadingMode(rawValue: readingMode) ?? .topToBottomContinuous
+    }
+
+    private var selectedUIToggleMode: ReaderUIToggleMode {
+        ReaderUIToggleMode(rawValue: uiToggleMode) ?? .single
     }
 
     private var selectedSystemStatusStyle: ReaderSystemStatusStyle {
