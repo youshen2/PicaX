@@ -243,55 +243,6 @@ enum HomeToolInputTarget: Identifiable {
     }
 }
 
-struct HomeToolInputSheet: View {
-    @Environment(\.dismiss) private var dismiss
-    let target: HomeToolInputTarget
-    let onSubmit: (String) -> String?
-    @State private var text = ""
-    @State private var errorMessage: String?
-
-    var body: some View {
-        NavigationStack {
-            List {
-                Section {
-                    TextField(target.placeholder, text: $text)
-                        .picaxKeyboardType(target.keyboard)
-                        .picaxDisablesTextAutocapitalization()
-                        .autocorrectionDisabled()
-
-                    if let errorMessage {
-                        Text(errorMessage)
-                            .font(.footnote)
-                            .foregroundStyle(.red)
-                    }
-                } header: {
-                    Text(target.prompt)
-                }
-            }
-            .picaxInsetGroupedListStyle()
-            .navigationTitle(target.title)
-            .picaxNavigationBarTitleDisplayModeInline()
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") {
-                        dismiss()
-                    }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("打开") {
-                        if let message = onSubmit(text) {
-                            errorMessage = message
-                        } else {
-                            dismiss()
-                        }
-                    }
-                    .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-            }
-        }
-    }
-}
-
 enum HomeToolLinkParser {
     static func item(from rawValue: String) -> Result<ComicListItem, HomeToolLinkParseError> {
         let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)

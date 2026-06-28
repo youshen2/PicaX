@@ -23,6 +23,7 @@ struct HomePage: View {
     @State private var downloadedSearchRequest: DownloadedComicSearchRequest?
     @State private var toolDetailRequest: HomeToolDetailRequest?
     @State private var toolInputTarget: HomeToolInputTarget?
+    @State private var toolInputText = ""
     @State private var toolErrorMessage: String?
     @State private var clipboardCandidate: HomeClipboardCandidate?
     @State private var lastCheckedClipboardValue = ""
@@ -53,12 +54,26 @@ struct HomePage: View {
             ComicDetailPage(item: request.item, service: contentService)
                 .picaxHidesTabBar()
         }
-        .sheet(item: $toolInputTarget) { target in
-            HomeToolInputSheet(target: target) { value in
-                handleToolInput(value, target: target)
+        .alert(toolInputTarget?.title ?? "", isPresented: toolInputDialogBinding) {
+            if let target = toolInputTarget {
+                TextField(target.placeholder, text: $toolInputText)
+                    .picaxKeyboardType(target.keyboard)
+                    .picaxDisablesTextAutocapitalization()
+                    .autocorrectionDisabled()
+
+                Button("打开") {
+                    submitToolInput(target: target)
+                }
+                .disabled(toolInputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                Button("取消", role: .cancel) {
+                    resetToolInput()
+                }
             }
-            .presentationDetents([.medium])
-            .presentationDragIndicator(.visible)
+        } message: {
+            if let target = toolInputTarget {
+                Text(target.prompt)
+            }
         }
         .alert("打开失败", isPresented: toolErrorBinding) {
             Button("好", role: .cancel) {}
@@ -153,7 +168,7 @@ struct HomePage: View {
 
             HomeToolsSection(
                 service: contentService,
-                requestInput: { toolInputTarget = $0 },
+                requestInput: presentToolInputDialog,
                 showError: { toolErrorMessage = $0 }
             )
         }
@@ -171,6 +186,16 @@ struct HomePage: View {
         }
     }
 
+    private var toolInputDialogBinding: Binding<Bool> {
+        Binding {
+            toolInputTarget != nil
+        } set: { isPresented in
+            if !isPresented {
+                resetToolInput()
+            }
+        }
+    }
+
     private var clipboardCandidateBinding: Binding<Bool> {
         Binding {
             clipboardCandidate != nil
@@ -179,6 +204,24 @@ struct HomePage: View {
                 clipboardCandidate = nil
             }
         }
+    }
+
+    private func presentToolInputDialog(_ target: HomeToolInputTarget) {
+        toolInputText = ""
+        toolInputTarget = target
+    }
+
+    private func submitToolInput(target: HomeToolInputTarget) {
+        let value = toolInputText
+        resetToolInput()
+        if let message = handleToolInput(value, target: target) {
+            toolErrorMessage = message
+        }
+    }
+
+    private func resetToolInput() {
+        toolInputTarget = nil
+        toolInputText = ""
     }
 
     private func handleToolInput(_ value: String, target: HomeToolInputTarget) -> String? {
