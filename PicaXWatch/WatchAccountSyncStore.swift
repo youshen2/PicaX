@@ -10,6 +10,7 @@ final class WatchAccountSyncStore: NSObject, ObservableObject {
     @Published private(set) var lastErrorMessage: String?
 
     private static let defaultsKey = "picax.watch.accountSnapshot"
+    private let localFavoritesStore = WatchLocalFavoritesStore()
 
     override init() {
         snapshot = Self.loadSnapshot()
@@ -51,11 +52,55 @@ final class WatchAccountSyncStore: NSObject, ObservableObject {
         }
     }
 
+    func addLocalFavorite(_ item: WatchComicItem) {
+        let favorites = localFavoritesStore.add(item)
+        snapshot.localFavorites = favorites
+        persist(snapshot)
+        syncLocalFavorites(favorites)
+    }
+
+    func removeLocalFavorite(_ item: WatchComicItem) {
+        let favorites = localFavoritesStore.remove(item)
+        snapshot.localFavorites = favorites
+        persist(snapshot)
+        syncLocalFavorites(favorites)
+    }
+
+    func isLocalFavorite(_ item: WatchComicItem) -> Bool {
+        localFavoritesStore.contains(item)
+    }
+
+    func syncLocalFavorites(_ favorites: [WatchLocalFavoriteItem]? = nil) {
+        guard WCSession.isSupported() else { return }
+        let localFavorites = favorites ?? localFavoritesStore.load()
+        let message = WatchAccountSyncEnvelope.message(
+            forLocalFavorites: localFavorites,
+            deletions: localFavoritesStore.loadDeletions()
+        )
+        let session = WCSession.default
+
+        if session.isReachable {
+            session.sendMessage(message) { [weak self] reply in
+                Task { @MainActor in
+                    self?.apply(message: reply)
+                }
+            } errorHandler: { [weak self] error in
+                Task { @MainActor in
+                    self?.lastErrorMessage = error.localizedDescription
+                }
+            }
+        } else {
+            lastErrorMessage = "iPhone 暂不可达，本地收藏会在下次同步时合并。"
+        }
+    }
+
     private func apply(message: [String: Any]) {
         guard let snapshot = WatchAccountSyncEnvelope.snapshot(from: message) else { return }
-        self.snapshot = snapshot
+        var mergedSnapshot = snapshot
+        mergedSnapshot.localFavorites = localFavoritesStore.merge(snapshot.localFavorites)
+        self.snapshot = mergedSnapshot
         lastErrorMessage = nil
-        persist(snapshot)
+        persist(mergedSnapshot)
     }
 
     private func persist(_ snapshot: WatchAccountSnapshot) {
@@ -68,7 +113,9 @@ final class WatchAccountSyncStore: NSObject, ObservableObject {
               let snapshot = try? JSONDecoder().decode(WatchAccountSnapshot.self, from: data) else {
             return .empty
         }
-        return snapshot
+        var loadedSnapshot = snapshot
+        loadedSnapshot.localFavorites = WatchLocalFavoritesStore().merge(snapshot.localFavorites)
+        return loadedSnapshot
     }
 }
 
@@ -84,6 +131,7 @@ extension WatchAccountSyncStore: WCSessionDelegate {
             self.lastErrorMessage = error?.localizedDescription
             self.apply(message: session.receivedApplicationContext)
             self.requestRefresh()
+            self.syncLocalFavorites()
         }
     }
 
@@ -92,6 +140,7 @@ extension WatchAccountSyncStore: WCSessionDelegate {
             self.isReachable = session.isReachable
             if session.isReachable {
                 self.requestRefresh()
+                self.syncLocalFavorites()
             }
         }
     }
@@ -114,20 +163,39 @@ extension WatchAccountSyncStore {
         let store = WatchAccountSyncStore()
         store.snapshot = WatchAccountSnapshot(
             updatedAt: Date(),
-            localAccount: WatchLocalAccount(
-                id: UUID(),
-                displayName: "PicaX 用户",
-                email: "demo@example.com",
-                lastLoginAt: Date()
-            ),
-            localAccountCount: 1,
             platformAccounts: [
                 WatchPlatformAccount(
                     id: "picacg",
+                    platformID: "picacg",
                     title: "PicACG",
+                    username: "demo@example.com",
                     displayName: "Demo",
                     credentialState: "已保存",
+                    credential: WatchPlatformCredential(
+                        token: "preview-token",
+                        refreshToken: nil,
+                        tokenType: nil,
+                        password: nil,
+                        cookies: [],
+                        userAgent: nil,
+                        baseURL: "https://picaapi.picacomic.com",
+                        source: "api",
+                        profile: WatchPlatformAccountProfile(email: "demo@example.com", username: "demo", nickname: "Demo")
+                    ),
                     loggedInAt: Date()
+                )
+            ],
+            localFavorites: [
+                WatchLocalFavoriteItem(
+                    id: "preview-favorite",
+                    platformID: "picacg",
+                    title: "本地收藏示例",
+                    subtitle: "保存在当前手表",
+                    coverURLString: "",
+                    tags: ["Preview"],
+                    pageCount: nil,
+                    likesCount: nil,
+                    favoriteDate: Date()
                 )
             ]
         )

@@ -48,16 +48,13 @@ struct PicaXApp: App {
         #if os(iOS)
         baseContent
             .onAppear(perform: syncAccountsToWatch)
-            .onChange(of: accountService.accounts) { _, _ in
-                syncAccountsToWatch()
-            }
-            .onChange(of: accountService.currentAccount) { _, _ in
-                syncAccountsToWatch()
-            }
-            .onChange(of: accountService.session) { _, _ in
-                syncAccountsToWatch()
-            }
             .onChange(of: platformAccountService.accounts) { _, _ in
+                syncAccountsToWatch()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .picaxLocalFavoritesDidChange)) { _ in
+                syncAccountsToWatch()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)) { _ in
                 syncAccountsToWatch()
             }
         #else
@@ -68,8 +65,8 @@ struct PicaXApp: App {
     #if os(iOS)
     private func syncAccountsToWatch() {
         phoneWatchAccountSyncService.sync(
-            accountService: accountService,
-            platformAccountService: platformAccountService
+            platformAccountService: platformAccountService,
+            syncsLocalFavorites: WatchConnectivitySettings.syncsLocalFavorites()
         )
     }
     #endif

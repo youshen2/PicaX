@@ -82,6 +82,21 @@ enum AppBehaviorSettingsKey {
     static let checksUpdatesOnLaunch = "settings.appBehavior.checksUpdatesOnLaunch"
 }
 
+enum WatchConnectivitySettingsKey {
+    static let syncsReadingHistory = "settings.watchConnectivity.syncsReadingHistory"
+    static let syncsLocalFavorites = "settings.watchConnectivity.syncsLocalFavorites"
+}
+
+enum WatchConnectivitySettings {
+    static func syncsReadingHistory(defaults: UserDefaults = .standard) -> Bool {
+        defaults.object(forKey: WatchConnectivitySettingsKey.syncsReadingHistory) as? Bool ?? true
+    }
+
+    static func syncsLocalFavorites(defaults: UserDefaults = .standard) -> Bool {
+        defaults.object(forKey: WatchConnectivitySettingsKey.syncsLocalFavorites) as? Bool ?? true
+    }
+}
+
 enum AppAppearanceMode: String, CaseIterable, Identifiable {
     case system
     case light

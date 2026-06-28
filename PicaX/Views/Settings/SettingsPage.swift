@@ -96,7 +96,7 @@ struct SettingsPage: View {
                 }
             }
 
-            if showsAny(.appDisplay, .appBehavior, .network, .about) {
+            if showsAny(.appDisplay, .appBehavior, .watchConnectivity, .network, .about) {
                 Section("网络与应用") {
                     if shows(.appDisplay) {
                         SettingsNavigationLink(item: .appDisplay, systemImage: "paintbrush") {
@@ -106,6 +106,11 @@ struct SettingsPage: View {
                     if shows(.appBehavior) {
                         SettingsNavigationLink(item: .appBehavior, systemImage: "gearshape") {
                             AppBehaviorSettingsView()
+                        }
+                    }
+                    if shows(.watchConnectivity) {
+                        SettingsNavigationLink(item: .watchConnectivity, systemImage: "applewatch") {
+                            WatchConnectivitySettingsView()
                         }
                     }
                     if shows(.network) {
@@ -171,6 +176,7 @@ private enum SettingsSearchItem: CaseIterable {
     case backup
     case appDisplay
     case appBehavior
+    case watchConnectivity
     case network
     case about
 
@@ -206,6 +212,8 @@ private enum SettingsSearchItem: CaseIterable {
             "显示"
         case .appBehavior:
             "App行为"
+        case .watchConnectivity:
+            "Watch互联"
         case .network:
             "网络与代理"
         case .about:
@@ -245,6 +253,8 @@ private enum SettingsSearchItem: CaseIterable {
             "显示模式"
         case .appBehavior:
             "剪贴板检测与启动检查"
+        case .watchConnectivity:
+            "阅读记录与本地收藏同步"
         case .network:
             "连接与重试"
         case .about:
@@ -274,6 +284,8 @@ private enum SettingsSearchItem: CaseIterable {
             ["深色", "浅色"]
         case .appBehavior:
             ["剪贴板", "启动", "更新"]
+        case .watchConnectivity:
+            ["Watch", "Apple Watch", "手表", "互联", "同步", "阅读记录", "本地收藏"]
         case .history:
             ["阅读进度", "清空", "记录"]
         case .readingDuration:
@@ -332,6 +344,27 @@ private struct AppBehaviorSettingsView: View {
         }
         .picaxInsetGroupedListStyle()
         .navigationTitle("App行为")
+        .picaxHidesTabBar()
+    }
+}
+
+private struct WatchConnectivitySettingsView: View {
+    @AppStorage(WatchConnectivitySettingsKey.syncsReadingHistory) private var syncsReadingHistory = true
+    @AppStorage(WatchConnectivitySettingsKey.syncsLocalFavorites) private var syncsLocalFavorites = true
+
+    var body: some View {
+        List {
+            Section {
+                Toggle("阅读记录同步", isOn: $syncsReadingHistory)
+                Toggle("本地收藏同步", isOn: $syncsLocalFavorites)
+            } header: {
+                Text("同步内容")
+            } footer: {
+                Text("平台账号始终由 iPhone 同步给手表；漫画列表和平台内容仍由手表端独立请求。")
+            }
+        }
+        .picaxInsetGroupedListStyle()
+        .navigationTitle("Watch互联")
         .picaxHidesTabBar()
     }
 }

@@ -21,8 +21,11 @@ final class PhoneWatchAccountSyncService: NSObject, ObservableObject {
         }
     }
 
-    func sync(accountService: AccountService, platformAccountService: PlatformAccountService) {
-        sync(snapshot: WatchAccountSnapshot(accountService: accountService, platformAccountService: platformAccountService))
+    func sync(platformAccountService: PlatformAccountService, syncsLocalFavorites: Bool) {
+        sync(snapshot: WatchAccountSnapshot(
+            platformAccountService: platformAccountService,
+            syncsLocalFavorites: syncsLocalFavorites
+        ))
     }
 
     func sync(snapshot: WatchAccountSnapshot) {
@@ -73,9 +76,13 @@ extension PhoneWatchAccountSyncService: WCSessionDelegate {
     }
 
     nonisolated func session(_ session: WCSession, didReceiveMessage message: [String: Any]) {
-        guard WatchAccountSyncEnvelope.isSnapshotRequest(message) else { return }
         Task { @MainActor in
-            self.sendLatestSnapshot()
+            if WatchAccountSyncEnvelope.isSnapshotRequest(message) {
+                self.sendLatestSnapshot()
+            } else if WatchAccountSyncEnvelope.isLocalFavoritesSync(message) {
+                self.mergeLocalFavorites(from: message)
+                self.sendLatestSnapshot()
+            }
         }
     }
 
@@ -84,47 +91,158 @@ extension PhoneWatchAccountSyncService: WCSessionDelegate {
         didReceiveMessage message: [String: Any],
         replyHandler: @escaping ([String: Any]) -> Void
     ) {
-        guard WatchAccountSyncEnvelope.isSnapshotRequest(message) else {
-            replyHandler([:])
+        Task { @MainActor in
+            if WatchAccountSyncEnvelope.isSnapshotRequest(message) {
+                let reply = WatchAccountSyncEnvelope.message(for: self.latestSnapshot)
+                replyHandler(reply)
+                self.sendLatestSnapshot()
+            } else if WatchAccountSyncEnvelope.isLocalFavoritesSync(message) {
+                self.mergeLocalFavorites(from: message)
+                let reply = WatchAccountSyncEnvelope.message(for: self.latestSnapshot)
+                replyHandler(reply)
+                self.sendLatestSnapshot()
+            } else {
+                replyHandler([:])
+            }
+        }
+    }
+
+    private func mergeLocalFavorites(from message: [String: Any]) {
+        guard WatchConnectivitySettings.syncsLocalFavorites() else {
+            latestSnapshot.localFavorites = []
+            latestSnapshot.updatedAt = Date()
             return
         }
-
-        Task { @MainActor in
-            let reply = WatchAccountSyncEnvelope.message(for: self.latestSnapshot)
-            replyHandler(reply)
-            self.sendLatestSnapshot()
+        guard let incoming = WatchAccountSyncEnvelope.localFavorites(from: message) else { return }
+        let deletions = WatchAccountSyncEnvelope.localFavoriteDeletions(from: message)
+        var deletionMap: [String: Date] = [:]
+        for deletion in deletions {
+            if let old = deletionMap[deletion.syncID] {
+                deletionMap[deletion.syncID] = max(old, deletion.deletedAt)
+            } else {
+                deletionMap[deletion.syncID] = deletion.deletedAt
+            }
         }
+
+        let existing = PicaXSQLiteStore.loadLocalFavorites(folderID: "default")
+        let incomingFavorites = incoming.compactMap(StoredLocalFavorite.init)
+        var merged: [String: StoredLocalFavorite] = [:]
+
+        for favorite in existing + incomingFavorites {
+            if let deletedAt = deletionMap[favorite.syncID],
+               deletedAt >= (favorite.favoriteDate ?? .distantPast) {
+                merged.removeValue(forKey: favorite.syncID)
+                continue
+            }
+            if let old = merged[favorite.syncID] {
+                merged[favorite.syncID] = favorite.isNewer(than: old) ? favorite : old
+            } else {
+                merged[favorite.syncID] = favorite
+            }
+        }
+
+        PicaXSQLiteStore.replaceLocalFavorites(Array(merged.values), folderID: "default")
+        latestSnapshot.localFavorites = PicaXSQLiteStore.loadLocalFavorites(folderID: "default").map(WatchLocalFavoriteItem.init)
+        latestSnapshot.updatedAt = Date()
     }
 }
 
 private extension WatchAccountSnapshot {
-    init(accountService: AccountService, platformAccountService: PlatformAccountService) {
-        let currentAccount = accountService.currentAccount.map {
-            WatchLocalAccount(
-                id: $0.id,
-                displayName: $0.displayName,
-                email: $0.email,
-                lastLoginAt: $0.lastLoginAt
-            )
-        }
-
+    init(platformAccountService: PlatformAccountService, syncsLocalFavorites: Bool) {
+        let localFavorites = syncsLocalFavorites ? PicaXSQLiteStore.loadLocalFavorites(folderID: "default").map(WatchLocalFavoriteItem.init) : []
         let platformAccounts = ComicPlatform.allCases.compactMap { platform -> WatchPlatformAccount? in
             guard let account = platformAccountService.account(for: platform) else { return nil }
             return WatchPlatformAccount(
                 id: platform.id,
+                platformID: platform.id,
                 title: platform.title,
+                username: account.username,
                 displayName: account.displayName,
                 credentialState: account.credential.summaryText,
+                credential: WatchPlatformCredential(account.credential),
                 loggedInAt: account.loggedInAt
             )
         }
+        self.init(updatedAt: Date(), platformAccounts: platformAccounts, localFavorites: localFavorites)
+    }
+}
 
+private extension WatchPlatformCredential {
+    nonisolated init(_ credential: PlatformCredential) {
         self.init(
-            updatedAt: Date(),
-            localAccount: currentAccount,
-            localAccountCount: accountService.accounts.count,
-            platformAccounts: platformAccounts
+            token: credential.token,
+            refreshToken: credential.refreshToken,
+            tokenType: credential.tokenType,
+            password: credential.password,
+            cookies: credential.cookies.map(WatchStoredHTTPCookie.init),
+            userAgent: credential.userAgent,
+            baseURL: credential.baseURL,
+            source: credential.source.rawValue,
+            profile: credential.profile.map(WatchPlatformAccountProfile.init)
         )
+    }
+}
+
+private extension WatchStoredHTTPCookie {
+    nonisolated init(_ cookie: StoredHTTPCookie) {
+        self.init(
+            name: cookie.name,
+            value: cookie.value,
+            domain: cookie.domain,
+            path: cookie.path,
+            expiresDate: cookie.expiresDate,
+            isSecure: cookie.isSecure
+        )
+    }
+}
+
+private extension WatchPlatformAccountProfile {
+    nonisolated init(_ profile: PlatformAccountProfile) {
+        self.init(email: profile.email, username: profile.username, nickname: profile.nickname)
+    }
+}
+
+private extension WatchLocalFavoriteItem {
+    nonisolated init(_ favorite: StoredLocalFavorite) {
+        self.init(
+            id: favorite.id,
+            platformID: favorite.platform.id,
+            title: favorite.title,
+            subtitle: favorite.subtitle,
+            coverURLString: favorite.coverURLString,
+            tags: favorite.tags,
+            pageCount: favorite.pageCount,
+            likesCount: favorite.likesCount,
+            favoriteDate: favorite.favoriteDate
+        )
+    }
+}
+
+private extension StoredLocalFavorite {
+    var syncID: String {
+        "\(platform.id)-\(id)"
+    }
+
+    init?(_ favorite: WatchLocalFavoriteItem) {
+        guard let platform = ComicPlatform(rawValue: favorite.platformID) else { return nil }
+        self.init(
+            item: ComicListItem(
+                id: favorite.id,
+                platform: platform,
+                title: favorite.title,
+                subtitle: favorite.subtitle,
+                coverURLString: favorite.coverURLString,
+                tags: favorite.tags,
+                pageCount: favorite.pageCount,
+                likesCount: favorite.likesCount,
+                favoriteDate: favorite.favoriteDate
+            ),
+            favoriteDate: favorite.favoriteDate
+        )
+    }
+
+    func isNewer(than other: StoredLocalFavorite) -> Bool {
+        (favoriteDate ?? .distantPast) >= (other.favoriteDate ?? .distantPast)
     }
 }
 #endif

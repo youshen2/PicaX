@@ -307,6 +307,7 @@ enum PicaXSQLiteStore {
                 .data(data)
             ]
         )
+        NotificationCenter.default.post(name: .picaxLocalFavoritesDidChange, object: nil)
     }
 
     static func loadDownloadRecords() -> [DownloadRecord] {
