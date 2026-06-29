@@ -258,6 +258,7 @@
 /* Begin PBXTargetDependency section */
 		6D9FF26D2FEEB200008AA850 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
+			platformFilter = ios;
 			target = 6D9FF2662FEEB200008AA850 /* PicaX Watch App */;
 			targetProxy = 6D9FF26C2FEEB200008AA850 /* PBXContainerItemProxy */;
 		};
