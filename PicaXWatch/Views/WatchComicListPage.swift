@@ -4,6 +4,7 @@ enum WatchComicListSource {
     case localFavorites
     case explore(platform: WatchComicPlatform, kind: WatchDiscoveryKind)
     case favorites(account: WatchPlatformAccount)
+    case favoriteFolder(account: WatchPlatformAccount, folder: WatchFavoriteFolder)
     case category(WatchCategoryItem)
 
     var title: String {
@@ -14,6 +15,8 @@ enum WatchComicListSource {
             "\(platform.title) \(kind.title)"
         case .favorites(let account):
             "\(account.title) 收藏"
+        case .favoriteFolder(_, let folder):
+            folder.title
         case .category(let category):
             category.title
         }
@@ -22,7 +25,6 @@ enum WatchComicListSource {
 
 struct WatchComicListPage: View {
     @EnvironmentObject private var accountSyncStore: WatchAccountSyncStore
-    @AppStorage(WatchSettingsKey.maxVisibleComics) private var maxVisibleComics = 24
     @StateObject private var viewModel = WatchComicListViewModel()
 
     let source: WatchComicListSource
@@ -36,7 +38,7 @@ struct WatchComicListPage: View {
                 emptySystemImage: "books.vertical",
                 isEmpty: { $0.isEmpty }
             ) { items in
-                ForEach(Array(items.prefix(validatedMaxVisibleComics))) { item in
+                ForEach(items) { item in
                     NavigationLink {
                         WatchComicDetailPage(item: item)
                     } label: {
@@ -58,6 +60,13 @@ struct WatchComicListPage: View {
                                 }
                             }
                         }
+                        .onAppear {
+                            loadMoreIfNeeded(currentItem: item, items: items)
+                        }
+                }
+
+                if viewModel.isLoadingMore {
+                    ProgressView()
                 }
             }
         }
@@ -77,10 +86,6 @@ struct WatchComicListPage: View {
         }
     }
 
-    private var validatedMaxVisibleComics: Int {
-        min(max(maxVisibleComics, 6), 60)
-    }
-
     private func load(force: Bool = false) async {
         switch source {
         case .localFavorites:
@@ -94,11 +99,42 @@ struct WatchComicListPage: View {
             )
         case .favorites(let account):
             await viewModel.loadFavorites(account: account, force: force)
+        case .favoriteFolder(let account, let folder):
+            await viewModel.loadFavorites(account: account, folder: folder, force: force)
         case .category(let category):
             await viewModel.loadCategory(
                 category,
                 account: accountSyncStore.snapshot.account(for: category.platform),
                 force: force
+            )
+        }
+    }
+
+    private func loadMoreIfNeeded(currentItem: WatchComicItem, items: [WatchComicItem]) {
+        guard viewModel.hasMore, currentItem == items.last else { return }
+        Task {
+            await loadMore()
+        }
+    }
+
+    private func loadMore() async {
+        switch source {
+        case .localFavorites:
+            return
+        case .explore(let platform, let kind):
+            await viewModel.loadMoreExplore(
+                platform: platform,
+                kind: kind,
+                account: accountSyncStore.snapshot.account(for: platform)
+            )
+        case .favorites(let account):
+            await viewModel.loadMoreFavorites(account: account)
+        case .favoriteFolder(let account, let folder):
+            await viewModel.loadMoreFavorites(account: account, folder: folder)
+        case .category(let category):
+            await viewModel.loadMoreCategory(
+                category,
+                account: accountSyncStore.snapshot.account(for: category.platform)
             )
         }
     }

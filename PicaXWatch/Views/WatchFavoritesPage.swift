@@ -24,7 +24,11 @@ struct WatchFavoritesPage: View {
                 } else {
                     ForEach(accounts) { account in
                         NavigationLink {
-                            WatchComicListPage(source: .favorites(account: account))
+                            if supportsFavoriteFolders(account) {
+                                WatchFavoriteFoldersPage(account: account)
+                            } else {
+                                WatchComicListPage(source: .favorites(account: account))
+                            }
                         } label: {
                             WatchValueRow(
                                 title: account.title,
@@ -52,6 +56,60 @@ struct WatchFavoritesPage: View {
     private var favoriteAccounts: [WatchPlatformAccount] {
         accountSyncStore.snapshot.platformAccounts.filter { account in
             WatchComicPlatform(rawValue: account.platformID)?.supportsFavorites == true
+        }
+    }
+
+    private func supportsFavoriteFolders(_ account: WatchPlatformAccount) -> Bool {
+        guard let platform = WatchComicPlatform(rawValue: account.platformID) else { return false }
+        switch platform {
+        case .eHentai, .jmComic, .htManga:
+            return true
+        case .picacg, .nhentai, .hitomi:
+            return false
+        }
+    }
+}
+
+private struct WatchFavoriteFoldersPage: View {
+    @StateObject private var viewModel = WatchFavoriteFoldersViewModel()
+
+    let account: WatchPlatformAccount
+
+    var body: some View {
+        List {
+            WatchLoadStateSection(
+                title: "平台收藏夹",
+                state: viewModel.state,
+                emptyTitle: "暂无收藏夹",
+                emptySystemImage: "folder",
+                isEmpty: { $0.isEmpty }
+            ) { folders in
+                ForEach(folders) { folder in
+                    NavigationLink {
+                        WatchComicListPage(source: .favoriteFolder(account: account, folder: folder))
+                    } label: {
+                        WatchValueRow(
+                            title: folder.title,
+                            subtitle: folder.subtitle,
+                            systemImage: WatchComicPlatform(rawValue: account.platformID)?.systemImage
+                        )
+                    }
+                }
+            }
+        }
+        .navigationTitle(account.title)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    Task { await viewModel.load(account: account, force: true) }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .accessibilityLabel("刷新")
+            }
+        }
+        .task {
+            await viewModel.load(account: account)
         }
     }
 }

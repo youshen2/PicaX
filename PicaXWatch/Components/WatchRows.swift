@@ -31,17 +31,7 @@ struct WatchComicRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            AsyncImage(url: item.coverURL) { image in
-                image
-                    .resizable()
-                    .scaledToFill()
-            } placeholder: {
-                Image(systemName: item.platform.systemImage)
-                    .font(.title3)
-                    .foregroundStyle(item.platform.watchColor)
-            }
-            .frame(width: 38, height: 50)
-            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            WatchCoverThumbnail(url: item.coverURL, width: 38, height: 50)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.title)
@@ -59,6 +49,106 @@ struct WatchComicRow: View {
                 }
             }
         }
+    }
+}
+
+struct WatchCoverThumbnail: View {
+    let url: URL?
+    var width: CGFloat
+    var height: CGFloat
+    var cornerRadius: CGFloat = 6
+
+    var body: some View {
+        WatchRemoteImageView(url: url, contentMode: .fill, placeholderFont: .title3)
+        .frame(width: width, height: height)
+        .background(Color.secondary.opacity(0.14))
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+    }
+}
+
+struct WatchRemoteImageView: View {
+    let url: URL?
+    var contentMode: ContentMode = .fill
+    var placeholderFont: Font = .title3
+
+    @State private var localURL: URL?
+    @State private var failed = false
+    @State private var didRetryDisplayFailure = false
+
+    var body: some View {
+        Group {
+            if let localURL {
+                AsyncImage(url: localURL) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .aspectRatio(contentMode: contentMode)
+                    case .empty:
+                        ProgressView()
+                            .scaleEffect(0.7)
+                    case .failure:
+                        if failed {
+                            placeholder
+                        } else {
+                            ProgressView()
+                                .scaleEffect(0.7)
+                                .task(id: localURL.absoluteString) {
+                                    await reloadAfterDisplayFailure()
+                                }
+                        }
+                    @unknown default:
+                        placeholder
+                    }
+                }
+            } else if failed {
+                placeholder
+            } else {
+                ProgressView()
+                    .scaleEffect(0.7)
+            }
+        }
+        .task(id: url?.absoluteString ?? "") {
+            await load()
+        }
+    }
+
+    @MainActor
+    private func load() async {
+        localURL = nil
+        failed = false
+        didRetryDisplayFailure = false
+        guard let url else {
+            failed = true
+            return
+        }
+        do {
+            localURL = try await WatchImageCacheService.cachedFileURL(for: url.absoluteString)
+        } catch {
+            failed = true
+        }
+    }
+
+    @MainActor
+    private func reloadAfterDisplayFailure() async {
+        guard !didRetryDisplayFailure, let url else {
+            failed = true
+            return
+        }
+        didRetryDisplayFailure = true
+        do {
+            localURL = try await WatchImageCacheService.cachedFileURL(for: url.absoluteString, forceRefresh: true)
+            failed = false
+        } catch {
+            localURL = nil
+            failed = true
+        }
+    }
+
+    private var placeholder: some View {
+        Image(systemName: "photo")
+            .font(placeholderFont)
+            .foregroundStyle(.secondary)
     }
 }
 

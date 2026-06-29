@@ -16,12 +16,64 @@ struct WatchComicAPIClient {
             return try await loadNhentaiExplore(kind: kind, page: page)
         case .jmComic:
             return try await loadJmComicExplore(kind: kind, page: page)
-        case .eHentai, .hitomi, .htManga:
-            throw WatchComicAPIError.unsupported("\(platform.title) 的 Watch 独立请求解析尚未接入。")
+        case .eHentai:
+            return try await loadEhentaiExplore(kind: kind, page: page)
+        case .hitomi:
+            return try await loadHitomiExplore(kind: kind, page: page)
+        case .htManga:
+            return try await loadHtMangaExplore(kind: kind, page: page)
         }
     }
 
-    func loadFavorites(account: WatchPlatformAccount, page: Int = 1) async throws -> [WatchComicItem] {
+    func search(
+        platform: WatchComicPlatform,
+        keyword: String,
+        account: WatchPlatformAccount?,
+        page: Int = 1,
+        options: WatchSearchOptions = WatchSearchOptions()
+    ) async throws -> [WatchComicItem] {
+        let trimmed = keyword.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+
+        switch platform {
+        case .picacg:
+            return try await searchPicacg(keyword: trimmed, account: account, page: page, sort: options.sortValue(for: platform))
+        case .nhentai:
+            return try await searchNhentai(query: options.keyword(trimmed, for: platform), page: page, sort: options.sortValue(for: platform))
+        case .jmComic:
+            return try await searchJmComic(query: trimmed, page: page, sort: options.sortValue(for: platform))
+        case .eHentai:
+            return try await searchEhentai(query: trimmed, page: page)
+        case .hitomi:
+            return try await searchHitomi(query: trimmed, page: page)
+        case .htManga:
+            return try await searchHtManga(query: trimmed, page: page)
+        }
+    }
+
+    func loadFavoriteFolders(account: WatchPlatformAccount) async throws -> [WatchFavoriteFolder] {
+        guard let platform = WatchComicPlatform(rawValue: account.platformID) else {
+            throw WatchComicAPIError.unsupported("未知平台：\(account.platformID)")
+        }
+        switch platform {
+        case .picacg:
+            _ = try await picacgToken(account: account)
+            return [WatchFavoriteFolder(id: "default", title: "云端收藏夹", subtitle: "PicACG 默认收藏", platform: .picacg)]
+        case .nhentai:
+            _ = try nhentaiAuthHeaders(account: account)
+            return [WatchFavoriteFolder(id: "default", title: "云端收藏夹", subtitle: "NHentai 默认收藏", platform: .nhentai)]
+        case .jmComic:
+            return try await loadJmComicFavoriteFolders(account: account)
+        case .eHentai:
+            return try await loadEhentaiFavoriteFolders(account: account)
+        case .htManga:
+            return try await loadHtMangaFavoriteFolders(account: account)
+        case .hitomi:
+            throw WatchComicAPIError.unsupported("Hitomi 没有平台账号收藏接口。")
+        }
+    }
+
+    func loadFavorites(account: WatchPlatformAccount, folder: WatchFavoriteFolder? = nil, page: Int = 1) async throws -> [WatchComicItem] {
         guard let platform = WatchComicPlatform(rawValue: account.platformID) else {
             throw WatchComicAPIError.unsupported("未知平台：\(account.platformID)")
         }
@@ -31,9 +83,13 @@ struct WatchComicAPIClient {
         case .nhentai:
             return try await loadNhentaiFavorites(account: account, page: page)
         case .jmComic:
-            return try await loadJmComicFavorites(account: account, page: page)
-        case .eHentai, .hitomi, .htManga:
-            throw WatchComicAPIError.unsupported("\(platform.title) 收藏夹的 Watch 独立请求解析尚未接入。")
+            return try await loadJmComicFavorites(account: account, folderID: folder?.id, page: page)
+        case .eHentai:
+            return try await loadEhentaiFavorites(account: account, folderID: folder?.id, page: page)
+        case .htManga:
+            return try await loadHtMangaFavorites(account: account, folderID: folder?.id, page: page)
+        case .hitomi:
+            throw WatchComicAPIError.unsupported("Hitomi 没有平台账号收藏接口。")
         }
     }
 
@@ -62,8 +118,12 @@ struct WatchComicAPIClient {
             return try await searchNhentai(query: category.query, page: page)
         case .jmComic:
             return try await searchJmComic(query: category.query, page: page)
-        case .eHentai, .hitomi, .htManga:
-            throw WatchComicAPIError.unsupported("\(category.platform.title) 标签列表的 Watch 独立请求解析尚未接入。")
+        case .eHentai:
+            return try await searchEhentai(query: category.query, page: page)
+        case .hitomi:
+            return try await searchHitomi(query: category.query, page: page)
+        case .htManga:
+            return try await searchHtManga(category: category, page: page)
         }
     }
 
@@ -81,6 +141,27 @@ struct WatchComicAPIClient {
             return try await loadHitomiDetail(item: item)
         case .htManga:
             return try await loadHtMangaDetail(item: item)
+        }
+    }
+
+    func loadChapterImages(item: WatchComicItem, chapter: WatchChapterItem, account: WatchPlatformAccount?) async throws -> [WatchChapterImage] {
+        let urls: [String]
+        switch item.platform {
+        case .picacg:
+            urls = try await loadPicacgChapterImages(item: item, chapter: chapter, account: account)
+        case .nhentai:
+            urls = try await loadNhentaiImages(item: item)
+        case .jmComic:
+            urls = try await loadJmComicChapterImages(chapter: chapter)
+        case .eHentai:
+            urls = try await loadEhentaiImages(item: item)
+        case .hitomi:
+            urls = try await loadHitomiImages(item: item)
+        case .htManga:
+            urls = try await loadHtMangaImages(item: item)
+        }
+        return urls.enumerated().map { index, url in
+            WatchChapterImage(id: "\(chapter.id)-\(index + 1)", urlString: url)
         }
     }
 }
@@ -135,6 +216,16 @@ private extension WatchComicAPIClient {
         let value = category.hasPrefix("category:") ? String(category.dropFirst("category:".count)) : category
         let encoded = value.urlEncoded
         let json = try await picacgJSON(path: "comics?page=\(page)&c=\(encoded)&s=dd", token: token)
+        return try picacgItems(from: json, path: ["data", "comics", "docs"])
+    }
+
+    func searchPicacg(keyword: String, account: WatchPlatformAccount?, page: Int, sort: String = "dd") async throws -> [WatchComicItem] {
+        let token = try await picacgToken(account: account)
+        let body = try JSONSerialization.data(withJSONObject: [
+            "keyword": keyword,
+            "sort": sort.isEmpty ? "dd" : sort
+        ])
+        let json = try await picacgJSON(path: "comics/advanced-search?page=\(max(page, 1))", method: "POST", token: token, body: body)
         return try picacgItems(from: json, path: ["data", "comics", "docs"])
     }
 
@@ -319,15 +410,29 @@ private extension WatchComicAPIClient {
         }
     }
 
-    func loadJmComicFavorites(account: WatchPlatformAccount, page: Int) async throws -> [WatchComicItem] {
+    func loadJmComicFavorites(account: WatchPlatformAccount, folderID: String? = nil, page: Int) async throws -> [WatchComicItem] {
         let context = try await jmAuthenticatedContext(account: account)
         let sort = jmFavoriteSort()
+        let folderID = folderID?.nonEmptyValue ?? "0"
         let json = try await jmJSON(
-            path: "favorite?page=\(max(page, 1))&folder_id=0&o=\(sort)",
+            path: "favorite?page=\(max(page, 1))&folder_id=\(folderID.urlEncoded)&o=\(sort)",
             cookies: context.cookies,
             baseURL: context.baseURL
         )
         return try jmComicItems(from: json, favoriteDate: Date())
+    }
+
+    func loadJmComicFavoriteFolders(account: WatchPlatformAccount) async throws -> [WatchFavoriteFolder] {
+        let context = try await jmAuthenticatedContext(account: account)
+        guard let json = try await jmJSON(path: "favorite", cookies: context.cookies, baseURL: context.baseURL) as? [String: Any] else {
+            throw WatchComicAPIError.invalidResponse("JMComic 收藏夹响应不是对象。")
+        }
+        let folders = (json["folder_list"] as? [[String: Any]] ?? []).compactMap { folder -> WatchFavoriteFolder? in
+            guard let id = jmString(folder["FID"]), !id.isEmpty else { return nil }
+            let title = jmString(folder["name"]) ?? id
+            return WatchFavoriteFolder(id: id, title: title, subtitle: "JMComic 收藏夹", platform: .jmComic)
+        }
+        return [WatchFavoriteFolder(id: "0", title: "全部收藏", subtitle: "JMComic 默认收藏", platform: .jmComic)] + folders
     }
 
     func searchJmComic(query: String, page: Int, sort: String = "mr") async throws -> [WatchComicItem] {
@@ -1053,8 +1158,483 @@ private extension WatchComicAPIClient {
     }
 }
 
+private extension WatchComicAPIClient {
+    func loadPicacgChapterImages(item: WatchComicItem, chapter: WatchChapterItem, account: WatchPlatformAccount?) async throws -> [String] {
+        let token = try await picacgToken(account: account)
+        let comicID = item.id.removingPrefix("picacg-")
+        let order = chapter.subtitle?.firstRegexCapture(#"([0-9]+)"#) ?? chapter.id
+        var page = 1
+        var result = [String]()
+        while true {
+            let json = try await picacgJSON(path: "comics/\(comicID)/order/\(order)/pages?page=\(page)", token: token)
+            guard let pages = json.value(at: ["data", "pages"]) as? [String: Any],
+                  let docs = pages["docs"] as? [[String: Any]] else {
+                throw WatchComicAPIError.invalidResponse("PicACG 图片响应缺少 pages。")
+            }
+            result.append(contentsOf: docs.compactMap { doc in
+                guard let media = doc["media"] as? [String: Any] else { return nil }
+                return picacgImageURL(
+                    fileServer: media["fileServer"] as? String ?? "",
+                    path: media["path"] as? String ?? ""
+                )
+            })
+            let pagesCount = pages.intValue(for: "pages") ?? page
+            if page >= pagesCount { break }
+            page += 1
+        }
+        return result
+    }
+
+    func loadNhentaiImages(item: WatchComicItem) async throws -> [String] {
+        let id = item.id.removingPrefix("nhentai-")
+        guard let url = URL(string: "https://nhentai.net/api/v2/galleries/\(id)") else {
+            throw WatchComicAPIError.invalidURL("nhentai images \(id)")
+        }
+        let json = try await requestJSON(url: url, headers: webHeaders(referer: "https://nhentai.net/"))
+        let pages = json["pages"] as? [[String: Any]] ?? []
+        return pages.compactMap { page in
+            guard let path = page["path"] as? String, !path.isEmpty else { return nil }
+            if path.hasPrefix("http") { return path }
+            if path.hasPrefix("/") { return "https://i.nhentai.net\(path)" }
+            return "https://i.nhentai.net/\(path)"
+        }
+    }
+
+    func loadJmComicChapterImages(chapter: WatchChapterItem) async throws -> [String] {
+        let id = chapter.subtitle?.nonEmptyValue ?? chapter.id
+        guard let json = try await jmJSON(path: "chapter?&id=\(id)") as? [String: Any] else {
+            throw WatchComicAPIError.invalidResponse("JMComic 章节响应不是对象。")
+        }
+        return jmStringArray(json["images"]).map { "\(jmImageBaseURL)/media/photos/\(id)/\($0)" }
+    }
+
+    func loadEhentaiImages(item: WatchComicItem) async throws -> [String] {
+        guard let url = URL(string: item.id) else {
+            throw WatchComicAPIError.invalidURL(item.id)
+        }
+        let html = try await requestString(url: url, headers: webHeaders(referer: ehentaiBaseURL))
+        let pageLinks = html.regexMatches(#"<div class="gdt[ml][^"]*"[^>]*>.*?</div>\s*</a>"#, options: [.dotMatchesLineSeparators])
+            .compactMap { $0.firstRegexCapture(#"<a[^>]+href="([^"]+)""#) }
+        var images = [String]()
+        for link in pageLinks {
+            guard let pageURL = URL(string: link) else { continue }
+            let pageHTML = try await requestString(url: pageURL, headers: webHeaders(referer: item.id))
+            if let image = pageHTML.firstRegexCapture(#"<img[^>]+id="img"[^>]+src="([^"]+)""#) ??
+                pageHTML.firstRegexCapture(#"<img[^>]+src="([^"]+)"[^>]+id="img""#) {
+                images.append(image)
+            }
+        }
+        return images
+    }
+
+    func loadHtMangaImages(item: WatchComicItem) async throws -> [String] {
+        let id = firstNumber(in: item.id) ?? item.id
+        guard let url = URL(string: "\(htMangaBaseURL)/photos-gallery-aid-\(id).html") else {
+            throw WatchComicAPIError.invalidURL("htmanga images \(item.id)")
+        }
+        let html = try await requestString(url: url, headers: webHeaders(referer: htMangaBaseURL))
+        return html.regexMatches(#"(?<=//)[\w./\[\]()-]+"#).map { "https://\($0)" }
+    }
+
+    func loadHitomiImages(item: WatchComicItem) async throws -> [String] {
+        let id = try hitomiID(from: item.id)
+        let json = try await hitomiGalleryJSON(id: id)
+        let gg = try await hitomiGG(galleryID: id)
+        let files = json["files"] as? [[String: Any]] ?? []
+        return files.compactMap { file in
+            guard let hash = file["hash"] as? String, !hash.isEmpty else { return nil }
+            let name = file["name"] as? String ?? "\(hash).webp"
+            let ext = (file.intValue(for: "haswebp") == 1) ? "webp" : (name.components(separatedBy: ".").last ?? "jpg")
+            return hitomiImageURL(hash: hash, ext: ext, gg: gg)
+        }
+    }
+}
+
+private extension WatchComicAPIClient {
+    var ehentaiBaseURL: String { "https://e-hentai.org" }
+    var htMangaBaseURL: String { "https://www.wnacg.com" }
+
+    func loadEhentaiExplore(kind: WatchDiscoveryKind, page: Int) async throws -> [WatchComicItem] {
+        let pageIndex = max(page - 1, 0)
+        let urlString: String
+        switch kind {
+        case .latest:
+            urlString = pageIndex == 0 ? "\(ehentaiBaseURL)/" : "\(ehentaiBaseURL)/?page=\(pageIndex)"
+        case .ranking:
+            urlString = pageIndex == 0 ? "\(ehentaiBaseURL)/popular" : "\(ehentaiBaseURL)/popular?page=\(pageIndex)"
+        case .random:
+            var items = try await loadEhentaiExplore(kind: .latest, page: page)
+            items.shuffle()
+            return items
+        }
+        guard let url = URL(string: urlString) else { throw WatchComicAPIError.invalidURL(urlString) }
+        let html = try await requestString(url: url, headers: webHeaders(referer: ehentaiBaseURL))
+        return parseEhentaiGalleries(html)
+    }
+
+    func searchEhentai(query: String, page: Int) async throws -> [WatchComicItem] {
+        let encoded = query.urlEncoded
+        let pageIndex = max(page - 1, 0)
+        let pageQuery = pageIndex == 0 ? "" : "&page=\(pageIndex)"
+        guard let url = URL(string: "\(ehentaiBaseURL)/?f_search=\(encoded)\(pageQuery)") else {
+            throw WatchComicAPIError.invalidURL("ehentai search \(query)")
+        }
+        let html = try await requestString(url: url, headers: webHeaders(referer: ehentaiBaseURL))
+        return parseEhentaiGalleries(html)
+    }
+
+    func loadEhentaiFavorites(account: WatchPlatformAccount, folderID: String? = nil, page: Int) async throws -> [WatchComicItem] {
+        let headers = try ehentaiAccountHeaders(account: account, referer: ehentaiBaseURL)
+        let pageIndex = max(page - 1, 0)
+        var queryItems = [String]()
+        if let folderID, folderID != "-1" {
+            queryItems.append("favcat=\(folderID.urlEncoded)")
+        }
+        if pageIndex > 0 {
+            queryItems.append("page=\(pageIndex)")
+        }
+        let query = queryItems.isEmpty ? "" : "?\(queryItems.joined(separator: "&"))"
+        guard let url = URL(string: "\(ehentaiBaseURL)/favorites.php\(query)") else {
+            throw WatchComicAPIError.invalidURL("ehentai favorites")
+        }
+        let html = try await requestString(url: url, headers: headers)
+        guard !html.contains("You are not currently logged in") else {
+            throw WatchComicAPIError.loginRequired("E-Hentai 登录状态无效，请在 iPhone 重新登录后同步。")
+        }
+        return parseEhentaiGalleries(html, favoriteDate: Date())
+    }
+
+    func loadEhentaiFavoriteFolders(account: WatchPlatformAccount) async throws -> [WatchFavoriteFolder] {
+        let headers = try ehentaiAccountHeaders(account: account, referer: ehentaiBaseURL)
+        guard let url = URL(string: "\(ehentaiBaseURL)/favorites.php") else {
+            throw WatchComicAPIError.invalidURL("ehentai favorite folders")
+        }
+        let html = try await requestString(url: url, headers: headers)
+        let names = parseEhentaiFavoriteFolderNames(html)
+        return [WatchFavoriteFolder(id: "-1", title: "全部", subtitle: "E-Hentai 收藏夹", platform: .eHentai)] +
+            names.enumerated().map { index, title in
+                WatchFavoriteFolder(id: "\(index)", title: title, subtitle: "E-Hentai 收藏夹", platform: .eHentai)
+            }
+    }
+
+    func parseEhentaiFavoriteFolderNames(_ html: String) -> [String] {
+        html.regexMatches(#"<div class="fp".*?</div>"#, options: [.dotMatchesLineSeparators]).compactMap { row in
+            let values = row.regexMatches(#"<[^>]+>(.*?)</[^>]+>"#, options: [.dotMatchesLineSeparators])
+                .map(\.strippingHTML)
+                .filter { !$0.isEmpty }
+            return values.last
+        }
+    }
+
+    func parseEhentaiGalleries(_ html: String, favoriteDate: Date? = nil) -> [WatchComicItem] {
+        let rowBlocks = html.regexMatches(#"<tr\b[^>]*>.*?</tr>"#, options: [.dotMatchesLineSeparators])
+        let thumbnailBlocks = html.regexMatches(#"<div\b[^>]*class="[^"]*\bgl1t\b[^"]*"[^>]*>.*?(?=<div\b[^>]*class="[^"]*\bgl1t\b|\z)"#, options: [.dotMatchesLineSeparators])
+        var seen = Set<String>()
+        return (rowBlocks + thumbnailBlocks).compactMap { block in
+            guard let link = block.firstRegexCapture(#"href="(https?://[^"]+/g/[0-9]+/[^"/?#]+/?)"#)?.htmlDecoded,
+                  seen.insert(link).inserted else {
+                return nil
+            }
+            let title = block.firstRegexCapture(#"class="[^"]*\bglink\b[^"]*"[^>]*>(.*?)</"#)?.htmlDecoded ??
+                block.firstRegexCapture(#"title="([^"]+)""#)?.htmlDecoded ??
+                link
+            let cover = block.firstRegexCapture(#"data-src="([^"]+)""#) ?? block.firstRegexCapture(#"src="([^"]+)""#)
+            let uploader = block.firstRegexCapture(#"class="[^"]*\bglname\b[^"]*"[^>]*>.*?</[^>]+>"#)?.strippingHTML ?? ""
+            let tags = block.regexMatches(#"<div\b[^>]*class="[^"]*\bgt[lr]?\b[^"]*"[^>]*title="([^"]+)"[^>]*>.*?</div>"#, options: [.dotMatchesLineSeparators])
+                .compactMap { $0.firstRegexCapture(#"title="([^"]+)""#)?.htmlDecoded }
+            return WatchComicItem(
+                id: link,
+                platform: .eHentai,
+                title: title,
+                subtitle: uploader,
+                coverURLString: cover,
+                tags: tags,
+                pageCount: nil,
+                favoriteDate: favoriteDate
+            )
+        }
+    }
+
+    func ehentaiAccountHeaders(account: WatchPlatformAccount, referer: String) throws -> [String: String] {
+        let cookieHeader = cookieHeader(cookies: account.credential.cookies)
+        guard cookieHeader.contains("ipb_member_id"), cookieHeader.contains("ipb_pass_hash") else {
+            throw WatchComicAPIError.loginRequired("E-Hentai 登录状态无效，请在 iPhone 重新登录后同步。")
+        }
+        return webHeaders(referer: referer, userAgent: account.credential.userAgent)
+            .merging(["Cookie": cookieHeader]) { _, new in new }
+    }
+
+    func loadHtMangaExplore(kind: WatchDiscoveryKind, page: Int) async throws -> [WatchComicItem] {
+        let path: String
+        switch kind {
+        case .ranking:
+            path = "/albums-favorite_ranking-type-day.html"
+        case .latest:
+            path = "/albums.html"
+        case .random:
+            var items = try await loadHtMangaExplore(kind: .latest, page: page)
+            items.shuffle()
+            return items
+        }
+        let urlString = htMangaPagedURL(htMangaBaseURL + path, page: page)
+        guard let url = URL(string: urlString) else { throw WatchComicAPIError.invalidURL(urlString) }
+        let html = try await requestString(url: url, headers: webHeaders(referer: htMangaBaseURL))
+        return parseHtMangaList(html)
+    }
+
+    func loadHtMangaFavorites(account: WatchPlatformAccount, folderID: String? = nil, page: Int) async throws -> [WatchComicItem] {
+        let folderID = folderID?.nonEmptyValue ?? "0"
+        let headers = webHeaders(referer: htMangaBaseURL, userAgent: account.credential.userAgent)
+            .merging(["Cookie": cookieHeader(cookies: account.credential.cookies)]) { _, new in new }
+        guard let url = URL(string: "\(htMangaBaseURL)/users-users_fav-page-\(max(page, 1))-c-\(folderID.urlEncoded).html") else {
+            throw WatchComicAPIError.invalidURL("htmanga favorites")
+        }
+        let html = try await requestString(url: url, headers: headers)
+        return parseHtMangaList(html, favoriteDate: Date())
+    }
+
+    func loadHtMangaFavoriteFolders(account: WatchPlatformAccount) async throws -> [WatchFavoriteFolder] {
+        let headers = webHeaders(referer: htMangaBaseURL, userAgent: account.credential.userAgent)
+            .merging(["Cookie": cookieHeader(cookies: account.credential.cookies)]) { _, new in new }
+        guard let url = URL(string: "\(htMangaBaseURL)/users-addfav-id-210814.html") else {
+            throw WatchComicAPIError.invalidURL("htmanga folders")
+        }
+        let html = try await requestString(url: url, headers: headers)
+        let folders = html.regexMatches(#"<option[^>]+value="([^"]+)"[^>]*>.*?</option>"#, options: [.dotMatchesLineSeparators]).compactMap { row -> WatchFavoriteFolder? in
+            guard let id = row.firstRegexCapture(#"value="([^"]+)""#), !id.isEmpty else { return nil }
+            let title = row.strippingHTML
+            return WatchFavoriteFolder(id: id, title: title.isEmpty ? "云端收藏夹" : title, subtitle: "HT Manga 收藏夹", platform: .htManga)
+        }
+        return folders.isEmpty
+            ? [WatchFavoriteFolder(id: "0", title: "云端收藏夹", subtitle: "HT Manga 默认收藏", platform: .htManga)]
+            : folders
+    }
+
+    func searchHtManga(category: WatchCategoryItem, page: Int) async throws -> [WatchComicItem] {
+        try await searchHtManga(query: category.query, page: page)
+    }
+
+    func searchHtManga(query: String, page: Int) async throws -> [WatchComicItem] {
+        let encoded = query.urlEncoded
+        let urlString = htMangaPagedURL("\(htMangaBaseURL)/search/?q=\(encoded)&f=_all&s=create_time_DESC&syn=yes", page: page)
+        guard let url = URL(string: urlString) else {
+            throw WatchComicAPIError.invalidURL("htmanga search \(query)")
+        }
+        let html = try await requestString(url: url, headers: webHeaders(referer: htMangaBaseURL))
+        return parseHtMangaList(html)
+    }
+
+    func parseHtMangaList(_ html: String, favoriteDate: Date? = nil) -> [WatchComicItem] {
+        let rows = html.regexMatches(#"<li>.*?</li>"#, options: [.dotMatchesLineSeparators]) +
+            html.regexMatches(#"<div class="asTB".*?</div>\s*</div>"#, options: [.dotMatchesLineSeparators])
+        return rows.compactMap { row in
+            guard let link = row.firstRegexCapture(#"href="([^"]*aid-[0-9]+[^"]*)""#),
+                  let id = link.firstRegexCapture(#"aid-([0-9]+)"#) else {
+                return nil
+            }
+            let title = row.firstRegexCapture(#"title="([^"]+)""#)?.htmlDecoded ??
+                row.firstRegexCapture(#"<p class="l_title">\s*<a[^>]*>(.*?)</a>"#)?.htmlDecoded ??
+                row.firstRegexCapture(#"<div class="title">\s*<a[^>]*>(.*?)</a>"#)?.htmlDecoded ??
+                id
+            let image = row.firstRegexCapture(#"<img[^>]+src="([^"]+)""#) ?? ""
+            let pages = row.firstRegexCapture(#"(?:頁數|页数|页)：?([0-9]+)"#).flatMap(Int.init)
+            return WatchComicItem(
+                id: id,
+                platform: .htManga,
+                title: title,
+                subtitle: id,
+                coverURLString: absoluteURL(image, baseURL: htMangaBaseURL),
+                tags: [],
+                pageCount: pages,
+                favoriteDate: favoriteDate
+            )
+        }
+    }
+
+    func htMangaPagedURL(_ rawURL: String, page: Int) -> String {
+        guard page > 1 else { return rawURL }
+        if rawURL.contains("/search/") {
+            return rawURL.contains("?") ? "\(rawURL)&p=\(page)" : "\(rawURL)?p=\(page)"
+        }
+        if rawURL.contains("ranking") {
+            return rawURL.replacingOccurrences(of: "ranking", with: "ranking-page-\(page)")
+        }
+        if rawURL.hasSuffix("/albums.html") {
+            return rawURL.replacingOccurrences(of: "/albums.html", with: "/albums-index-page-\(page).html")
+        }
+        return rawURL
+    }
+
+    func cookieHeader(cookies: [WatchStoredHTTPCookie]) -> String {
+        cookies
+            .filter { !$0.name.isEmpty && !$0.value.isEmpty }
+            .map { "\($0.name)=\($0.value)" }
+            .joined(separator: "; ")
+    }
+}
+
+private extension WatchComicAPIClient {
+    func loadHitomiExplore(kind: WatchDiscoveryKind, page: Int) async throws -> [WatchComicItem] {
+        let path: String
+        switch kind {
+        case .latest:
+            path = "index-all.nozomi"
+        case .ranking:
+            path = "popular/today-all.nozomi"
+        case .random:
+            path = "index-all.nozomi"
+        }
+        let pageSize = 20
+        var ids = try await hitomiIDsFromNozomi(path: path, maxIDs: page * pageSize + pageSize)
+        if kind == .random { ids.shuffle() }
+        let start = max(0, (page - 1) * pageSize)
+        guard start < ids.count else { return [] }
+        return try await hitomiItems(for: Array(ids.dropFirst(start)), limit: pageSize)
+    }
+
+    func searchHitomi(query: String, page: Int) async throws -> [WatchComicItem] {
+        let normalized = query.lowercased().trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "_", with: " ")
+        let pageSize = 20
+        let path: String
+        if normalized.hasPrefix("language:") {
+            path = "n/index-\(String(normalized.dropFirst("language:".count)))-all.nozomi"
+        } else if normalized.contains(":") {
+            let parts = normalized.split(separator: ":", maxSplits: 1).map(String.init)
+            path = "n/\(parts[0])/\(parts[1])-all.nozomi"
+        } else {
+            path = "n/type/\(normalized)-all.nozomi"
+        }
+        let ids = try await hitomiIDsFromNozomi(path: path, maxIDs: page * pageSize + pageSize)
+        let start = max(0, (page - 1) * pageSize)
+        guard start < ids.count else { return [] }
+        return try await hitomiItems(for: Array(ids.dropFirst(start)), limit: pageSize)
+    }
+
+    func hitomiItems(for ids: [Int], limit: Int) async throws -> [WatchComicItem] {
+        var items = [WatchComicItem]()
+        for id in ids.prefix(limit * 2) {
+            if let item = try? await hitomiBrief(id: "\(id)") {
+                items.append(item)
+            }
+            if items.count >= limit { break }
+        }
+        return items
+    }
+
+    func hitomiBrief(id: String) async throws -> WatchComicItem {
+        let url = try hitomiURL(path: "galleryblock/\(id).html")
+        let html = try await requestString(url: url, headers: hitomiHeaders(referer: hitomiPublicBaseURL))
+        let title = html.firstRegexCapture(#"<h1[^>]*class="[^"]*lillie[^"]*"[^>]*>\s*<a[^>]*>(.*?)</a>"#)?.htmlDecoded ?? id
+        let linkPath = html.firstRegexCapture(#"<h1[^>]*class="[^"]*lillie[^"]*"[^>]*>\s*<a[^>]+href="([^"]+)""#) ?? "/galleries/\(id).html"
+        let artist = html.firstRegexCapture(#"<div[^>]*class="[^"]*artist-list[^"]*"[^>]*>.*?<a[^>]*>(.*?)</a>"#)?.htmlDecoded ?? "N/A"
+        let coverSource = html.firstRegexCapture(#"<div[^>]*class="[^"]*(?:dj-img1|cg-img1)[^"]*"[^>]*>.*?<source[^>]+data-srcset="([^"]+)""#)
+        return WatchComicItem(
+            id: absoluteURL(linkPath, baseURL: hitomiPublicBaseURL),
+            platform: .hitomi,
+            title: title,
+            subtitle: artist,
+            coverURLString: hitomiCoverURL(from: coverSource),
+            tags: [],
+            pageCount: nil,
+            favoriteDate: nil
+        )
+    }
+
+    func hitomiGalleryJSON(id: String) async throws -> [String: Any] {
+        let jsURL = try hitomiURL(path: "galleries/\(id).js")
+        let script = try await requestString(url: jsURL, headers: hitomiHeaders(referer: hitomiPublicBaseURL))
+        guard let start = script.firstIndex(of: "{"), let end = script.lastIndex(of: "}") else {
+            throw WatchComicAPIError.invalidResponse("Hitomi galleries.js 缺少 JSON 数据。")
+        }
+        let data = Data(script[start...end].utf8)
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw WatchComicAPIError.invalidResponse("Hitomi 详情 JSON 无法解析。")
+        }
+        return json
+    }
+
+    func hitomiIDsFromNozomi(path: String, maxIDs: Int) async throws -> [Int] {
+        let url = try hitomiURL(path: path)
+        let end = max(3, maxIDs * 4 - 1)
+        let data = try await requestData(
+            url: url,
+            headers: hitomiHeaders(referer: hitomiPublicBaseURL).merging(["Range": "bytes=0-\(end)"]) { _, new in new }
+        )
+        let bytes = [UInt8](data)
+        return stride(from: 0, to: bytes.count - (bytes.count % 4), by: 4).compactMap { offset in
+            guard offset + 4 <= bytes.count else { return nil }
+            let value = UInt32(bytes[offset]) << 24 | UInt32(bytes[offset + 1]) << 16 | UInt32(bytes[offset + 2]) << 8 | UInt32(bytes[offset + 3])
+            return Int(Int32(bitPattern: value))
+        }
+    }
+
+    func hitomiCoverURL(from source: String?) -> String {
+        guard var cover = source?.trimmingCharacters(in: .whitespacesAndNewlines), !cover.isEmpty else {
+            return ""
+        }
+        if cover.hasPrefix("//") {
+            cover = String(cover.dropFirst(2))
+            if let slash = cover.firstIndex(of: "/") {
+                cover = String(cover[slash...])
+            }
+        }
+        if let range = cover.range(of: #"2x.*"#, options: .regularExpression) {
+            cover.removeSubrange(range)
+        }
+        cover = cover.replacingOccurrences(of: " ", with: "")
+            .replacingOccurrences(of: "avifbigtn", with: "webpbigtn")
+            .replacingOccurrences(of: ".avif", with: ".webp")
+        return cover.hasPrefix("http") ? cover : "https://atn.\(hitomiDataDomain)\(cover)"
+    }
+
+    func hitomiGG(galleryID: String) async throws -> WatchHitomiGGData {
+        let url = try hitomiURL(path: "gg.js?_=1683939645979")
+        let js = try await requestString(url: url, headers: hitomiHeaders(referer: "\(hitomiPublicBaseURL)/reader/\(galleryID).html"))
+        let numbers = js.regexMatches(#"(?<=case )\d+"#)
+        let b = js.firstRegexCapture(#"b: '(\d+)"#) ?? "0"
+        let initialG = js.firstRegexCapture(#"var o = ([0-9]+)"#).flatMap(Int.init) ?? 1
+        return WatchHitomiGGData(numbers: Set(numbers), b: b, initialG: initialG)
+    }
+
+    func hitomiImageURL(hash: String, ext: String, gg: WatchHitomiGGData) -> String {
+        let path = "\(gg.b)/\(hitomiHashSuffix(hash))/\(hash)"
+        let raw = "https://\(hitomiDataDomain)/\(path).\(ext)"
+        return raw.replacingOccurrences(of: "https://", with: "https://\(hitomiSubdomain(from: raw, base: "w", gg: gg)).")
+    }
+
+    func hitomiHashSuffix(_ hash: String) -> String {
+        guard hash.count >= 3 else { return "" }
+        let lastThree = hash.suffix(3)
+        return Int(lastThree, radix: 16).map(String.init) ?? ""
+    }
+
+    func hitomiSubdomain(from url: String, base: String, gg: WatchHitomiGGData) -> String {
+        let pattern = #"/[0-9a-f]{61}([0-9a-f]{2})([0-9a-f])"#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: url, range: NSRange(url.startIndex..<url.endIndex, in: url)),
+              match.numberOfRanges > 2,
+              let firstRange = Range(match.range(at: 1), in: url),
+              let secondRange = Range(match.range(at: 2), in: url),
+              let value = Int(String(url[secondRange]) + String(url[firstRange]), radix: 16) else {
+            return "a"
+        }
+        let bit = gg.numbers.contains("\(value)") ? (~gg.initialG & 1) : gg.initialG
+        let character = bit == 0 ? "a" : "b"
+        if base == "w" {
+            return character == "a" ? "w1" : "w2"
+        }
+        return "\(character)\(base)"
+    }
+}
+
 private enum WatchHitomiSettingsKey {
     static let dataDomain = "settings.platformFeature.hitomi.dataDomain"
+}
+
+private struct WatchHitomiGGData {
+    let numbers: Set<String>
+    let b: String
+    let initialG: Int
 }
 
 private extension WatchComicAPIClient {

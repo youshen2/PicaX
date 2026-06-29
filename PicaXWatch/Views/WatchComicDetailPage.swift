@@ -2,6 +2,7 @@ import SwiftUI
 
 struct WatchComicDetailPage: View {
     @EnvironmentObject private var accountSyncStore: WatchAccountSyncStore
+    @EnvironmentObject private var downloadService: WatchDownloadService
     @StateObject private var viewModel = WatchComicDetailViewModel()
 
     let item: WatchComicItem
@@ -37,19 +38,46 @@ struct WatchComicDetailPage: View {
                 }
                 if !detail.chapters.isEmpty {
                     Section("章节") {
-                        ForEach(detail.chapters.prefix(8)) { chapter in
-                            WatchValueRow(
-                                title: chapter.title,
-                                subtitle: chapter.subtitle ?? "可阅读章节",
-                                systemImage: "book.pages"
-                            )
+                        Button {
+                            downloadService.enqueue(detail: detail, chapterIndexes: Array(detail.chapters.indices))
+                        } label: {
+                            Label("下载全部章节", systemImage: "arrow.down.circle")
+                        }
+
+                        ForEach(Array(detail.chapters.enumerated()), id: \.element.id) { index, chapter in
+                            NavigationLink {
+                                WatchReaderPage(
+                                    item: detail.item,
+                                    chapter: chapter,
+                                    chapterIndex: index,
+                                    totalChapters: detail.chapters.count,
+                                    chapters: detail.chapters
+                                )
+                            } label: {
+                                WatchValueRow(
+                                    title: chapter.title,
+                                    subtitle: chapter.subtitle ?? "可阅读章节",
+                                    systemImage: "book.pages"
+                                )
+                            }
+                            .swipeActions {
+                                Button {
+                                    downloadService.enqueue(detail: detail, chapterIndexes: [index])
+                                } label: {
+                                    Label("下载", systemImage: "arrow.down")
+                                }
+                            }
                         }
                     }
                 }
                 ForEach(detail.tagGroups) { group in
                     Section(group.title) {
                         ForEach(group.tags.prefix(12)) { tag in
-                            WatchValueRow(title: tag.title, subtitle: tag.query, systemImage: "tag")
+                            NavigationLink {
+                                WatchSearchPage(initialQuery: tag.query, platform: tag.platform)
+                            } label: {
+                                WatchValueRow(title: tag.title, subtitle: tag.query, systemImage: "tag")
+                            }
                         }
                     }
                 }
@@ -86,17 +114,12 @@ struct WatchComicDetailPage: View {
     private func headerSection(_ detail: WatchComicDetailInfo) -> some View {
         Section {
             HStack(alignment: .top, spacing: 8) {
-                AsyncImage(url: detail.item.coverURL) { image in
-                    image
-                        .resizable()
-                        .scaledToFill()
-                } placeholder: {
-                    Image(systemName: detail.item.platform.systemImage)
-                        .font(.title2)
-                        .foregroundStyle(detail.item.platform.watchColor)
+                NavigationLink {
+                    WatchCoverPreviewPage(item: detail.item)
+                } label: {
+                    WatchCoverThumbnail(url: detail.item.coverURL, width: 48, height: 64)
                 }
-                .frame(width: 48, height: 64)
-                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .buttonStyle(.plain)
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text(detail.item.title)
@@ -124,6 +147,38 @@ struct WatchComicDetailPage: View {
                     systemImage: accountSyncStore.isLocalFavorite(detail.item) ? "heart.slash" : "heart"
                 )
             }
+
+            if let record = WatchReadingHistoryStore().record(for: detail.item),
+               detail.chapters.indices.contains(record.progress.chapterIndex) {
+                let chapter = detail.chapters[record.progress.chapterIndex]
+                NavigationLink {
+                    WatchReaderPage(
+                        item: detail.item,
+                        chapter: chapter,
+                        chapterIndex: record.progress.chapterIndex,
+                        totalChapters: detail.chapters.count,
+                        initialPageIndex: record.progress.pageIndex,
+                        chapters: detail.chapters
+                    )
+                } label: {
+                    Label("继续阅读", systemImage: "book")
+                }
+            }
+
+            if let firstChapter = detail.chapters.first {
+                NavigationLink {
+                    WatchReaderPage(
+                        item: detail.item,
+                        chapter: firstChapter,
+                        chapterIndex: 0,
+                        totalChapters: detail.chapters.count,
+                        initialPageIndex: 0,
+                        chapters: detail.chapters
+                    )
+                } label: {
+                    Label("从头开始", systemImage: "play.circle")
+                }
+            }
         }
     }
 
@@ -133,6 +188,44 @@ struct WatchComicDetailPage: View {
             account: accountSyncStore.snapshot.account(for: item.platform),
             force: force
         )
+    }
+}
+
+private struct WatchCoverPreviewPage: View {
+    let item: WatchComicItem
+
+    var body: some View {
+        ScrollView {
+            WatchCoverPreviewImage(url: item.coverURL)
+                .padding(.vertical, 8)
+        }
+        .navigationTitle("封面")
+    }
+}
+
+private struct WatchCoverPreviewImage: View {
+    let url: URL?
+
+    var body: some View {
+        Group {
+            if url != nil {
+                WatchRemoteImageView(url: url, contentMode: .fit, placeholderFont: .largeTitle)
+            } else {
+                placeholder
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private var placeholder: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "photo")
+                .font(.largeTitle)
+            Text("封面不可用")
+                .font(.caption)
+        }
+        .foregroundStyle(.secondary)
+        .padding(.top, 32)
     }
 }
 
@@ -152,4 +245,5 @@ struct WatchComicDetailPage: View {
         )
     }
     .environmentObject(WatchAccountSyncStore.preview)
+    .environmentObject(WatchDownloadService())
 }

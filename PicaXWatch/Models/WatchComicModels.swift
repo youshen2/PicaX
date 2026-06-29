@@ -1,6 +1,6 @@
 import Foundation
 
-struct WatchComicItem: Identifiable, Hashable {
+struct WatchComicItem: Identifiable, Hashable, Codable {
     let id: String
     let platform: WatchComicPlatform
     let title: String
@@ -16,7 +16,7 @@ struct WatchComicItem: Identifiable, Hashable {
     }
 }
 
-struct WatchCategoryItem: Identifiable, Hashable {
+struct WatchCategoryItem: Identifiable, Hashable, Codable {
     let title: String
     let query: String
     let platform: WatchComicPlatform
@@ -28,7 +28,14 @@ struct WatchCategoryItem: Identifiable, Hashable {
     }
 }
 
-struct WatchComicDetailInfo: Identifiable, Hashable {
+struct WatchFavoriteFolder: Identifiable, Hashable, Codable {
+    let id: String
+    let title: String
+    let subtitle: String
+    let platform: WatchComicPlatform
+}
+
+struct WatchComicDetailInfo: Identifiable, Hashable, Codable {
     let item: WatchComicItem
     let description: String
     let metadata: [WatchDetailMetadata]
@@ -40,7 +47,7 @@ struct WatchComicDetailInfo: Identifiable, Hashable {
     var id: String { item.id }
 }
 
-struct WatchDetailMetadata: Identifiable, Hashable {
+struct WatchDetailMetadata: Identifiable, Hashable, Codable {
     let title: String
     let value: String
 
@@ -49,14 +56,14 @@ struct WatchDetailMetadata: Identifiable, Hashable {
     }
 }
 
-struct WatchTagGroup: Identifiable, Hashable {
+struct WatchTagGroup: Identifiable, Hashable, Codable {
     let title: String
     let tags: [WatchTagItem]
 
     var id: String { title }
 }
 
-struct WatchTagItem: Identifiable, Hashable {
+struct WatchTagItem: Identifiable, Hashable, Codable {
     let title: String
     let query: String
     let platform: WatchComicPlatform
@@ -66,10 +73,174 @@ struct WatchTagItem: Identifiable, Hashable {
     }
 }
 
-struct WatchChapterItem: Identifiable, Hashable {
+struct WatchChapterItem: Identifiable, Hashable, Codable {
     let id: String
     let title: String
     let subtitle: String?
+}
+
+struct WatchChapterImage: Identifiable, Hashable, Codable {
+    let id: String
+    let urlString: String
+
+    var url: URL? {
+        URL.picaxWatchResolved(from: urlString)
+    }
+}
+
+enum WatchSearchTarget: Hashable, Identifiable, Codable {
+    case aggregate([WatchComicPlatform])
+    case platform(WatchComicPlatform)
+
+    static var defaultAggregate: WatchSearchTarget {
+        .aggregate(WatchComicPlatform.allCases)
+    }
+
+    var id: String {
+        switch self {
+        case .aggregate(let platforms):
+            "aggregate-\(Self.normalizedPlatforms(platforms).map(\.id).joined(separator: "-"))"
+        case .platform(let platform):
+            platform.id
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .aggregate(let platforms):
+            let normalized = Self.normalizedPlatforms(platforms)
+            if normalized.count == WatchComicPlatform.allCases.count {
+                return "多平台聚合"
+            }
+            return "\(normalized.count) 个平台聚合"
+        case .platform(let platform):
+            return platform.title
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .aggregate:
+            "square.grid.2x2"
+        case .platform(let platform):
+            platform.systemImage
+        }
+    }
+
+    var platforms: [WatchComicPlatform] {
+        switch self {
+        case .aggregate(let platforms):
+            Self.normalizedPlatforms(platforms)
+        case .platform(let platform):
+            [platform]
+        }
+    }
+
+    var isAggregate: Bool {
+        if case .aggregate = self {
+            return true
+        }
+        return false
+    }
+
+    private static func normalizedPlatforms(_ platforms: [WatchComicPlatform]) -> [WatchComicPlatform] {
+        let selected = Set(platforms)
+        let normalized = WatchComicPlatform.allCases.filter { selected.contains($0) }
+        return normalized.isEmpty ? WatchComicPlatform.allCases : normalized
+    }
+}
+
+struct WatchSearchOptions: Equatable {
+    var picacgSort = "dd"
+    var nhentaiSort = "date"
+    var jmComicSort = "mr"
+    var nhentaiLanguage: WatchSearchLanguage?
+
+    nonisolated init(
+        picacgSort: String = "dd",
+        nhentaiSort: String = "date",
+        jmComicSort: String = "mr",
+        nhentaiLanguage: WatchSearchLanguage? = nil
+    ) {
+        self.picacgSort = picacgSort
+        self.nhentaiSort = nhentaiSort
+        self.jmComicSort = jmComicSort
+        self.nhentaiLanguage = nhentaiLanguage
+    }
+
+    nonisolated func sortValue(for platform: WatchComicPlatform) -> String {
+        switch platform {
+        case .picacg:
+            picacgSort
+        case .nhentai:
+            nhentaiSort
+        case .jmComic:
+            jmComicSort
+        case .eHentai, .htManga, .hitomi:
+            ""
+        }
+    }
+
+    nonisolated mutating func setSortValue(_ value: String, for platform: WatchComicPlatform) {
+        switch platform {
+        case .picacg:
+            picacgSort = value
+        case .nhentai:
+            nhentaiSort = value
+        case .jmComic:
+            jmComicSort = value
+        case .eHentai, .htManga, .hitomi:
+            break
+        }
+    }
+
+    nonisolated func keyword(_ keyword: String, for platform: WatchComicPlatform) -> String {
+        guard platform == .nhentai, let nhentaiLanguage else { return keyword }
+        let tokens = keyword
+            .split(whereSeparator: \.isWhitespace)
+            .filter { !$0.lowercased().hasPrefix("language:") }
+        let cleaned = tokens.joined(separator: " ")
+        return "\(cleaned) language:\(nhentaiLanguage.rawValue)"
+    }
+
+    nonisolated func isCustomized(for platform: WatchComicPlatform) -> Bool {
+        switch platform {
+        case .picacg:
+            picacgSort != "dd"
+        case .nhentai:
+            nhentaiSort != "date" || nhentaiLanguage != nil
+        case .jmComic:
+            jmComicSort != "mr"
+        case .eHentai, .htManga, .hitomi:
+            false
+        }
+    }
+}
+
+enum WatchSearchLanguage: String, CaseIterable, Identifiable {
+    case chinese
+    case japanese
+    case english
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .chinese:
+            "中文"
+        case .japanese:
+            "日文"
+        case .english:
+            "英文"
+        }
+    }
+}
+
+struct WatchSearchSortChoice: Identifiable {
+    let value: String
+    let title: String
+
+    var id: String { value }
 }
 
 enum WatchPageState<Value> {
@@ -77,6 +248,40 @@ enum WatchPageState<Value> {
     case loading
     case loaded(Value)
     case failed(String)
+}
+
+extension WatchComicPlatform {
+    var searchSortChoices: [WatchSearchSortChoice] {
+        switch self {
+        case .picacg:
+            [
+                WatchSearchSortChoice(value: "dd", title: "新到旧"),
+                WatchSearchSortChoice(value: "da", title: "旧到新"),
+                WatchSearchSortChoice(value: "ld", title: "最多喜欢"),
+                WatchSearchSortChoice(value: "vd", title: "最多指名")
+            ]
+        case .nhentai:
+            [
+                WatchSearchSortChoice(value: "date", title: "最近"),
+                WatchSearchSortChoice(value: "popular-today", title: "热门 | 今天"),
+                WatchSearchSortChoice(value: "popular-week", title: "热门 | 一周"),
+                WatchSearchSortChoice(value: "popular-month", title: "热门 | 本月"),
+                WatchSearchSortChoice(value: "popular", title: "热门 | 所有时间")
+            ]
+        case .jmComic:
+            [
+                WatchSearchSortChoice(value: "mr", title: "最新"),
+                WatchSearchSortChoice(value: "mv", title: "总排行"),
+                WatchSearchSortChoice(value: "mv_m", title: "月排行"),
+                WatchSearchSortChoice(value: "mv_w", title: "周排行"),
+                WatchSearchSortChoice(value: "mv_t", title: "日排行"),
+                WatchSearchSortChoice(value: "mp", title: "最多图片"),
+                WatchSearchSortChoice(value: "tf", title: "最多喜欢")
+            ]
+        case .eHentai, .htManga, .hitomi:
+            []
+        }
+    }
 }
 
 enum WatchComicAPIError: LocalizedError {
