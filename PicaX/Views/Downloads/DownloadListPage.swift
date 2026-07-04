@@ -17,9 +17,12 @@ struct DownloadListPage: View {
     @State private var sortDirection: DownloadSortDirection = .descending
     @State private var displayRecords: [DownloadRecord] = []
     @State private var exportingRecordID: String?
-    @State private var exportDocument = DownloadedComicZipDocument()
-    @State private var exportFileName = "漫画.zip"
+    @State private var archiveExportDocument = DownloadedComicExportDocument()
+    @State private var archiveExportFileName = "漫画.zip"
     @State private var showsArchiveExporter = false
+    @State private var pdfExportDocument = DownloadedComicExportDocument()
+    @State private var pdfExportFileName = "漫画.pdf"
+    @State private var showsPDFExporter = false
     @State private var exportFeedback: DownloadArchiveExportFeedback?
 
     var body: some View {
@@ -61,15 +64,23 @@ struct DownloadListPage: View {
         }
         .fileExporter(
             isPresented: $showsArchiveExporter,
-            document: exportDocument,
+            document: archiveExportDocument,
             contentType: .zip,
-            defaultFilename: exportFileName
+            defaultFilename: archiveExportFileName
         ) { result in
-            exportDocument.removeTemporaryFile()
-            exportDocument = DownloadedComicZipDocument()
-            if case .failure(let error) = result {
-                exportFeedback = DownloadArchiveExportFeedback(title: "导出失败", message: error.localizedDescription)
-            }
+            archiveExportDocument.removeTemporaryFile()
+            archiveExportDocument = DownloadedComicExportDocument()
+            handleExportResult(result)
+        }
+        .fileExporter(
+            isPresented: $showsPDFExporter,
+            document: pdfExportDocument,
+            contentType: .pdf,
+            defaultFilename: pdfExportFileName
+        ) { result in
+            pdfExportDocument.removeTemporaryFile()
+            pdfExportDocument = DownloadedComicExportDocument()
+            handleExportResult(result)
         }
         .alert(item: $exportFeedback) { feedback in
             Alert(
@@ -136,6 +147,12 @@ struct DownloadListPage: View {
         }
     }
 
+    private func handleExportResult(_ result: Result<URL, Error>) {
+        if case .failure(let error) = result {
+            exportFeedback = DownloadArchiveExportFeedback(title: "导出失败", message: error.localizedDescription)
+        }
+    }
+
     private var downloadList: some View {
         List {
             if displayRecords.isEmpty {
@@ -182,6 +199,13 @@ struct DownloadListPage: View {
                                 Label("以 ZIP 导出", systemImage: "archivebox")
                             }
                             .disabled(exportingRecordID != nil)
+
+                            Button {
+                                preparePDFExport(for: record)
+                            } label: {
+                                Label("以 PDF 导出", systemImage: "doc.richtext")
+                            }
+                            .disabled(exportingRecordID != nil)
                         }
                         .swipeActions(edge: .trailing) {
                             Button(role: .destructive) {
@@ -209,10 +233,28 @@ struct DownloadListPage: View {
         Task { @MainActor in
             do {
                 let export = try await downloadService.makeArchiveExport(for: record)
-                exportDocument.removeTemporaryFile()
-                exportDocument = DownloadedComicZipDocument(fileURL: export.fileURL, fileName: export.fileName)
-                exportFileName = export.fileName
+                archiveExportDocument.removeTemporaryFile()
+                archiveExportDocument = DownloadedComicExportDocument(fileURL: export.fileURL, fileName: export.fileName)
+                archiveExportFileName = export.fileName
                 showsArchiveExporter = true
+            } catch {
+                exportFeedback = DownloadArchiveExportFeedback(title: "导出失败", message: error.localizedDescription)
+            }
+            exportingRecordID = nil
+        }
+    }
+
+    private func preparePDFExport(for record: DownloadRecord) {
+        guard exportingRecordID == nil else { return }
+        exportingRecordID = record.id
+
+        Task { @MainActor in
+            do {
+                let export = try await downloadService.makePDFExport(for: record)
+                pdfExportDocument.removeTemporaryFile()
+                pdfExportDocument = DownloadedComicExportDocument(fileURL: export.fileURL, fileName: export.fileName)
+                pdfExportFileName = export.fileName
+                showsPDFExporter = true
             } catch {
                 exportFeedback = DownloadArchiveExportFeedback(title: "导出失败", message: error.localizedDescription)
             }
@@ -295,9 +337,9 @@ struct DownloadListPage: View {
     }
 }
 
-private struct DownloadedComicZipDocument: FileDocument {
-    static var readableContentTypes: [UTType] { [.zip] }
-    static var writableContentTypes: [UTType] { [.zip] }
+private struct DownloadedComicExportDocument: FileDocument {
+    static var readableContentTypes: [UTType] { [.zip, .pdf] }
+    static var writableContentTypes: [UTType] { [.zip, .pdf] }
 
     var fileURL: URL?
     var fileName: String?
@@ -314,7 +356,7 @@ private struct DownloadedComicZipDocument: FileDocument {
 
     func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
         guard let fileURL else {
-            throw DownloadedComicZipDocumentError.missingFile
+            throw DownloadedComicExportDocumentError.missingFile
         }
         let wrapper = try FileWrapper(url: fileURL, options: .immediate)
         wrapper.preferredFilename = fileName ?? fileURL.lastPathComponent
@@ -332,11 +374,11 @@ private struct DownloadedComicZipDocument: FileDocument {
     }
 }
 
-private enum DownloadedComicZipDocumentError: LocalizedError {
+private enum DownloadedComicExportDocumentError: LocalizedError {
     case missingFile
 
     var errorDescription: String? {
-        "ZIP 文件尚未生成。"
+        "导出文件尚未生成。"
     }
 }
 

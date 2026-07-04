@@ -21,7 +21,19 @@ struct PicaXDownloadActivityAttributes: ActivityAttributes {
         }
 
         var unitText: String {
-            "\(completedUnitCount)/\(max(totalUnitCount, 1))"
+            guard totalUnitCount > 1 else { return "" }
+            return "\(completedUnitCount)/\(max(totalUnitCount, 1)) 章"
+        }
+
+        var queueText: String {
+            var parts: [String] = []
+            if activeTaskCount > 0 {
+                parts.append("\(activeTaskCount) 个下载中")
+            }
+            if queuedTaskCount > 0 {
+                parts.append("\(queuedTaskCount) 个等待")
+            }
+            return parts.joined(separator: " · ")
         }
     }
 

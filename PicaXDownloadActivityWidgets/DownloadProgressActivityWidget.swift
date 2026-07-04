@@ -20,11 +20,15 @@ struct PicaXDownloadActivityWidget: Widget {
                 DynamicIslandExpandedRegion(.leading) {
                     Label("下载", systemImage: "arrow.down.circle")
                         .font(.headline)
+                        .padding(.leading, 8)
+                        .padding(.top, 2)
                 }
 
                 DynamicIslandExpandedRegion(.trailing) {
                     Text(context.state.progressText)
                         .font(.headline.monospacedDigit())
+                        .padding(.trailing, 8)
+                        .padding(.top, 2)
                 }
 
                 DynamicIslandExpandedRegion(.bottom) {
@@ -36,9 +40,19 @@ struct PicaXDownloadActivityWidget: Widget {
                         HStack {
                             Text(context.state.detail)
                                 .lineLimit(1)
-                            Spacer()
-                            Text(context.state.unitText)
-                                .monospacedDigit()
+                                .layoutPriority(1)
+                            if !context.state.unitText.isEmpty {
+                                Spacer()
+                                Text(context.state.unitText)
+                                    .monospacedDigit()
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.85)
+                            } else if !context.state.queueText.isEmpty {
+                                Spacer()
+                                Text(context.state.queueText)
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.85)
+                            }
                         }
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -46,6 +60,8 @@ struct PicaXDownloadActivityWidget: Widget {
                         ProgressView(value: context.state.clippedProgress)
                             .tint(.accentColor)
                     }
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 8)
                 }
             } compactLeading: {
                 Image(systemName: "arrow.down.circle.fill")
@@ -79,9 +95,19 @@ private struct DownloadActivityLockScreenView: View {
             HStack {
                 Text(state.detail)
                     .lineLimit(1)
-                Spacer()
-                Text(state.unitText)
-                    .monospacedDigit()
+                    .layoutPriority(1)
+                if !state.unitText.isEmpty {
+                    Spacer()
+                    Text(state.unitText)
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                } else if !state.queueText.isEmpty {
+                    Spacer()
+                    Text(state.queueText)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                }
             }
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -89,6 +115,7 @@ private struct DownloadActivityLockScreenView: View {
             ProgressView(value: state.clippedProgress)
                 .tint(.accentColor)
         }
+        .padding(.horizontal, 4)
         .padding(.vertical, 4)
     }
 }

@@ -605,6 +605,7 @@ private struct DownloadSettingsView: View {
     @AppStorage(DownloadSettingsKey.archiveFileNameTemplate) private var archiveFileNameTemplate = DownloadSettingsKey.defaultArchiveFileNameTemplate
     @AppStorage(DownloadSettingsKey.showsProgressNotifications) private var showsProgressNotifications = true
     @AppStorage(DownloadSettingsKey.showsProgressLiveActivity) private var showsProgressLiveActivity = true
+    @AppStorage(DownloadSettingsKey.progressNotificationUpdateIntervalSeconds) private var progressNotificationUpdateIntervalSeconds = DownloadSettingsKey.defaultProgressNotificationUpdateIntervalSeconds
 
     var body: some View {
         List {
@@ -627,11 +628,22 @@ private struct DownloadSettingsView: View {
             #if os(iOS)
             Section {
                 Toggle("常驻进度通知", isOn: $showsProgressNotifications)
+
+                if showsProgressNotifications {
+                    IntegerSettingsInputRow(
+                        title: "通知更新间隔",
+                        value: $progressNotificationUpdateIntervalSeconds,
+                        unit: "秒",
+                        lowerBound: 1,
+                        upperBound: 60
+                    )
+                }
+
                 Toggle("灵动岛下载进度", isOn: $showsProgressLiveActivity)
             } header: {
                 Text("进度显示")
             } footer: {
-                Text("常驻通知会在下载时显示队列进度；灵动岛开关会启用实时活动，支持的 iPhone 会在灵动岛显示。")
+                Text("常驻通知会按设定间隔合并更新队列进度；灵动岛开关会启用实时活动，支持的 iPhone 会在灵动岛显示。")
             }
             #endif
 
@@ -686,6 +698,9 @@ private struct DownloadSettingsView: View {
             downloadService.refreshProgressPresentation()
         }
         .onChange(of: showsProgressLiveActivity) { _, _ in
+            downloadService.refreshProgressPresentation()
+        }
+        .onChange(of: progressNotificationUpdateIntervalSeconds) { _, _ in
             downloadService.refreshProgressPresentation()
         }
         #endif

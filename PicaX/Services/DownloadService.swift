@@ -1,5 +1,7 @@
 import Combine
+import CoreGraphics
 import Foundation
+import ImageIO
 import zlib
 
 struct DownloadedChapterRecord: Identifiable, Equatable, Codable {
@@ -214,6 +216,11 @@ struct DownloadArchiveExport {
     let fileName: String
 }
 
+struct DownloadPDFExport {
+    let fileURL: URL
+    let fileName: String
+}
+
 enum DownloadArchiveExportError: LocalizedError {
     case noImages
     case invalidArchivePath
@@ -230,6 +237,23 @@ enum DownloadArchiveExportError: LocalizedError {
             "漫画文件过大，无法导出为 ZIP。"
         case .tooManyEntries:
             "漫画图片数量过多，无法导出为 ZIP。"
+        }
+    }
+}
+
+enum DownloadPDFExportError: LocalizedError {
+    case noImages
+    case invalidOutput
+    case unreadableImage(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .noImages:
+            "没有可导出的漫画图片。"
+        case .invalidOutput:
+            "无法创建 PDF 文件。"
+        case .unreadableImage(let name):
+            "无法读取图片：\(name)"
         }
     }
 }
@@ -288,6 +312,12 @@ final class DownloadService: ObservableObject {
         }
         if defaults.object(forKey: DownloadSettingsKey.showsProgressLiveActivity) == nil {
             defaults.set(true, forKey: DownloadSettingsKey.showsProgressLiveActivity)
+        }
+        if defaults.object(forKey: DownloadSettingsKey.progressNotificationUpdateIntervalSeconds) == nil {
+            defaults.set(
+                DownloadSettingsKey.defaultProgressNotificationUpdateIntervalSeconds,
+                forKey: DownloadSettingsKey.progressNotificationUpdateIntervalSeconds
+            )
         }
         records = PicaXSQLiteStore.loadDownloadRecords()
         tasks = Self.loadTasks(defaults: defaults, decoder: decoder)
@@ -469,6 +499,15 @@ final class DownloadService: ObservableObject {
             ? DownloadSettingsKey.defaultArchiveFileNameTemplate
             : storedFileNameTemplate
         return try await Self.makeArchiveExport(for: record, fileNameTemplate: fileNameTemplate)
+    }
+
+    func makePDFExport(for record: DownloadRecord) async throws -> DownloadPDFExport {
+        let storedFileNameTemplate = defaults.string(forKey: DownloadSettingsKey.archiveFileNameTemplate)
+            ?? DownloadSettingsKey.defaultArchiveFileNameTemplate
+        let fileNameTemplate = storedFileNameTemplate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? DownloadSettingsKey.defaultArchiveFileNameTemplate
+            : storedFileNameTemplate
+        return try await Self.makePDFExport(for: record, fileNameTemplate: fileNameTemplate)
     }
 
     private func startIfNeeded() {
@@ -982,7 +1021,10 @@ final class DownloadService: ObservableObject {
 
     private nonisolated static func makeArchiveExport(for record: DownloadRecord, fileNameTemplate: String) async throws -> DownloadArchiveExport {
         try await Task.detached(priority: .utility) {
-            let entries = try archiveEntries(for: record)
+            let imageURLs = try exportImageURLs(for: record)
+            let entries = imageURLs.enumerated().map { pageIndex, fileURL in
+                StreamingZipEntry(sourceURL: fileURL, archivePath: archiveFileName(pageNumber: pageIndex + 1, sourceURL: fileURL))
+            }
             guard !entries.isEmpty else { throw DownloadArchiveExportError.noImages }
 
             let fileName = archiveFileName(for: record, template: fileNameTemplate)
@@ -995,9 +1037,23 @@ final class DownloadService: ObservableObject {
         }.value
     }
 
-    private nonisolated static func archiveEntries(for record: DownloadRecord) throws -> [StreamingZipEntry] {
-        var entries: [StreamingZipEntry] = []
-        var pageNumber = 1
+    private nonisolated static func makePDFExport(for record: DownloadRecord, fileNameTemplate: String) async throws -> DownloadPDFExport {
+        try await Task.detached(priority: .utility) {
+            let imageURLs = try exportImageURLs(for: record)
+            guard !imageURLs.isEmpty else { throw DownloadPDFExportError.noImages }
+
+            let fileName = pdfFileName(for: record, template: fileNameTemplate)
+            let temporaryDirectoryURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("PicaX-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: temporaryDirectoryURL, withIntermediateDirectories: true)
+            let outputURL = temporaryDirectoryURL.appendingPathComponent(fileName)
+            try writePDF(imageURLs: imageURLs, to: outputURL)
+            return DownloadPDFExport(fileURL: outputURL, fileName: fileName)
+        }.value
+    }
+
+    private nonisolated static func exportImageURLs(for record: DownloadRecord) throws -> [URL] {
+        var imageURLs: [URL] = []
 
         for chapter in record.chapters.sorted(by: { $0.index < $1.index }) {
             guard let directoryURL = try? chapterDirectoryURL(item: record.item, chapter: chapter.chapter, index: chapter.index),
@@ -1012,12 +1068,43 @@ final class DownloadService: ObservableObject {
             for fileURL in fileURLs
                 .filter({ isImageFile($0) })
                 .sorted(by: { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }) {
-                entries.append(StreamingZipEntry(sourceURL: fileURL, archivePath: archiveFileName(pageNumber: pageNumber, sourceURL: fileURL)))
-                pageNumber += 1
+                imageURLs.append(fileURL)
             }
         }
 
-        return entries
+        return imageURLs
+    }
+
+    private nonisolated static func writePDF(imageURLs: [URL], to outputURL: URL) throws {
+        try? FileManager.default.removeItem(at: outputURL)
+        guard let consumer = CGDataConsumer(url: outputURL as CFURL),
+              let context = CGContext(consumer: consumer, mediaBox: nil, nil) else {
+            throw DownloadPDFExportError.invalidOutput
+        }
+
+        var pageCount = 0
+        for imageURL in imageURLs {
+            try autoreleasepool {
+                guard let imageSource = CGImageSourceCreateWithURL(imageURL as CFURL, nil),
+                      let image = CGImageSourceCreateImageAtIndex(imageSource, 0, nil) else {
+                    throw DownloadPDFExportError.unreadableImage(imageURL.lastPathComponent)
+                }
+
+                let pageWidth = max(CGFloat(image.width), 1)
+                let pageHeight = max(CGFloat(image.height), 1)
+                var mediaBox = CGRect(x: 0, y: 0, width: pageWidth, height: pageHeight)
+                context.beginPage(mediaBox: &mediaBox)
+                context.draw(image, in: mediaBox)
+                context.endPage()
+                pageCount += 1
+            }
+        }
+
+        context.closePDF()
+        guard pageCount > 0 else {
+            try? FileManager.default.removeItem(at: outputURL)
+            throw DownloadPDFExportError.noImages
+        }
     }
 
     private nonisolated static func archiveFileName(pageNumber: Int, sourceURL: URL) -> String {
@@ -1026,6 +1113,14 @@ final class DownloadService: ObservableObject {
     }
 
     private nonisolated static func archiveFileName(for record: DownloadRecord, template: String) -> String {
+        exportFileName(for: record, template: template, pathExtension: "zip")
+    }
+
+    private nonisolated static func pdfFileName(for record: DownloadRecord, template: String) -> String {
+        exportFileName(for: record, template: template, pathExtension: "pdf")
+    }
+
+    private nonisolated static func exportFileName(for record: DownloadRecord, template: String, pathExtension: String) -> String {
         let trimmedTemplate = template.trimmingCharacters(in: .whitespacesAndNewlines)
         let effectiveTemplate = trimmedTemplate.isEmpty ? "{title}" : trimmedTemplate
         let renderedName = effectiveTemplate
@@ -1035,11 +1130,15 @@ final class DownloadService: ObservableObject {
             .replacingOccurrences(of: "{date}", with: archiveExportDateString())
 
         var baseName = safeFileName(renderedName)
-        if baseName.lowercased().hasSuffix(".zip") {
-            baseName.removeLast(4)
-            baseName = safeFileName(baseName)
+        for knownExtension in ["zip", "pdf"] {
+            let suffix = ".\(knownExtension)"
+            if baseName.lowercased().hasSuffix(suffix) {
+                baseName.removeLast(suffix.count)
+                baseName = safeFileName(baseName)
+                break
+            }
         }
-        return "\(baseName).zip"
+        return "\(baseName).\(pathExtension)"
     }
 
     private nonisolated static func archiveExportDateString() -> String {

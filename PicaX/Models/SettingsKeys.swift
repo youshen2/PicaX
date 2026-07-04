@@ -145,8 +145,10 @@ enum DownloadSettingsKey {
     static let archiveFileNameTemplate = "settings.download.archiveFileNameTemplate"
     static let showsProgressNotifications = "settings.download.showsProgressNotifications"
     static let showsProgressLiveActivity = "settings.download.showsProgressLiveActivity"
+    static let progressNotificationUpdateIntervalSeconds = "settings.download.progressNotificationUpdateIntervalSeconds"
 
     static let defaultArchiveFileNameTemplate = "{title}"
+    static let defaultProgressNotificationUpdateIntervalSeconds = 2
 }
 
 enum SearchSettingsKey {

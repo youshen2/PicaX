@@ -11,7 +11,6 @@ final class DownloadProgressPresentationService {
     private static let progressNotificationID = "picax.download.progress"
     private static let notificationThreadID = "picax.downloads"
     private static let activityID = "picax.download.progress"
-    private static let notificationUpdateInterval: TimeInterval = 1.5
 
     private let defaults: UserDefaults
     private let notificationCenter: UNUserNotificationCenter
@@ -58,19 +57,18 @@ final class DownloadProgressPresentationService {
             return
         }
 
+        let updateInterval = notificationUpdateInterval
         let elapsed = Date().timeIntervalSince(lastNotificationDate)
         let shouldPresentImmediately = lastNotificationSnapshot == nil
             || lastNotificationSnapshot?.activeTaskID != snapshot.activeTaskID
-            || lastNotificationSnapshot?.statusText != snapshot.statusText
-            || abs((lastNotificationSnapshot?.progress ?? 0) - snapshot.progress) >= 0.04
-            || elapsed >= Self.notificationUpdateInterval
+            || elapsed >= updateInterval
 
         if shouldPresentImmediately {
             scheduledNotificationTask?.cancel()
             scheduledNotificationTask = nil
             presentPendingNotification()
         } else if scheduledNotificationTask == nil {
-            let delay = max(Self.notificationUpdateInterval - elapsed, 0.2)
+            let delay = max(updateInterval - elapsed, 0.2)
             scheduledNotificationTask = Task { [weak self] in
                 try? await Task.sleep(for: .seconds(delay))
                 self?.presentPendingNotification()
@@ -92,9 +90,9 @@ final class DownloadProgressPresentationService {
         Task {
             guard await notificationAuthorizationAllowsPresentation() else { return }
             let content = UNMutableNotificationContent()
-            content.title = "漫画下载中"
-            content.subtitle = snapshot.queueText
-            content.body = "\(snapshot.title) · \(snapshot.statusText)"
+            content.title = "下载进度 \(snapshot.progressText)"
+            content.subtitle = snapshot.title
+            content.body = snapshot.notificationBody
             content.threadIdentifier = Self.notificationThreadID
             content.targetContentIdentifier = Self.progressNotificationID
             content.relevanceScore = min(max(snapshot.progress, 0), 1)
@@ -134,6 +132,13 @@ final class DownloadProgressPresentationService {
         @unknown default:
             return false
         }
+    }
+
+    private var notificationUpdateInterval: TimeInterval {
+        let storedValue = defaults.object(forKey: DownloadSettingsKey.progressNotificationUpdateIntervalSeconds) == nil
+            ? DownloadSettingsKey.defaultProgressNotificationUpdateIntervalSeconds
+            : defaults.integer(forKey: DownloadSettingsKey.progressNotificationUpdateIntervalSeconds)
+        return TimeInterval(min(max(storedValue, 1), 60))
     }
 
     private func updateLiveActivity(snapshot: DownloadProgressPresentationSnapshot?) {
@@ -241,6 +246,34 @@ private struct DownloadProgressPresentationSnapshot: Equatable {
     }
 
     var queueText: String {
+        var parts = queueStatusParts
+        parts.append(progressText)
+        return parts.joined(separator: " · ")
+    }
+
+    var queueStatusText: String {
+        queueStatusParts.joined(separator: " · ")
+    }
+
+    var notificationBody: String {
+        var parts = [statusText]
+        if let chapterProgressText {
+            parts.append(chapterProgressText)
+        }
+        parts.append(contentsOf: queueStatusParts)
+        return parts.joined(separator: " · ")
+    }
+
+    var progressText: String {
+        "\(Int((progress * 100).rounded()))%"
+    }
+
+    var chapterProgressText: String? {
+        guard totalUnitCount > 1 else { return nil }
+        return "\(completedUnitCount)/\(totalUnitCount) 章"
+    }
+
+    private var queueStatusParts: [String] {
         var parts: [String] = []
         if activeTaskCount > 0 {
             parts.append("\(activeTaskCount) 个下载中")
@@ -248,8 +281,7 @@ private struct DownloadProgressPresentationSnapshot: Equatable {
         if queuedTaskCount > 0 {
             parts.append("\(queuedTaskCount) 个等待")
         }
-        parts.append("\(Int((progress * 100).rounded()))%")
-        return parts.joined(separator: " · ")
+        return parts
     }
 
     private static func currentPageProgress(for task: ComicDownloadTask) -> Double {
