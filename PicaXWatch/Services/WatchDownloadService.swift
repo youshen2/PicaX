@@ -424,6 +424,9 @@ final class WatchDownloadService: ObservableObject {
     }
 
     private func fileName(for urlString: String, pageIndex: Int) -> String {
+        if let preferred = WatchImageCacheService.preferredFileExtension(for: urlString) {
+            return String(format: "%04d.%@", pageIndex + 1, preferred)
+        }
         let ext = URL.picaxWatchResolved(from: urlString)?.pathExtension
         let normalized = ext?.isEmpty == false ? ext! : "jpg"
         return String(format: "%04d.%@", pageIndex + 1, normalized)

@@ -12,6 +12,7 @@
 		6D9FF2A02FEEE001008AA850 /* Zoomable in Frameworks */ = {isa = PBXBuildFile; productRef = 6D9FF2A22FEEE001008AA850 /* Zoomable */; };
 		6D9FF2B02FEEF001008AA850 /* CryptoSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 6D9FF2522FEEB001008AA850 /* CryptoSwift */; };
 		6D9FF3022FF01000008AA850 /* PicaXDownloadActivityWidgets.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 6D9FF3052FF01000008AA850 /* PicaXDownloadActivityWidgets.appex */; platformFilter = ios; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		6D9FF3202FF02000008AA850 /* libwebp in Frameworks */ = {isa = PBXBuildFile; productRef = 6D9FF3222FF02000008AA850 /* libwebp */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -100,6 +101,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				6D9FF2B02FEEF001008AA850 /* CryptoSwift in Frameworks */,
+				6D9FF3202FF02000008AA850 /* libwebp in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -186,6 +188,7 @@
 			name = "PicaX Watch App";
 			packageProductDependencies = (
 				6D9FF2522FEEB001008AA850 /* CryptoSwift */,
+				6D9FF3222FF02000008AA850 /* libwebp */,
 			);
 			productName = "PicaX Watch App";
 			productReference = 6D9FF2622FEEB200008AA850 /* PicaX Watch App.app */;
@@ -247,6 +250,7 @@
 			packageReferences = (
 				6D9FF2512FEEB001008AA850 /* XCRemoteSwiftPackageReference "CryptoSwift" */,
 				6D9FF2A12FEEE001008AA850 /* XCRemoteSwiftPackageReference "Zoomable" */,
+				6D9FF3212FF02000008AA850 /* XCRemoteSwiftPackageReference "libwebp-Xcode" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 6D9FF2342FEEA844008AA850 /* Products */;
@@ -758,6 +762,14 @@
 				kind = branch;
 			};
 		};
+		6D9FF3212FF02000008AA850 /* XCRemoteSwiftPackageReference "libwebp-Xcode" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/SDWebImage/libwebp-Xcode.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.5.0;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -770,6 +782,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 6D9FF2A12FEEE001008AA850 /* XCRemoteSwiftPackageReference "Zoomable" */;
 			productName = Zoomable;
+		};
+		6D9FF3222FF02000008AA850 /* libwebp */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 6D9FF3212FF02000008AA850 /* XCRemoteSwiftPackageReference "libwebp-Xcode" */;
+			productName = libwebp;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
