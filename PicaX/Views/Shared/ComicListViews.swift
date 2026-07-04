@@ -709,6 +709,8 @@ struct ComicSearchPage: View {
     @State private var showsAdvancedOptions = false
     @State private var searchSubmitSuppressionGeneration = 0
     @State private var suppressedSearchSubmitGeneration: Int?
+    @State private var searchCancelRestorationCandidate: String?
+    @State private var searchClearGeneration = 0
     @FocusState private var isSearchFocused: Bool
 
     init(
@@ -788,6 +790,12 @@ struct ComicSearchPage: View {
             tagSuggestions
         }
         .searchFocused($isSearchFocused)
+        .onChange(of: query) { oldValue, newValue in
+            handleSearchQueryChange(oldValue: oldValue, newValue: newValue)
+        }
+        .onChange(of: isSearchFocused) { _, newValue in
+            handleSearchFocusChange(isFocused: newValue)
+        }
         .onSubmit(of: .search) {
             if suppressedSearchSubmitGeneration != nil {
                 suppressedSearchSubmitGeneration = nil
@@ -898,6 +906,51 @@ struct ComicSearchPage: View {
 
     private func loadMore() async {
         await viewModel.loadMore(accounts: searchAccounts)
+    }
+
+    private func handleSearchQueryChange(oldValue: String, newValue: String) {
+        if newValue.isEmpty, !oldValue.isEmpty {
+            searchCancelRestorationCandidate = oldValue
+            searchClearGeneration += 1
+            let generation = searchClearGeneration
+
+            guard isSearchFocused else {
+                restoreQueryClearedBySearchCancel(generation: generation)
+                return
+            }
+
+            Task { @MainActor in
+                await Task.yield()
+                guard searchClearGeneration == generation else { return }
+
+                if isSearchFocused || !query.isEmpty {
+                    searchCancelRestorationCandidate = nil
+                } else {
+                    restoreQueryClearedBySearchCancel(generation: generation)
+                }
+            }
+        } else if !newValue.isEmpty {
+            searchCancelRestorationCandidate = nil
+            searchClearGeneration += 1
+        }
+    }
+
+    private func handleSearchFocusChange(isFocused: Bool) {
+        guard !isFocused, query.isEmpty else { return }
+        restoreQueryClearedBySearchCancel(generation: searchClearGeneration)
+    }
+
+    private func restoreQueryClearedBySearchCancel(generation: Int) {
+        guard searchClearGeneration == generation,
+              let candidate = searchCancelRestorationCandidate,
+              query.isEmpty else {
+            searchCancelRestorationCandidate = nil
+            return
+        }
+
+        searchCancelRestorationCandidate = nil
+        searchClearGeneration += 1
+        query = candidate
     }
 
     private var aggregateSearchTarget: ComicSearchTarget {
