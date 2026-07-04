@@ -2550,6 +2550,12 @@ private struct AboutSettingsView: View {
                 }
             }
 
+            Section("社区") {
+                Link(destination: URL(string: "https://t.me/pica_x")!) {
+                    Label("Telegram 群组", systemImage: "paperplane")
+                }
+            }
+
             Section("鸣谢") {
                 Link(destination: URL(string: "https://github.com/ccbkv/PicaComic")!) {
                     SettingsActionRow(
