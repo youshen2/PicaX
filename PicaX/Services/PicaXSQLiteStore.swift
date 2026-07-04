@@ -93,6 +93,15 @@ final class PicaXSQLiteDatabase {
         execute("CREATE INDEX IF NOT EXISTS idx_reading_history_sort ON reading_history(sort_date DESC)")
 
         execute("""
+        CREATE TABLE IF NOT EXISTS read_later (
+            id TEXT PRIMARY KEY NOT NULL,
+            sort_date REAL NOT NULL,
+            value BLOB NOT NULL
+        )
+        """)
+        execute("CREATE INDEX IF NOT EXISTS idx_read_later_sort ON read_later(sort_date DESC)")
+
+        execute("""
         CREATE TABLE IF NOT EXISTS reading_duration (
             id TEXT PRIMARY KEY NOT NULL,
             sort_date REAL NOT NULL,
@@ -195,6 +204,28 @@ enum PicaXSQLiteStore {
 
     static func clearReadingHistory() {
         clear(table: "reading_history")
+    }
+
+    static func loadReadLater() -> [ReadLaterRecord] {
+        loadValues("SELECT value FROM read_later ORDER BY sort_date DESC")
+    }
+
+    static func upsertReadLater(_ record: ReadLaterRecord) {
+        upsert(table: "read_later", id: record.id, sortDate: record.addedAt, value: record)
+    }
+
+    static func replaceReadLater(_ records: [ReadLaterRecord]) {
+        replace(table: "read_later", values: records) { record in
+            (record.id, record.addedAt)
+        }
+    }
+
+    static func deleteReadLater(id: String) {
+        delete(table: "read_later", id: id)
+    }
+
+    static func clearReadLater() {
+        clear(table: "read_later")
     }
 
     static func loadReadingDuration() -> [ReadingDurationRecord] {
@@ -378,6 +409,7 @@ enum PicaXSQLiteStore {
 
 enum SQLiteBackedTable: String {
     case readingHistory = "reading_history"
+    case readLater = "read_later"
     case readingDuration = "reading_duration"
     case searchHistory = "search_history"
     case platformAccounts = "platform_accounts"

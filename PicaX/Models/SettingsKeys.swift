@@ -3,6 +3,7 @@ import SwiftUI
 
 enum HomeSettingsKey {
     static let showsHistorySection = "settings.home.showsHistorySection"
+    static let showsReadLaterSection = "settings.home.showsReadLaterSection"
     static let showsReadingDurationSection = "settings.home.showsReadingDurationSection"
     static let showsDownloadSection = "settings.home.showsDownloadSection"
     static let showsAccountManagementEntry = "settings.home.showsAccountManagementEntry"
@@ -11,6 +12,7 @@ enum HomeSettingsKey {
 
 enum HomeSectionKind: String, CaseIterable, Identifiable {
     case history
+    case readLater
     case readingDuration
     case downloads
     case comicSources
@@ -22,6 +24,8 @@ enum HomeSectionKind: String, CaseIterable, Identifiable {
         switch self {
         case .history:
             "历史记录"
+        case .readLater:
+            "稍后再读"
         case .readingDuration:
             "阅读时长"
         case .downloads:
@@ -37,6 +41,8 @@ enum HomeSectionKind: String, CaseIterable, Identifiable {
         switch self {
         case .history:
             "clock.arrow.circlepath"
+        case .readLater:
+            "bookmark"
         case .readingDuration:
             "timer"
         case .downloads:
@@ -48,7 +54,7 @@ enum HomeSectionKind: String, CaseIterable, Identifiable {
         }
     }
 
-    static let defaultOrder: [HomeSectionKind] = [.history, .readingDuration, .downloads, .comicSources, .tools]
+    static let defaultOrder: [HomeSectionKind] = [.history, .readLater, .readingDuration, .downloads, .comicSources, .tools]
 
     static var defaultRawValue: String {
         rawValue(for: defaultOrder)

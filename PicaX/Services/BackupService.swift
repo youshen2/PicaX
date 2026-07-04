@@ -110,6 +110,7 @@ enum BackupContentKind: String, Codable, CaseIterable, Identifiable, Hashable {
     case settings
     case favorites
     case readingHistory
+    case readLater
     case readingDuration
     case searchHistory
     case blockingKeywords
@@ -127,6 +128,8 @@ enum BackupContentKind: String, Codable, CaseIterable, Identifiable, Hashable {
             "本地收藏"
         case .readingHistory:
             "阅读历史"
+        case .readLater:
+            "稍后再读"
         case .readingDuration:
             "阅读时长"
         case .searchHistory:
@@ -148,6 +151,8 @@ enum BackupContentKind: String, Codable, CaseIterable, Identifiable, Hashable {
             "本地收藏夹内容"
         case .readingHistory:
             "阅读记录和进度"
+        case .readLater:
+            "稍后再读列表"
         case .readingDuration:
             "阅读时长统计"
         case .searchHistory:
@@ -424,6 +429,11 @@ enum BackupService {
                 values[ReadingHistoryService.Key.records] = BackupDefaultValue.from(data)
             }
         }
+        if includedContent.contains(.readLater) {
+            if let data = encodeValue(PicaXSQLiteStore.loadReadLater()) {
+                values[ReadLaterService.Key.records] = BackupDefaultValue.from(data)
+            }
+        }
         if includedContent.contains(.readingDuration) {
             if let data = encodeValue(PicaXSQLiteStore.loadReadingDuration()) {
                 values[ReadingDurationService.Key.records] = BackupDefaultValue.from(data)
@@ -462,6 +472,13 @@ enum BackupService {
                 backup.defaults[ReadingHistoryService.Key.records],
                 as: ReadingHistoryRecord.self,
                 replace: PicaXSQLiteStore.replaceReadingHistory
+            )
+        }
+        if content.contains(.readLater) {
+            replaceSQLiteValue(
+                backup.defaults[ReadLaterService.Key.records],
+                as: ReadLaterRecord.self,
+                replace: PicaXSQLiteStore.replaceReadLater
             )
         }
         if content.contains(.readingDuration) {
@@ -522,6 +539,15 @@ enum BackupService {
                 importedData: importedData,
                 merge: mergeReadingHistory,
                 replace: PicaXSQLiteStore.replaceReadingHistory
+            )
+            return true
+        }
+        if key == ReadLaterService.Key.records {
+            mergeSQLiteValues(
+                existing: PicaXSQLiteStore.loadReadLater(),
+                importedData: importedData,
+                merge: mergeReadLater,
+                replace: PicaXSQLiteStore.replaceReadLater
             )
             return true
         }
@@ -595,6 +621,7 @@ enum BackupService {
         key == "picax.platformAccounts"
             || key == "picax.localFavorites.default"
             || key == ReadingHistoryService.Key.records
+            || key == ReadLaterService.Key.records
             || key == ReadingDurationService.Key.records
             || key == SearchHistorySettingsKey.records
             || key == DownloadSettingsKey.records
@@ -625,6 +652,9 @@ enum BackupService {
         }
         if key == ReadingHistoryService.Key.records {
             return .readingHistory
+        }
+        if key == ReadLaterService.Key.records {
+            return .readLater
         }
         if key == ReadingDurationService.Key.records {
             return .readingDuration
@@ -666,6 +696,9 @@ enum BackupService {
         }
         if key == ReadingHistoryService.Key.records {
             return mergeReadingHistory(existingData: existingData, importedData: importedData)
+        }
+        if key == ReadLaterService.Key.records {
+            return mergeReadLater(existingData: existingData, importedData: importedData)
         }
         if key == ReadingDurationService.Key.records {
             return mergeReadingDuration(existingData: existingData, importedData: importedData)
@@ -729,6 +762,20 @@ enum BackupService {
             }
         }
         return encodeValue(Array(values.values).sorted { $0.viewedAt > $1.viewedAt })
+    }
+
+    private static func mergeReadLater(existingData: Data, importedData: Data) -> Data? {
+        let local = decodeValue([ReadLaterRecord].self, from: existingData) ?? []
+        let imported = decodeValue([ReadLaterRecord].self, from: importedData) ?? []
+        var values = Dictionary(uniqueKeysWithValues: imported.map { ($0.id, $0) })
+        for record in local {
+            if let existing = values[record.id] {
+                values[record.id] = existing.addedAt > record.addedAt ? existing : record
+            } else {
+                values[record.id] = record
+            }
+        }
+        return encodeValue(Array(values.values).sorted { $0.addedAt > $1.addedAt })
     }
 
     private static func mergeReadingDuration(existingData: Data, importedData: Data) -> Data? {

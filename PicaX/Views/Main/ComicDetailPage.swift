@@ -9,6 +9,7 @@ import AppKit
 struct ComicDetailPage: View {
     @EnvironmentObject private var platformAccounts: PlatformAccountService
     @EnvironmentObject private var readingHistory: ReadingHistoryService
+    @EnvironmentObject private var readLater: ReadLaterService
 
     let item: ComicListItem
     let service: ComicContentService
@@ -98,6 +99,13 @@ struct ComicDetailPage: View {
                 }
                 .disabled(viewModel.loadedDetail == nil)
                 .accessibilityLabel("收藏")
+
+                Button {
+                    readLater.toggle(readLaterItem)
+                } label: {
+                    readLaterToolbarContent
+                }
+                .accessibilityLabel(readLater.contains(readLaterItem) ? "移出稍后再读" : "稍后再读")
             }
         }
         .task {
@@ -131,6 +139,10 @@ struct ComicDetailPage: View {
         return !detail.chapters.isEmpty
     }
 
+    private var readLaterItem: ComicListItem {
+        viewModel.loadedDetail?.item ?? item
+    }
+
     @ViewBuilder
     private var likeToolbarContent: some View {
         if isLiking {
@@ -142,6 +154,14 @@ struct ComicDetailPage: View {
                 .foregroundStyle(isLiked ? item.accentColor : .primary)
                 .accessibilityHint(isLiked ? "再次点击取消点赞" : "")
         }
+    }
+
+    @ViewBuilder
+    private var readLaterToolbarContent: some View {
+        let isSaved = readLater.contains(readLaterItem)
+        Image(systemName: isSaved ? "bookmark.fill" : "bookmark")
+            .symbolRenderingMode(isSaved ? .hierarchical : .monochrome)
+            .foregroundStyle(isSaved ? item.accentColor : .primary)
     }
 
     private var likeErrorBinding: Binding<Bool> {

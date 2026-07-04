@@ -270,6 +270,7 @@ private struct LoadingMoreRow: View {
 
 struct ComicListActionLink: View {
     @EnvironmentObject private var platformAccounts: PlatformAccountService
+    @EnvironmentObject private var readLater: ReadLaterService
 
     let item: ComicListItem
     let service: ComicContentService
@@ -329,6 +330,12 @@ struct ComicListActionLink: View {
             } label: {
                 Label("收藏", systemImage: "heart")
             }
+
+            Button {
+                readLater.toggle(item)
+            } label: {
+                Label(readLaterActionTitle, systemImage: readLaterActionImage)
+            }
         }
         .onAppear {
             onAppear?()
@@ -352,6 +359,14 @@ struct ComicListActionLink: View {
 
     private var readActionTitle: String {
         hasReadingProgress ? "继续阅读" : "从头阅读"
+    }
+
+    private var readLaterActionTitle: String {
+        readLater.contains(item) ? "移出稍后再读" : "稍后再读"
+    }
+
+    private var readLaterActionImage: String {
+        readLater.contains(item) ? "bookmark.slash" : "bookmark"
     }
 
     private var readerErrorBinding: Binding<Bool> {

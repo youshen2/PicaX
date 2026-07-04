@@ -8,14 +8,17 @@ import AppKit
 struct HomePage: View {
     @EnvironmentObject private var platformAccounts: PlatformAccountService
     @EnvironmentObject private var readingHistory: ReadingHistoryService
+    @EnvironmentObject private var readLater: ReadLaterService
     @EnvironmentObject private var readingDuration: ReadingDurationService
     @EnvironmentObject private var downloadService: DownloadService
     @Environment(\.scenePhase) private var scenePhase
 
     @AppStorage(ReadingHistoryService.Key.homeLimit) private var historyHomeLimit = 10
+    @AppStorage(ReadLaterService.Key.homeLimit) private var readLaterHomeLimit = 10
     @AppStorage(ReadingDurationService.Key.homeLimit) private var readingDurationHomeLimit = 6
     @AppStorage(DownloadSettingsKey.homeLimit) private var downloadHomeLimit = 8
     @AppStorage(HomeSettingsKey.showsHistorySection) private var showsHistorySection = true
+    @AppStorage(HomeSettingsKey.showsReadLaterSection) private var showsReadLaterSection = true
     @AppStorage(HomeSettingsKey.showsReadingDurationSection) private var showsReadingDurationSection = true
     @AppStorage(HomeSettingsKey.showsDownloadSection) private var showsDownloadSection = true
     @AppStorage(HomeSettingsKey.showsAccountManagementEntry) private var showsAccountManagementEntry = true
@@ -154,6 +157,22 @@ struct HomePage: View {
             } else {
                 Section("历史记录") {
                     HomeHistoryEntryLink(service: contentService)
+                }
+            }
+
+        case .readLater:
+            if showsReadLaterSection {
+                Section {
+                    HomeReadLaterCard(
+                        records: readLater.latest(limit: readLaterHomeLimit),
+                        service: contentService
+                    )
+                } header: {
+                    HomeReadLaterHeader(service: contentService)
+                }
+            } else {
+                Section("稍后再读") {
+                    HomeReadLaterEntryLink(service: contentService)
                 }
             }
 

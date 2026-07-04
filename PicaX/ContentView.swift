@@ -75,6 +75,7 @@ struct ContentView_Previews: PreviewProvider {
             .environmentObject(AccountService(store: AccountStore(defaults: .preview)))
             .environmentObject(PlatformAccountService())
             .environmentObject(ReadingHistoryService(defaults: .preview))
+            .environmentObject(ReadLaterService(defaults: .preview))
             .environmentObject(ReadingDurationService(defaults: .preview))
             .environmentObject(DownloadService(defaults: .preview))
             .environmentObject(BlockingKeywordService(defaults: .preview))

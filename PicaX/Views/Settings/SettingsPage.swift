@@ -269,7 +269,7 @@ private enum SettingsSearchItem: CaseIterable {
         case .reader:
             ["自动翻页", "点按翻页", "两指缩放", "双击缩放", "长按缩放", "预加载", "状态栏", "页码", "亮度", "深色模式"]
         case .home:
-            ["阅读时长", "阅读历史", "下载", "折叠", "首页卡片"]
+            ["阅读时长", "阅读历史", "稍后再读", "下载", "折叠", "首页卡片"]
         case .storage:
             ["缓存", "图片缓存", "详情缓存", "空间", "清空缓存"]
         case .blockingKeywords:
@@ -511,9 +511,11 @@ struct PlatformLoginView: View {
 
 private struct HomeSettingsView: View {
     @AppStorage(ReadingHistoryService.Key.homeLimit) private var homeLimit = 10
+    @AppStorage(ReadLaterService.Key.homeLimit) private var readLaterHomeLimit = 10
     @AppStorage(ReadingDurationService.Key.homeLimit) private var readingDurationHomeLimit = 6
     @AppStorage(DownloadSettingsKey.homeLimit) private var downloadHomeLimit = 8
     @AppStorage(HomeSettingsKey.showsHistorySection) private var showsHistorySection = true
+    @AppStorage(HomeSettingsKey.showsReadLaterSection) private var showsReadLaterSection = true
     @AppStorage(HomeSettingsKey.showsReadingDurationSection) private var showsReadingDurationSection = true
     @AppStorage(HomeSettingsKey.showsDownloadSection) private var showsDownloadSection = true
     @AppStorage(HomeSettingsKey.showsAccountManagementEntry) private var showsAccountManagementEntry = true
@@ -525,6 +527,7 @@ private struct HomeSettingsView: View {
             Section {
                 Toggle("账号管理入口", isOn: $showsAccountManagementEntry)
                 Toggle("阅读历史", isOn: $showsHistorySection)
+                Toggle("稍后再读", isOn: $showsReadLaterSection)
                 Toggle("阅读时长", isOn: $showsReadingDurationSection)
                 Toggle("下载", isOn: $showsDownloadSection)
             } header: {
@@ -536,6 +539,10 @@ private struct HomeSettingsView: View {
             Section {
                 if showsHistorySection {
                     IntegerSettingsInputRow(title: "阅读历史显示", value: $homeLimit, unit: "条", lowerBound: 1, upperBound: 30)
+                }
+
+                if showsReadLaterSection {
+                    IntegerSettingsInputRow(title: "稍后再读显示", value: $readLaterHomeLimit, unit: "条", lowerBound: 1, upperBound: 30)
                 }
 
                 if showsReadingDurationSection {
@@ -892,6 +899,7 @@ private struct BackupSettingsView: View {
     @EnvironmentObject private var accountService: AccountService
     @EnvironmentObject private var platformAccounts: PlatformAccountService
     @EnvironmentObject private var readingHistory: ReadingHistoryService
+    @EnvironmentObject private var readLater: ReadLaterService
     @EnvironmentObject private var readingDuration: ReadingDurationService
     @EnvironmentObject private var downloadService: DownloadService
     @EnvironmentObject private var blockingKeywords: BlockingKeywordService
@@ -1131,6 +1139,7 @@ private struct BackupSettingsView: View {
         accountService.reloadFromStore()
         platformAccounts.reloadFromDefaults()
         readingHistory.reloadFromDefaults()
+        readLater.reloadFromDefaults()
         readingDuration.reloadFromDefaults()
         downloadService.reloadFromDefaults()
         blockingKeywords.reloadFromDefaults()

@@ -226,5 +226,135 @@ final class ReadingHistoryService: ObservableObject {
         recordsByID = Dictionary(uniqueKeysWithValues: records.map { ($0.id, $0) })
         readingRecordsByID = recordsByID.filter { $0.value.isReadingRecord }
     }
+}
 
+struct ReadLaterRecord: Identifiable, Equatable, Codable {
+    let item: ComicListItem
+    var addedAt: Date
+
+    var id: String {
+        item.readingHistoryID
+    }
+
+    var addedAtText: String {
+        Self.relativeFormatter.localizedString(for: addedAt, relativeTo: Date())
+    }
+
+    var detailTimeText: String {
+        Self.detailFormatter.string(from: addedAt)
+    }
+
+    private static let relativeFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .short
+        return formatter
+    }()
+
+    private static let detailFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter
+    }()
+}
+
+@MainActor
+final class ReadLaterService: ObservableObject {
+    enum Key {
+        static let records = "picax.readLater.records"
+        static let homeLimit = "settings.readLater.homeLimit"
+        static let maxRecords = "settings.readLater.maxRecords"
+    }
+
+    @Published private(set) var records: [ReadLaterRecord] = [] {
+        didSet {
+            rebuildIndexes()
+        }
+    }
+
+    private let defaults: UserDefaults
+    private var recordsByID: [String: ReadLaterRecord] = [:]
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        if defaults.object(forKey: Key.homeLimit) == nil {
+            defaults.set(10, forKey: Key.homeLimit)
+        }
+        if defaults.object(forKey: Key.maxRecords) == nil {
+            defaults.set(300, forKey: Key.maxRecords)
+        }
+        records = PicaXSQLiteStore.loadReadLater()
+        rebuildIndexes()
+    }
+
+    func latest(limit: Int) -> [ReadLaterRecord] {
+        Array(records.prefix(max(limit, 0)))
+    }
+
+    func record(for item: ComicListItem) -> ReadLaterRecord? {
+        recordsByID[item.readingHistoryID]
+    }
+
+    func contains(_ item: ComicListItem) -> Bool {
+        record(for: item) != nil
+    }
+
+    func add(_ item: ComicListItem) {
+        let id = item.readingHistoryID
+        let record = ReadLaterRecord(item: item, addedAt: Date())
+        if let index = records.firstIndex(where: { $0.id == id }) {
+            records.remove(at: index)
+        }
+        records.insert(record, at: 0)
+        trimToLimit()
+        PicaXSQLiteStore.upsertReadLater(record)
+    }
+
+    func toggle(_ item: ComicListItem) {
+        if let record = record(for: item) {
+            remove(record)
+        } else {
+            add(item)
+        }
+    }
+
+    func remove(_ record: ReadLaterRecord) {
+        records.removeAll { $0.id == record.id }
+        PicaXSQLiteStore.deleteReadLater(id: record.id)
+    }
+
+    func remove(_ item: ComicListItem) {
+        let id = item.readingHistoryID
+        records.removeAll { $0.id == id }
+        PicaXSQLiteStore.deleteReadLater(id: id)
+    }
+
+    func clear() {
+        records.removeAll()
+        PicaXSQLiteStore.clearReadLater()
+    }
+
+    func trimToCurrentLimit() {
+        trimToLimit()
+        PicaXSQLiteStore.replaceReadLater(records)
+    }
+
+    func reloadFromDefaults() {
+        records = PicaXSQLiteStore.loadReadLater()
+    }
+
+    private func trimToLimit() {
+        let maxRecords = max(defaults.integer(forKey: Key.maxRecords), 1)
+        if records.count > maxRecords {
+            let removedRecords = records.suffix(from: maxRecords)
+            records = Array(records.prefix(maxRecords))
+            for record in removedRecords {
+                PicaXSQLiteStore.deleteReadLater(id: record.id)
+            }
+        }
+    }
+
+    private func rebuildIndexes() {
+        recordsByID = Dictionary(uniqueKeysWithValues: records.map { ($0.id, $0) })
+    }
 }
