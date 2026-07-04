@@ -4,13 +4,15 @@ on:
   push:
     branches:
       - main
+    tags:
+      - "v*"
   pull_request:
     branches:
       - main
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: build-unsigned-${{ github.ref }}
@@ -25,6 +27,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Select Xcode
         run: |
@@ -74,3 +78,74 @@ jobs:
           path: build/PicaX.dmg
           if-no-files-found: error
           retention-days: 14
+
+      - name: Generate release body
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TAG_NAME="${GITHUB_REF_NAME}"
+
+          PREVIOUS_TAG="$(git tag --sort=-creatordate | grep -v "^${TAG_NAME}$" | head -n 1 || true)"
+
+          cat > release_body.md <<EOF
+          这是由 GitHub Actions 自动构建的发行版本。
+
+          ## 下载说明
+
+          请在下方 Assets 中下载对应平台的构建产物。
+
+          - \`PicaX-unsigned.ipa\`：iOS 未签名 IPA
+          - \`PicaX-with-watch-unsigned.ipa\`：iOS + Watch 未签名 IPA
+          - \`PicaX-WatchApp-unsigned.zip\`：Watch App 未签名 ZIP
+          - \`PicaX.dmg\`：macOS 未签名 DMG
+
+          ## 安装说明
+
+          这些产物均为未签名构建，不能像 App Store 应用一样直接安装。
+
+          iOS 版本通常需要自行签名后安装。
+          Watch 版本通常需要自行通过XCode编译安装到Apple Watch。
+          macOS 版本如遇到系统安全拦截，需要在系统设置中手动允许打开，或自行重新签名。
+
+          ## 版本信息
+
+          - 版本：\`${TAG_NAME}\`
+          - Commit：\`${GITHUB_SHA}\`
+          - 构建编号：\`${GITHUB_RUN_NUMBER}\`
+
+          ## 更新内容
+
+          EOF
+
+          if [ -n "$PREVIOUS_TAG" ]; then
+            echo "从 \`${PREVIOUS_TAG}\` 到 \`${TAG_NAME}\` 的提交：" >> release_body.md
+            echo "" >> release_body.md
+            git log "${PREVIOUS_TAG}..${TAG_NAME}" --pretty=format:"- %s" >> release_body.md
+          else
+            echo "最近提交：" >> release_body.md
+            echo "" >> release_body.md
+            git log -20 --pretty=format:"- %s" >> release_body.md
+          fi
+
+          echo "" >> release_body.md
+          echo "" >> release_body.md
+          echo "---" >> release_body.md
+          echo "" >> release_body.md
+          echo "由 GitHub Actions 自动发布。" >> release_body.md
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: PicaX ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          body_path: release_body.md
+          draft: false
+          prerelease: false
+          files: |
+            build/PicaX-unsigned.ipa
+            build/PicaX-with-watch-unsigned.ipa
+            build/PicaX-WatchApp-unsigned.zip
+            build/PicaX.dmg
