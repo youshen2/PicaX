@@ -1577,6 +1577,8 @@ private struct ComicListSettingsView: View {
 
 private struct ComicDetailSettingsView: View {
     @AppStorage(DetailSettingsKey.usesCoverAccent) private var usesCoverAccent = true
+    @AppStorage(DetailSettingsKey.chapterSortOrder) private var chapterSortOrder = ComicDetailChapterSortOrder.ascending.rawValue
+    @AppStorage(DetailSettingsKey.showsChaptersAsSection) private var showsChaptersAsSection = false
 
     var body: some View {
         List {
@@ -1584,6 +1586,20 @@ private struct ComicDetailSettingsView: View {
                 Toggle("阅读按钮使用封面颜色", isOn: $usesCoverAccent)
             } footer: {
                 Text("开启后，详情页会根据封面提取颜色，用于阅读按钮和章节按钮。关闭后使用漫画来源的固定颜色。")
+            }
+
+            Section {
+                Picker("章节排序", selection: $chapterSortOrder) {
+                    ForEach(ComicDetailChapterSortOrder.allCases) { order in
+                        Text(order.title)
+                            .tag(order.rawValue)
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                Toggle("单独分区显示章节", isOn: $showsChaptersAsSection)
+            } footer: {
+                Text("开启后，章节会作为详情页里的独立分区显示，封面旁不再显示章节按钮。")
             }
         }
         .picaxInsetGroupedListStyle()

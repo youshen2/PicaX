@@ -198,6 +198,33 @@ enum ComicListSettingsKey {
 
 enum DetailSettingsKey {
     static let usesCoverAccent = "settings.detail.usesCoverAccent"
+    static let chapterSortOrder = "settings.detail.chapterSortOrder"
+    static let showsChaptersAsSection = "settings.detail.showsChaptersAsSection"
+}
+
+enum ComicDetailChapterSortOrder: String, CaseIterable, Identifiable {
+    case ascending
+    case descending
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .ascending:
+            "正序"
+        case .descending:
+            "倒序"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .ascending:
+            "arrow.down"
+        case .descending:
+            "arrow.up"
+        }
+    }
 }
 
 enum DetailCacheSettingsKey {

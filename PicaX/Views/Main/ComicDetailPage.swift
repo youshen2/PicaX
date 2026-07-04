@@ -178,6 +178,8 @@ struct ComicDetailPage: View {
 private struct ComicDetailContent: View {
     @EnvironmentObject private var platformAccounts: PlatformAccountService
     @EnvironmentObject private var readingHistory: ReadingHistoryService
+    @AppStorage(DetailSettingsKey.chapterSortOrder) private var chapterSortOrder = ComicDetailChapterSortOrder.ascending.rawValue
+    @AppStorage(DetailSettingsKey.showsChaptersAsSection) private var showsChaptersAsSection = false
     let detail: ComicDetailInfo
     let service: ComicContentService
     @State private var commentSheet: CommentSheetContext?
@@ -191,7 +193,7 @@ private struct ComicDetailContent: View {
         Group {
             List {
                 Section {
-                    ComicDetailHeader(detail: detail) { target in
+                    ComicDetailHeader(detail: detail, showsChapterButton: !showsChaptersAsSection) { target in
                         readerTarget = target
                     }
                         .padding(.vertical, 4)
@@ -210,6 +212,24 @@ private struct ComicDetailContent: View {
                 if detail.item.copyAction != nil {
                     Section("操作") {
                         ComicCopyActionButton(item: detail.item)
+                    }
+                }
+
+                if showsChaptersAsSection, !detail.chapters.isEmpty {
+                    Section {
+                        ForEach(sortedChapterDisplayItems) { item in
+                            Button {
+                                readerTarget = ComicReaderTarget(chapterIndex: item.originalIndex, ignoresProgress: true)
+                            } label: {
+                                ComicChapterRow(chapter: item.chapter)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    } header: {
+                        ComicChaptersSectionHeader(
+                            chapterCount: detail.chapters.count,
+                            sortOrder: $chapterSortOrder
+                        )
                     }
                 }
 
@@ -310,6 +330,14 @@ private struct ComicDetailContent: View {
     private func hasReadingProgress(for item: ComicListItem) -> Bool {
         readingHistory.hasReadingProgress(for: item)
     }
+
+    private var sortedChapterDisplayItems: [ComicChapterDisplayItem] {
+        ComicChapterDisplayItem.items(from: detail.chapters, sortOrder: selectedChapterSortOrder)
+    }
+
+    private var selectedChapterSortOrder: ComicDetailChapterSortOrder {
+        ComicDetailChapterSortOrder(rawValue: chapterSortOrder) ?? .ascending
+    }
 }
 
 private struct ComicUploaderInfoRow: View {
@@ -404,6 +432,7 @@ private struct ComicDetailHeader: View {
     @EnvironmentObject private var readingHistory: ReadingHistoryService
     @AppStorage(DetailSettingsKey.usesCoverAccent) private var usesCoverAccent = true
     let detail: ComicDetailInfo
+    let showsChapterButton: Bool
     let onOpenReader: (ComicReaderTarget) -> Void
     @State private var showsCoverPreview = false
     @State private var showsChapters = false
@@ -484,19 +513,21 @@ private struct ComicDetailHeader: View {
                     .glassProminentIfAvailable(tint: readButtonColor(accentColor))
                     .disabled(detail.chapters.isEmpty)
 
-                    Button {
-                        showsChapters = true
-                    } label: {
-                        Image(systemName: "list.bullet")
-                            .font(.headline)
-                            .frame(width: 44, height: 40)
-                            .contentShape(Circle())
+                    if showsChapterButton {
+                        Button {
+                            showsChapters = true
+                        } label: {
+                            Image(systemName: "list.bullet")
+                                .font(.headline)
+                                .frame(width: 44, height: 40)
+                                .contentShape(Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(accentColor)
+                        .background(accentColor.opacity(0.16), in: Circle())
+                        .disabled(detail.chapters.isEmpty)
+                        .accessibilityLabel("章节")
                     }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(accentColor)
-                    .background(accentColor.opacity(0.16), in: Circle())
-                    .disabled(detail.chapters.isEmpty)
-                    .accessibilityLabel("章节")
                 }
                 .padding(.top, 2)
             }
@@ -637,6 +668,7 @@ private struct CommentSheetContext: Identifiable {
 
 private struct ChapterListSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @AppStorage(DetailSettingsKey.chapterSortOrder) private var chapterSortOrder = ComicDetailChapterSortOrder.ascending.rawValue
     let chapters: [ComicChapter]
     var onSelect: ((Int) -> Void)?
 
@@ -644,18 +676,23 @@ private struct ChapterListSheet: View {
         NavigationStack {
             List {
                 Section {
-                    ForEach(Array(chapters.enumerated()), id: \.element.id) { index, chapter in
+                    ForEach(sortedChapterDisplayItems) { item in
                         if let onSelect {
                             Button {
-                                onSelect(index)
+                                onSelect(item.originalIndex)
                             } label: {
-                                ComicChapterRow(chapter: chapter)
+                                ComicChapterRow(chapter: item.chapter)
                             }
                             .buttonStyle(.plain)
                         } else {
-                            ComicChapterRow(chapter: chapter)
+                            ComicChapterRow(chapter: item.chapter)
                         }
                     }
+                } header: {
+                    ComicChaptersSectionHeader(
+                        chapterCount: chapters.count,
+                        sortOrder: $chapterSortOrder
+                    )
                 }
             }
             .picaxInsetGroupedListStyle()
@@ -672,6 +709,71 @@ private struct ChapterListSheet: View {
                 }
             }
         }
+    }
+
+    private var sortedChapterDisplayItems: [ComicChapterDisplayItem] {
+        ComicChapterDisplayItem.items(from: chapters, sortOrder: selectedChapterSortOrder)
+    }
+
+    private var selectedChapterSortOrder: ComicDetailChapterSortOrder {
+        ComicDetailChapterSortOrder(rawValue: chapterSortOrder) ?? .ascending
+    }
+}
+
+private struct ComicChapterDisplayItem: Identifiable {
+    let chapter: ComicChapter
+    let originalIndex: Int
+
+    var id: String {
+        "\(originalIndex)-\(chapter.id)"
+    }
+
+    static func items(from chapters: [ComicChapter], sortOrder: ComicDetailChapterSortOrder) -> [ComicChapterDisplayItem] {
+        let items = chapters.enumerated().map { index, chapter in
+            ComicChapterDisplayItem(chapter: chapter, originalIndex: index)
+        }
+
+        switch sortOrder {
+        case .ascending:
+            return items
+        case .descending:
+            return Array(items.reversed())
+        }
+    }
+}
+
+private struct ComicChaptersSectionHeader: View {
+    let chapterCount: Int
+    @Binding var sortOrder: String
+
+    var body: some View {
+        HStack {
+            Text("章节")
+            Text("\(chapterCount)")
+                .foregroundStyle(.secondary)
+
+            Spacer(minLength: 8)
+
+            Menu {
+                Picker("章节排序", selection: $sortOrder) {
+                    ForEach(ComicDetailChapterSortOrder.allCases) { order in
+                        Label(order.title, systemImage: order.systemImage)
+                            .tag(order.rawValue)
+                    }
+                }
+            } label: {
+                Image(systemName: selectedSortOrder.systemImage)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 28, height: 24)
+                    .contentShape(Rectangle())
+            }
+            .accessibilityLabel("章节排序")
+        }
+    }
+
+    private var selectedSortOrder: ComicDetailChapterSortOrder {
+        ComicDetailChapterSortOrder(rawValue: sortOrder) ?? .ascending
     }
 }
 
