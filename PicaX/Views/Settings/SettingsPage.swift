@@ -350,14 +350,12 @@ private struct AppBehaviorSettingsView: View {
 
 private struct WatchConnectivitySettingsView: View {
     @AppStorage(WatchConnectivitySettingsKey.syncsReadingHistory) private var syncsReadingHistory = true
-    @AppStorage(WatchConnectivitySettingsKey.syncsReadingHistoryWithWatch) private var syncsReadingHistoryWithWatch = true
     @AppStorage(WatchConnectivitySettingsKey.syncsLocalFavorites) private var syncsLocalFavorites = true
 
     var body: some View {
         List {
             Section {
                 Toggle("阅读记录同步", isOn: $syncsReadingHistory)
-                Toggle("与手表端同步", isOn: $syncsReadingHistoryWithWatch)
                 Toggle("本地收藏同步", isOn: $syncsLocalFavorites)
             } header: {
                 Text("同步内容")

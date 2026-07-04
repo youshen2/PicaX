@@ -29,6 +29,7 @@ struct WatchReaderPage: View {
     @State private var currentChapterIndex: Int
     @State private var currentChapterPosition: Int
     @State private var initialPageIndex: Int
+    @State private var presentsReaderMenu = false
 
     let item: WatchComicItem
     let totalChapters: Int
@@ -78,22 +79,38 @@ struct WatchReaderPage: View {
         }
         .navigationTitle(currentChapter.title)
         .toolbar {
-            ToolbarItemGroup(placement: .topBarTrailing) {
+            ToolbarItem(placement: .topBarTrailing) {
                 Button {
-                    Task { await load(force: true) }
+                    presentsReaderMenu = true
                 } label: {
-                    Image(systemName: "arrow.clockwise")
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 14, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.white)
+                        .frame(width: 32, height: 32)
+                        .watchReaderToolbarButtonSurface()
                 }
-                .accessibilityLabel("刷新")
-
-                Button {
-                    switchChapter(offset: 1)
-                } label: {
-                    Image(systemName: "chevron.down")
-                }
-                .disabled(!canSwitchNextChapter)
-                .accessibilityLabel("下一章")
+                .buttonStyle(.plain)
+                .accessibilityLabel("更多")
             }
+        }
+        .sheet(isPresented: $presentsReaderMenu) {
+            WatchReaderMenuSheet(
+                chapters: availableChapters,
+                chapterIndexes: availableChapterIndexes,
+                currentChapterPosition: currentChapterPosition,
+                canSwitchPreviousChapter: canSwitchPreviousChapter,
+                canSwitchNextChapter: canSwitchNextChapter,
+                chapterTitle: chapterMenuTitle(for:at:),
+                onSwitchPreviousChapter: {
+                    switchChapter(offset: -1)
+                },
+                onSwitchNextChapter: {
+                    switchChapter(offset: 1)
+                },
+                onSelectChapter: { position in
+                    switchChapter(to: position)
+                }
+            )
         }
         .task {
             await load()
@@ -279,20 +296,35 @@ struct WatchReaderPage: View {
         availableChapters.indices.contains(currentChapterPosition + 1)
     }
 
+    private var canSwitchPreviousChapter: Bool {
+        availableChapters.indices.contains(currentChapterPosition - 1)
+    }
+
     private func switchChapter(offset: Int) {
-        let nextPosition = currentChapterPosition + offset
-        guard availableChapters.indices.contains(nextPosition),
-              availableChapterIndexes.indices.contains(nextPosition) else {
+        switchChapter(to: currentChapterPosition + offset)
+    }
+
+    private func switchChapter(to position: Int) {
+        guard position != currentChapterPosition,
+              availableChapters.indices.contains(position),
+              availableChapterIndexes.indices.contains(position) else {
             return
         }
-        currentChapterPosition = nextPosition
-        currentChapter = availableChapters[nextPosition]
-        currentChapterIndex = availableChapterIndexes[nextPosition]
+        currentChapterPosition = position
+        currentChapter = availableChapters[position]
+        currentChapterIndex = availableChapterIndexes[position]
         currentPageIndex = 0
         currentPageCount = 0
         initialPageIndex = 0
         persistCurrentProgress()
         Task { await load(force: true) }
+    }
+
+    private func chapterMenuTitle(for chapter: WatchChapterItem, at position: Int) -> String {
+        let chapterNumber = availableChapterIndexes.indices.contains(position)
+            ? availableChapterIndexes[position] + 1
+            : position + 1
+        return "第 \(chapterNumber) 章 · \(chapter.title)"
     }
 
     private var readingMode: WatchReaderReadingMode {
@@ -354,6 +386,65 @@ struct WatchReaderPage: View {
             return EdgeInsets(top: 0, leading: edge, bottom: bottom, trailing: 0)
         case .bottomTrailing:
             return EdgeInsets(top: 0, leading: 0, bottom: bottom, trailing: edge)
+        }
+    }
+}
+
+private struct WatchReaderMenuSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let chapters: [WatchChapterItem]
+    let chapterIndexes: [Int]
+    let currentChapterPosition: Int
+    let canSwitchPreviousChapter: Bool
+    let canSwitchNextChapter: Bool
+    let chapterTitle: (WatchChapterItem, Int) -> String
+    let onSwitchPreviousChapter: () -> Void
+    let onSwitchNextChapter: () -> Void
+    let onSelectChapter: (Int) -> Void
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    Button {
+                        dismiss()
+                        onSwitchPreviousChapter()
+                    } label: {
+                        Label("上一章", systemImage: "chevron.up")
+                    }
+                    .disabled(!canSwitchPreviousChapter)
+
+                    Button {
+                        dismiss()
+                        onSwitchNextChapter()
+                    } label: {
+                        Label("下一章", systemImage: "chevron.down")
+                    }
+                    .disabled(!canSwitchNextChapter)
+                }
+
+                Section("章节列表") {
+                    ForEach(Array(chapters.enumerated()), id: \.offset) { position, chapter in
+                        Button {
+                            dismiss()
+                            onSelectChapter(position)
+                        } label: {
+                            HStack(spacing: 6) {
+                                Text(chapterTitle(chapter, position))
+                                    .lineLimit(2)
+                                Spacer(minLength: 4)
+                                if position == currentChapterPosition {
+                                    Image(systemName: "checkmark")
+                                        .font(.caption.weight(.semibold))
+                                }
+                            }
+                        }
+                        .disabled(position == currentChapterPosition || !chapterIndexes.indices.contains(position))
+                    }
+                }
+            }
+            .navigationTitle("更多")
         }
     }
 }
@@ -590,6 +681,35 @@ private struct WatchReaderSystemStatusCapsule: View {
 }
 
 private extension View {
+    @ViewBuilder
+    func watchReaderToolbarButtonSurface() -> some View {
+        if #available(watchOS 26.0, *) {
+            self
+                .background {
+                    Circle()
+                        .fill(.black.opacity(0.12))
+                }
+                .glassEffect(.regular.tint(.white.opacity(0.16)).interactive(), in: .circle)
+                .overlay {
+                    Circle()
+                        .stroke(.white.opacity(0.18), lineWidth: 0.5)
+                }
+                .shadow(color: .black.opacity(0.16), radius: 8, y: 4)
+        } else {
+            self.watchReaderToolbarButtonFallbackSurface()
+        }
+    }
+
+    func watchReaderToolbarButtonFallbackSurface() -> some View {
+        self
+            .background(.black.opacity(0.56), in: Circle())
+            .overlay {
+                Circle()
+                    .stroke(.white.opacity(0.12), lineWidth: 0.5)
+            }
+            .shadow(color: .black.opacity(0.16), radius: 8, y: 4)
+    }
+
     @ViewBuilder
     func watchReaderCapsuleSurface(usesLiquidGlass: Bool) -> some View {
         if usesLiquidGlass {
