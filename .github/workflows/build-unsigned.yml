@@ -43,14 +43,34 @@ jobs:
       - name: Build unsigned artifacts
         run: bash build_all_unsigned.sh
 
-      - name: Upload unsigned artifacts
+      - name: Upload iOS unsigned IPA
         uses: actions/upload-artifact@v4
         with:
-          name: PicaX-unsigned-${{ github.run_number }}
-          path: |
-            build/PicaX-unsigned.ipa
-            build/PicaX-with-watch-unsigned.ipa
-            build/PicaX-WatchApp-unsigned.zip
-            build/PicaX.dmg
+          name: PicaX-iOS-unsigned-${{ github.run_number }}
+          path: build/PicaX-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload iOS with Watch unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: PicaX-iOS-with-Watch-unsigned-${{ github.run_number }}
+          path: build/PicaX-with-watch-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload Watch unsigned ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: PicaX-WatchApp-unsigned-${{ github.run_number }}
+          path: build/PicaX-WatchApp-unsigned.zip
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload macOS unsigned DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: PicaX-macOS-unsigned-${{ github.run_number }}
+          path: build/PicaX.dmg
           if-no-files-found: error
           retention-days: 14
