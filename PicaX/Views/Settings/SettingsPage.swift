@@ -595,6 +595,7 @@ private struct HomeSettingsView: View {
 }
 
 private struct DownloadSettingsView: View {
+    @EnvironmentObject private var downloadService: DownloadService
     @AppStorage(DownloadSettingsKey.imageRetryCount) private var imageRetryCount = 2
     @AppStorage(DownloadSettingsKey.concurrentDownloadCount) private var concurrentDownloadCount = 1
     @AppStorage(DownloadSettingsKey.speedLimitEnabled) private var speedLimitEnabled = false
@@ -602,6 +603,8 @@ private struct DownloadSettingsView: View {
     @AppStorage(DownloadSettingsKey.readsImagesFromCache) private var readsImagesFromCache = true
     @AppStorage(DownloadSettingsKey.downloadsCommentsByDefault) private var downloadsCommentsByDefault = false
     @AppStorage(DownloadSettingsKey.archiveFileNameTemplate) private var archiveFileNameTemplate = DownloadSettingsKey.defaultArchiveFileNameTemplate
+    @AppStorage(DownloadSettingsKey.showsProgressNotifications) private var showsProgressNotifications = true
+    @AppStorage(DownloadSettingsKey.showsProgressLiveActivity) private var showsProgressLiveActivity = true
 
     var body: some View {
         List {
@@ -620,6 +623,17 @@ private struct DownloadSettingsView: View {
             } footer: {
                 Text("开启后，下载会优先使用已缓存的图片数据。关闭后，每次下载都绕过图片缓存并从网络重新获取。")
             }
+
+            #if os(iOS)
+            Section {
+                Toggle("常驻进度通知", isOn: $showsProgressNotifications)
+                Toggle("灵动岛下载进度", isOn: $showsProgressLiveActivity)
+            } header: {
+                Text("进度显示")
+            } footer: {
+                Text("常驻通知会在下载时显示队列进度；灵动岛开关会启用实时活动，支持的 iPhone 会在灵动岛显示。")
+            }
+            #endif
 
             Section {
                 VStack(alignment: .leading, spacing: 8) {
@@ -667,6 +681,14 @@ private struct DownloadSettingsView: View {
         .picaxInsetGroupedListStyle()
         .navigationTitle("下载")
         .picaxHidesTabBar()
+        #if os(iOS)
+        .onChange(of: showsProgressNotifications) { _, _ in
+            downloadService.refreshProgressPresentation()
+        }
+        .onChange(of: showsProgressLiveActivity) { _, _ in
+            downloadService.refreshProgressPresentation()
+        }
+        #endif
     }
 }
 

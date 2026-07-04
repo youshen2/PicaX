@@ -250,6 +250,9 @@ final class DownloadService: ObservableObject {
     private let decoder = JSONDecoder()
     private var workerTask: Task<Void, Never>?
     private var accountProvider: ((ComicPlatform) -> PlatformAccount?)?
+    #if os(iOS)
+    private lazy var progressPresentationService = DownloadProgressPresentationService(defaults: defaults)
+    #endif
 
     init(
         defaults: UserDefaults = .standard,
@@ -280,6 +283,12 @@ final class DownloadService: ObservableObject {
         if defaults.object(forKey: DownloadSettingsKey.archiveFileNameTemplate) == nil {
             defaults.set(DownloadSettingsKey.defaultArchiveFileNameTemplate, forKey: DownloadSettingsKey.archiveFileNameTemplate)
         }
+        if defaults.object(forKey: DownloadSettingsKey.showsProgressNotifications) == nil {
+            defaults.set(true, forKey: DownloadSettingsKey.showsProgressNotifications)
+        }
+        if defaults.object(forKey: DownloadSettingsKey.showsProgressLiveActivity) == nil {
+            defaults.set(true, forKey: DownloadSettingsKey.showsProgressLiveActivity)
+        }
         records = PicaXSQLiteStore.loadDownloadRecords()
         tasks = Self.loadTasks(defaults: defaults, decoder: decoder)
     }
@@ -291,6 +300,7 @@ final class DownloadService: ObservableObject {
     func configure(accountProvider: @escaping (ComicPlatform) -> PlatformAccount?) {
         self.accountProvider = accountProvider
         startIfNeeded()
+        refreshProgressPresentation()
     }
 
     func latest(limit: Int) -> [DownloadRecord] {
@@ -434,6 +444,13 @@ final class DownloadService: ObservableObject {
         records = PicaXSQLiteStore.loadDownloadRecords()
         tasks = Self.loadTasks(defaults: defaults, decoder: decoder)
         startIfNeeded()
+        refreshProgressPresentation()
+    }
+
+    func refreshProgressPresentation() {
+        #if os(iOS)
+        progressPresentationService.update(tasks: tasks)
+        #endif
     }
 
     func storageUsage() async -> DownloadStorageUsage {
@@ -796,6 +813,7 @@ final class DownloadService: ObservableObject {
         }
         guard let data = try? encoder.encode(persistedTasks) else { return }
         defaults.set(data, forKey: DownloadSettingsKey.tasks)
+        refreshProgressPresentation()
     }
 
     private static func loadTasks(defaults: UserDefaults, decoder: JSONDecoder) -> [ComicDownloadTask] {

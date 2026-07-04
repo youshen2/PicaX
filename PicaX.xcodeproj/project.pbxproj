@@ -11,6 +11,7 @@
 		6D9FF26A2FEEB200008AA850 /* PicaX Watch App.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 6D9FF2622FEEB200008AA850 /* PicaX Watch App.app */; platformFilter = ios; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		6D9FF2A02FEEE001008AA850 /* Zoomable in Frameworks */ = {isa = PBXBuildFile; productRef = 6D9FF2A22FEEE001008AA850 /* Zoomable */; };
 		6D9FF2B02FEEF001008AA850 /* CryptoSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 6D9FF2522FEEB001008AA850 /* CryptoSwift */; };
+		6D9FF3022FF01000008AA850 /* PicaXDownloadActivityWidgets.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 6D9FF3052FF01000008AA850 /* PicaXDownloadActivityWidgets.appex */; platformFilter = ios; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -20,6 +21,13 @@
 			proxyType = 1;
 			remoteGlobalIDString = 6D9FF2662FEEB200008AA850;
 			remoteInfo = "PicaX Watch App";
+		};
+		6D9FF3032FF01000008AA850 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 6D9FF22B2FEEA844008AA850 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 6D9FF3082FF01000008AA850;
+			remoteInfo = PicaXDownloadActivityWidgets;
 		};
 /* End PBXContainerItemProxy section */
 
@@ -35,11 +43,23 @@
 			name = "Embed Watch Content";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		6D9FF3042FF01000008AA850 /* Embed App Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				6D9FF3022FF01000008AA850 /* PicaXDownloadActivityWidgets.appex in Embed App Extensions */,
+			);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		6D9FF2332FEEA844008AA850 /* PicaX.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PicaX.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		6D9FF2622FEEB200008AA850 /* PicaX Watch App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "PicaX Watch App.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		6D9FF3052FF01000008AA850 /* PicaXDownloadActivityWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = PicaXDownloadActivityWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -56,6 +76,11 @@
 		6D9FF2612FEEB200008AA850 /* PicaXWatch */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = PicaXWatch;
+			sourceTree = "<group>";
+		};
+		6D9FF3062FF01000008AA850 /* PicaXDownloadActivityWidgets */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = PicaXDownloadActivityWidgets;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -78,6 +103,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		6D9FF3072FF01000008AA850 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -87,6 +119,7 @@
 				6D9FF2352FEEA844008AA850 /* PicaX */,
 				6D9FF2602FEEB200008AA850 /* PicaXShared */,
 				6D9FF2612FEEB200008AA850 /* PicaXWatch */,
+				6D9FF3062FF01000008AA850 /* PicaXDownloadActivityWidgets */,
 				6D9FF2342FEEA844008AA850 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -96,6 +129,7 @@
 			children = (
 				6D9FF2332FEEA844008AA850 /* PicaX.app */,
 				6D9FF2622FEEB200008AA850 /* PicaX Watch App.app */,
+				6D9FF3052FF01000008AA850 /* PicaXDownloadActivityWidgets.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -110,12 +144,14 @@
 				6D9FF22F2FEEA844008AA850 /* Sources */,
 				6D9FF2302FEEA844008AA850 /* Frameworks */,
 				6D9FF2312FEEA844008AA850 /* Resources */,
+				6D9FF3042FF01000008AA850 /* Embed App Extensions */,
 				6D9FF26B2FEEB200008AA850 /* Embed Watch Content */,
 				6D9FF2532FEEB102008AA850 /* Generate Build Environment */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				6D9FF30B2FF01000008AA850 /* PBXTargetDependency */,
 				6D9FF26D2FEEB200008AA850 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
@@ -155,6 +191,29 @@
 			productReference = 6D9FF2622FEEB200008AA850 /* PicaX Watch App.app */;
 			productType = "com.apple.product-type.application";
 		};
+		6D9FF3082FF01000008AA850 /* PicaXDownloadActivityWidgets */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 6D9FF30E2FF01000008AA850 /* Build configuration list for PBXNativeTarget "PicaXDownloadActivityWidgets" */;
+			buildPhases = (
+				6D9FF30A2FF01000008AA850 /* Sources */,
+				6D9FF3072FF01000008AA850 /* Frameworks */,
+				6D9FF3092FF01000008AA850 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				6D9FF2602FEEB200008AA850 /* PicaXShared */,
+				6D9FF3062FF01000008AA850 /* PicaXDownloadActivityWidgets */,
+			);
+			name = PicaXDownloadActivityWidgets;
+			packageProductDependencies = (
+			);
+			productName = PicaXDownloadActivityWidgets;
+			productReference = 6D9FF3052FF01000008AA850 /* PicaXDownloadActivityWidgets.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -169,6 +228,9 @@
 						CreatedOnToolsVersion = 26.6;
 					};
 					6D9FF2662FEEB200008AA850 = {
+						CreatedOnToolsVersion = 26.6;
+					};
+					6D9FF3082FF01000008AA850 = {
 						CreatedOnToolsVersion = 26.6;
 					};
 				};
@@ -193,6 +255,7 @@
 			targets = (
 				6D9FF2322FEEA844008AA850 /* PicaX */,
 				6D9FF2662FEEB200008AA850 /* PicaX Watch App */,
+				6D9FF3082FF01000008AA850 /* PicaXDownloadActivityWidgets */,
 			);
 		};
 /* End PBXProject section */
@@ -206,6 +269,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		6D9FF2652FEEB200008AA850 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		6D9FF3092FF01000008AA850 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -253,6 +323,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		6D9FF30A2FF01000008AA850 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -261,6 +338,12 @@
 			platformFilter = ios;
 			target = 6D9FF2662FEEB200008AA850 /* PicaX Watch App */;
 			targetProxy = 6D9FF26C2FEEB200008AA850 /* PBXContainerItemProxy */;
+		};
+		6D9FF30B2FF01000008AA850 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			platformFilter = ios;
+			target = 6D9FF3082FF01000008AA850 /* PicaXDownloadActivityWidgets */;
+			targetProxy = 6D9FF3032FF01000008AA850 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -553,6 +636,70 @@
 			};
 			name = Release;
 		};
+		6D9FF30C2FF01000008AA850 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2606291;
+				DEVELOPMENT_TEAM = YG7LA7A4T5;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "BuildSupport/PicaXDownloadActivityWidgets-Info.plist";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = moye.PicaX.downloadActivityWidgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		6D9FF30D2FF01000008AA850 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2606291;
+				DEVELOPMENT_TEAM = YG7LA7A4T5;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "BuildSupport/PicaXDownloadActivityWidgets-Info.plist";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = moye.PicaX.downloadActivityWidgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -579,6 +726,15 @@
 			buildConfigurations = (
 				6D9FF2682FEEB200008AA850 /* Debug */,
 				6D9FF2692FEEB200008AA850 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		6D9FF30E2FF01000008AA850 /* Build configuration list for PBXNativeTarget "PicaXDownloadActivityWidgets" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6D9FF30C2FF01000008AA850 /* Debug */,
+				6D9FF30D2FF01000008AA850 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

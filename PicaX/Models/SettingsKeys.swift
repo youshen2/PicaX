@@ -143,6 +143,8 @@ enum DownloadSettingsKey {
     static let readsImagesFromCache = "settings.download.readsImagesFromCache"
     static let downloadsCommentsByDefault = "settings.download.downloadsCommentsByDefault"
     static let archiveFileNameTemplate = "settings.download.archiveFileNameTemplate"
+    static let showsProgressNotifications = "settings.download.showsProgressNotifications"
+    static let showsProgressLiveActivity = "settings.download.showsProgressLiveActivity"
 
     static let defaultArchiveFileNameTemplate = "{title}"
 }
