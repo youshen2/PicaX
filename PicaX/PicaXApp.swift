@@ -57,6 +57,10 @@ struct PicaXApp: App {
             .onReceive(NotificationCenter.default.publisher(for: .picaxLocalFavoritesDidChange)) { _ in
                 syncAccountsToWatch()
             }
+            .onReceive(NotificationCenter.default.publisher(for: .picaxReadLaterDidChange)) { _ in
+                readLaterService.reloadFromDefaults()
+                syncAccountsToWatch()
+            }
             .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)) { _ in
                 syncAccountsToWatch()
             }
@@ -69,7 +73,8 @@ struct PicaXApp: App {
     private func syncAccountsToWatch() {
         phoneWatchAccountSyncService.sync(
             platformAccountService: platformAccountService,
-            syncsLocalFavorites: WatchConnectivitySettings.syncsLocalFavorites()
+            syncsLocalFavorites: WatchConnectivitySettings.syncsLocalFavorites(),
+            syncsReadLater: WatchConnectivitySettings.syncsReadLater()
         )
     }
     #endif

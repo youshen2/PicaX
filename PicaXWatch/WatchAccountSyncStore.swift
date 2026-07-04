@@ -11,6 +11,7 @@ final class WatchAccountSyncStore: NSObject, ObservableObject {
 
     private static let defaultsKey = "picax.watch.accountSnapshot"
     private let localFavoritesStore = WatchLocalFavoritesStore()
+    private let readLaterStore = WatchReadLaterStore()
 
     override init() {
         snapshot = Self.loadSnapshot()
@@ -70,6 +71,24 @@ final class WatchAccountSyncStore: NSObject, ObservableObject {
         localFavoritesStore.contains(item)
     }
 
+    func addReadLater(_ item: WatchComicItem) {
+        let records = readLaterStore.add(item)
+        snapshot.readLater = records
+        persist(snapshot)
+        syncReadLater(records)
+    }
+
+    func removeReadLater(_ item: WatchComicItem) {
+        let records = readLaterStore.remove(item)
+        snapshot.readLater = records
+        persist(snapshot)
+        syncReadLater(records)
+    }
+
+    func isReadLater(_ item: WatchComicItem) -> Bool {
+        readLaterStore.contains(item)
+    }
+
     func syncLocalFavorites(_ favorites: [WatchLocalFavoriteItem]? = nil) {
         guard WCSession.isSupported() else { return }
         let localFavorites = favorites ?? localFavoritesStore.load()
@@ -94,10 +113,35 @@ final class WatchAccountSyncStore: NSObject, ObservableObject {
         }
     }
 
+    func syncReadLater(_ records: [WatchReadLaterItem]? = nil) {
+        guard WCSession.isSupported() else { return }
+        let readLater = records ?? readLaterStore.load()
+        let message = WatchAccountSyncEnvelope.message(
+            forReadLater: readLater,
+            deletions: readLaterStore.loadDeletions()
+        )
+        let session = WCSession.default
+
+        if session.isReachable {
+            session.sendMessage(message) { [weak self] reply in
+                Task { @MainActor in
+                    self?.apply(message: reply)
+                }
+            } errorHandler: { [weak self] error in
+                Task { @MainActor in
+                    self?.lastErrorMessage = error.localizedDescription
+                }
+            }
+        } else {
+            lastErrorMessage = "iPhone 暂不可达，稍后再读会在下次同步时合并。"
+        }
+    }
+
     private func apply(message: [String: Any]) {
         guard let snapshot = WatchAccountSyncEnvelope.snapshot(from: message) else { return }
         var mergedSnapshot = snapshot
         mergedSnapshot.localFavorites = localFavoritesStore.merge(snapshot.localFavorites)
+        mergedSnapshot.readLater = readLaterStore.merge(snapshot.readLater)
         self.snapshot = mergedSnapshot
         lastErrorMessage = nil
         persist(mergedSnapshot)
@@ -115,6 +159,7 @@ final class WatchAccountSyncStore: NSObject, ObservableObject {
         }
         var loadedSnapshot = snapshot
         loadedSnapshot.localFavorites = WatchLocalFavoritesStore().merge(snapshot.localFavorites)
+        loadedSnapshot.readLater = WatchReadLaterStore().merge(snapshot.readLater)
         return loadedSnapshot
     }
 }
@@ -132,6 +177,7 @@ extension WatchAccountSyncStore: WCSessionDelegate {
             self.apply(message: session.receivedApplicationContext)
             self.requestRefresh()
             self.syncLocalFavorites()
+            self.syncReadLater()
         }
     }
 
@@ -141,6 +187,7 @@ extension WatchAccountSyncStore: WCSessionDelegate {
             if session.isReachable {
                 self.requestRefresh()
                 self.syncLocalFavorites()
+                self.syncReadLater()
             }
         }
     }
@@ -196,6 +243,19 @@ extension WatchAccountSyncStore {
                     pageCount: nil,
                     likesCount: nil,
                     favoriteDate: Date()
+                )
+            ],
+            readLater: [
+                WatchReadLaterItem(
+                    id: "preview-read-later",
+                    platformID: "picacg",
+                    title: "稍后再读示例",
+                    subtitle: "从 iPhone 同步",
+                    coverURLString: "",
+                    tags: ["Preview"],
+                    pageCount: nil,
+                    likesCount: nil,
+                    addedAt: Date()
                 )
             ]
         )

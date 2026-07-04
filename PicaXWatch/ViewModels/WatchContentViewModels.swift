@@ -24,6 +24,15 @@ final class WatchComicListViewModel: ObservableObject {
         state = .loaded(items)
     }
 
+    func loadReadLater(force: Bool = false) async {
+        if case .loaded = state, !force { return }
+        let items = WatchReadLaterStore().load().map(WatchComicItem.init(readLater:))
+        isLoadingMore = false
+        hasMore = false
+        currentPage = 0
+        state = .loaded(items)
+    }
+
     func loadExplore(platform: WatchComicPlatform, kind: WatchDiscoveryKind, account: WatchPlatformAccount?, force: Bool = false) async {
         if case .loaded = state, !force { return }
         state = .loading

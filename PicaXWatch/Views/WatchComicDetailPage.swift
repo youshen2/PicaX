@@ -148,6 +148,19 @@ struct WatchComicDetailPage: View {
                 )
             }
 
+            Button {
+                if accountSyncStore.isReadLater(detail.item) {
+                    accountSyncStore.removeReadLater(detail.item)
+                } else {
+                    accountSyncStore.addReadLater(detail.item)
+                }
+            } label: {
+                Label(
+                    accountSyncStore.isReadLater(detail.item) ? "移出稍后再读" : "稍后再读",
+                    systemImage: accountSyncStore.isReadLater(detail.item) ? "bookmark.slash" : "bookmark"
+                )
+            }
+
             if let record = WatchReadingHistoryStore().record(for: detail.item),
                detail.chapters.indices.contains(record.progress.chapterIndex) {
                 let chapter = detail.chapters[record.progress.chapterIndex]

@@ -21,10 +21,11 @@ final class PhoneWatchAccountSyncService: NSObject, ObservableObject {
         }
     }
 
-    func sync(platformAccountService: PlatformAccountService, syncsLocalFavorites: Bool) {
+    func sync(platformAccountService: PlatformAccountService, syncsLocalFavorites: Bool, syncsReadLater: Bool) {
         sync(snapshot: WatchAccountSnapshot(
             platformAccountService: platformAccountService,
-            syncsLocalFavorites: syncsLocalFavorites
+            syncsLocalFavorites: syncsLocalFavorites,
+            syncsReadLater: syncsReadLater
         ))
     }
 
@@ -82,6 +83,9 @@ extension PhoneWatchAccountSyncService: WCSessionDelegate {
             } else if WatchAccountSyncEnvelope.isLocalFavoritesSync(message) {
                 self.mergeLocalFavorites(from: message)
                 self.sendLatestSnapshot()
+            } else if WatchAccountSyncEnvelope.isReadLaterSync(message) {
+                self.mergeReadLater(from: message)
+                self.sendLatestSnapshot()
             }
         }
     }
@@ -98,6 +102,11 @@ extension PhoneWatchAccountSyncService: WCSessionDelegate {
                 self.sendLatestSnapshot()
             } else if WatchAccountSyncEnvelope.isLocalFavoritesSync(message) {
                 self.mergeLocalFavorites(from: message)
+                let reply = WatchAccountSyncEnvelope.message(for: self.latestSnapshot)
+                replyHandler(reply)
+                self.sendLatestSnapshot()
+            } else if WatchAccountSyncEnvelope.isReadLaterSync(message) {
+                self.mergeReadLater(from: message)
                 let reply = WatchAccountSyncEnvelope.message(for: self.latestSnapshot)
                 replyHandler(reply)
                 self.sendLatestSnapshot()
@@ -145,11 +154,51 @@ extension PhoneWatchAccountSyncService: WCSessionDelegate {
         latestSnapshot.localFavorites = PicaXSQLiteStore.loadLocalFavorites(folderID: "default").map(WatchLocalFavoriteItem.init)
         latestSnapshot.updatedAt = Date()
     }
+
+    private func mergeReadLater(from message: [String: Any]) {
+        guard WatchConnectivitySettings.syncsReadLater() else {
+            latestSnapshot.readLater = []
+            latestSnapshot.updatedAt = Date()
+            return
+        }
+        guard let incoming = WatchAccountSyncEnvelope.readLater(from: message) else { return }
+        let deletions = WatchAccountSyncEnvelope.readLaterDeletions(from: message)
+        var deletionMap: [String: Date] = [:]
+        for deletion in deletions {
+            if let old = deletionMap[deletion.syncID] {
+                deletionMap[deletion.syncID] = max(old, deletion.deletedAt)
+            } else {
+                deletionMap[deletion.syncID] = deletion.deletedAt
+            }
+        }
+
+        let existing = PicaXSQLiteStore.loadReadLater()
+        let incomingRecords = incoming.compactMap(ReadLaterRecord.init)
+        var merged: [String: ReadLaterRecord] = [:]
+
+        for record in existing + incomingRecords {
+            if let deletedAt = deletionMap[record.id],
+               deletedAt >= record.addedAt {
+                merged.removeValue(forKey: record.id)
+                continue
+            }
+            if let old = merged[record.id] {
+                merged[record.id] = record.isNewer(than: old) ? record : old
+            } else {
+                merged[record.id] = record
+            }
+        }
+
+        PicaXSQLiteStore.replaceReadLater(Array(merged.values))
+        latestSnapshot.readLater = PicaXSQLiteStore.loadReadLater().map(WatchReadLaterItem.init)
+        latestSnapshot.updatedAt = Date()
+    }
 }
 
 private extension WatchAccountSnapshot {
-    init(platformAccountService: PlatformAccountService, syncsLocalFavorites: Bool) {
+    init(platformAccountService: PlatformAccountService, syncsLocalFavorites: Bool, syncsReadLater: Bool) {
         let localFavorites = syncsLocalFavorites ? PicaXSQLiteStore.loadLocalFavorites(folderID: "default").map(WatchLocalFavoriteItem.init) : []
+        let readLater = syncsReadLater ? PicaXSQLiteStore.loadReadLater().map(WatchReadLaterItem.init) : []
         let platformAccounts = ComicPlatform.allCases.compactMap { platform -> WatchPlatformAccount? in
             guard let account = platformAccountService.account(for: platform) else { return nil }
             return WatchPlatformAccount(
@@ -163,7 +212,7 @@ private extension WatchAccountSnapshot {
                 loggedInAt: account.loggedInAt
             )
         }
-        self.init(updatedAt: Date(), platformAccounts: platformAccounts, localFavorites: localFavorites)
+        self.init(updatedAt: Date(), platformAccounts: platformAccounts, localFavorites: localFavorites, readLater: readLater)
     }
 }
 
@@ -243,6 +292,46 @@ private extension StoredLocalFavorite {
 
     func isNewer(than other: StoredLocalFavorite) -> Bool {
         (favoriteDate ?? .distantPast) >= (other.favoriteDate ?? .distantPast)
+    }
+}
+
+private extension WatchReadLaterItem {
+    nonisolated init(_ record: ReadLaterRecord) {
+        self.init(
+            id: record.item.id,
+            platformID: record.item.platform.id,
+            title: record.item.title,
+            subtitle: record.item.subtitle,
+            coverURLString: record.item.coverURLString,
+            tags: record.item.tags,
+            pageCount: record.item.pageCount,
+            likesCount: record.item.likesCount,
+            addedAt: record.addedAt
+        )
+    }
+}
+
+private extension ReadLaterRecord {
+    init?(_ item: WatchReadLaterItem) {
+        guard let platform = ComicPlatform(rawValue: item.platformID) else { return nil }
+        self.init(
+            item: ComicListItem(
+                id: item.id,
+                platform: platform,
+                title: item.title,
+                subtitle: item.subtitle,
+                coverURLString: item.coverURLString,
+                tags: item.tags,
+                pageCount: item.pageCount,
+                likesCount: item.likesCount,
+                favoriteDate: nil
+            ),
+            addedAt: item.addedAt
+        )
+    }
+
+    func isNewer(than other: ReadLaterRecord) -> Bool {
+        addedAt >= other.addedAt
     }
 }
 #endif

@@ -35,6 +35,16 @@ struct WatchHomePage: View {
                         systemImage: "clock.arrow.circlepath"
                     )
                 }
+
+                NavigationLink {
+                    WatchComicListPage(source: .readLater)
+                } label: {
+                    WatchValueRow(
+                        title: "稍后再读",
+                        subtitle: readLaterSubtitle,
+                        systemImage: "bookmark"
+                    )
+                }
             }
 
             Section("下载") {
@@ -76,5 +86,10 @@ struct WatchHomePage: View {
             return "\(taskCount) 个任务 · \(recordCount) 部已下载"
         }
         return recordCount > 0 ? "\(recordCount) 部已下载" : "暂无下载"
+    }
+
+    private var readLaterSubtitle: String {
+        let count = accountSyncStore.snapshot.readLater.count
+        return count > 0 ? "\(count) 本待读" : "暂无待读漫画"
     }
 }

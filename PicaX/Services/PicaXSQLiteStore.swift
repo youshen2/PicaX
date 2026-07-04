@@ -212,20 +212,24 @@ enum PicaXSQLiteStore {
 
     static func upsertReadLater(_ record: ReadLaterRecord) {
         upsert(table: "read_later", id: record.id, sortDate: record.addedAt, value: record)
+        NotificationCenter.default.post(name: .picaxReadLaterDidChange, object: nil)
     }
 
     static func replaceReadLater(_ records: [ReadLaterRecord]) {
         replace(table: "read_later", values: records) { record in
             (record.id, record.addedAt)
         }
+        NotificationCenter.default.post(name: .picaxReadLaterDidChange, object: nil)
     }
 
     static func deleteReadLater(id: String) {
         delete(table: "read_later", id: id)
+        NotificationCenter.default.post(name: .picaxReadLaterDidChange, object: nil)
     }
 
     static func clearReadLater() {
         clear(table: "read_later")
+        NotificationCenter.default.post(name: .picaxReadLaterDidChange, object: nil)
     }
 
     static func loadReadingDuration() -> [ReadingDurationRecord] {

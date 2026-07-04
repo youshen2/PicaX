@@ -314,6 +314,19 @@ extension WatchComicItem {
             favoriteDate: localFavorite.favoriteDate
         )
     }
+
+    init(readLater: WatchReadLaterItem) {
+        self.init(
+            id: readLater.id,
+            platform: WatchComicPlatform(rawValue: readLater.platformID) ?? .picacg,
+            title: readLater.title,
+            subtitle: readLater.subtitle,
+            coverURLString: readLater.coverURLString,
+            tags: readLater.tags,
+            pageCount: readLater.pageCount,
+            favoriteDate: nil
+        )
+    }
 }
 
 extension WatchLocalFavoriteItem {
@@ -328,6 +341,22 @@ extension WatchLocalFavoriteItem {
             pageCount: item.pageCount,
             likesCount: nil,
             favoriteDate: item.favoriteDate ?? favoriteDate
+        )
+    }
+}
+
+extension WatchReadLaterItem {
+    init(item: WatchComicItem, addedAt: Date = Date()) {
+        self.init(
+            id: item.id,
+            platformID: item.platform.id,
+            title: item.title,
+            subtitle: item.subtitle,
+            coverURLString: item.coverURLString ?? "",
+            tags: item.tags,
+            pageCount: item.pageCount,
+            likesCount: nil,
+            addedAt: addedAt
         )
     }
 }

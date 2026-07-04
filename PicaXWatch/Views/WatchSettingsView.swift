@@ -207,6 +207,12 @@ struct WatchPlatformAccountsPage: View {
                     Label("同步本地收藏", systemImage: "heart")
                 }
 
+                Button {
+                    accountSyncStore.syncReadLater()
+                } label: {
+                    Label("同步稍后再读", systemImage: "bookmark")
+                }
+
                 WatchValueRow(title: "连接状态", subtitle: syncStateText, systemImage: "iphone.gen3.radiowaves.left.and.right")
 
                 if accountSyncStore.snapshot.updatedAt > .distantPast {

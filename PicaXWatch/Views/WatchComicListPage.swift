@@ -2,6 +2,7 @@ import SwiftUI
 
 enum WatchComicListSource {
     case localFavorites
+    case readLater
     case explore(platform: WatchComicPlatform, kind: WatchDiscoveryKind)
     case favorites(account: WatchPlatformAccount)
     case favoriteFolder(account: WatchPlatformAccount, folder: WatchFavoriteFolder)
@@ -11,6 +12,8 @@ enum WatchComicListSource {
         switch self {
         case .localFavorites:
             "本地收藏"
+        case .readLater:
+            "稍后再读"
         case .explore(let platform, let kind):
             "\(platform.title) \(kind.title)"
         case .favorites(let account):
@@ -59,6 +62,27 @@ struct WatchComicListPage: View {
                                     Label("收藏", systemImage: "heart")
                                 }
                             }
+
+                            if source.isReadLater {
+                                Button(role: .destructive) {
+                                    accountSyncStore.removeReadLater(item)
+                                    Task { await load(force: true) }
+                                } label: {
+                                    Label("移出稍后再读", systemImage: "bookmark.slash")
+                                }
+                            } else if accountSyncStore.isReadLater(item) {
+                                Button(role: .destructive) {
+                                    accountSyncStore.removeReadLater(item)
+                                } label: {
+                                    Label("移出稍后再读", systemImage: "bookmark.slash")
+                                }
+                            } else {
+                                Button {
+                                    accountSyncStore.addReadLater(item)
+                                } label: {
+                                    Label("稍后再读", systemImage: "bookmark")
+                                }
+                            }
                         }
                         .onAppear {
                             loadMoreIfNeeded(currentItem: item, items: items)
@@ -90,6 +114,8 @@ struct WatchComicListPage: View {
         switch source {
         case .localFavorites:
             await viewModel.loadLocalFavorites(force: force)
+        case .readLater:
+            await viewModel.loadReadLater(force: force)
         case .explore(let platform, let kind):
             await viewModel.loadExplore(
                 platform: platform,
@@ -119,7 +145,7 @@ struct WatchComicListPage: View {
 
     private func loadMore() async {
         switch source {
-        case .localFavorites:
+        case .localFavorites, .readLater:
             return
         case .explore(let platform, let kind):
             await viewModel.loadMoreExplore(
@@ -143,6 +169,13 @@ struct WatchComicListPage: View {
 private extension WatchComicListSource {
     var isLocalFavorites: Bool {
         if case .localFavorites = self {
+            return true
+        }
+        return false
+    }
+
+    var isReadLater: Bool {
+        if case .readLater = self {
             return true
         }
         return false

@@ -141,6 +141,20 @@ struct WatchSearchPage: View {
                             } label: {
                                 Label("收藏", systemImage: "heart")
                             }
+
+                            if accountSyncStore.isReadLater(item) {
+                                Button(role: .destructive) {
+                                    accountSyncStore.removeReadLater(item)
+                                } label: {
+                                    Label("移出稍后再读", systemImage: "bookmark.slash")
+                                }
+                            } else {
+                                Button {
+                                    accountSyncStore.addReadLater(item)
+                                } label: {
+                                    Label("稍后再读", systemImage: "bookmark")
+                                }
+                            }
                         }
                         .onAppear {
                             loadMoreIfNeeded(currentItem: item, items: items)

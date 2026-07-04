@@ -4,25 +4,33 @@ struct WatchAccountSnapshot: Codable, Equatable {
     var updatedAt: Date
     var platformAccounts: [WatchPlatformAccount]
     var localFavorites: [WatchLocalFavoriteItem]
+    var readLater: [WatchReadLaterItem]
 
     var hasSyncedAccounts: Bool {
         !platformAccounts.isEmpty
     }
 
     static var empty: WatchAccountSnapshot {
-        WatchAccountSnapshot(updatedAt: .distantPast, platformAccounts: [], localFavorites: [])
+        WatchAccountSnapshot(updatedAt: .distantPast, platformAccounts: [], localFavorites: [], readLater: [])
     }
 
-    init(updatedAt: Date, platformAccounts: [WatchPlatformAccount], localFavorites: [WatchLocalFavoriteItem] = []) {
+    init(
+        updatedAt: Date,
+        platformAccounts: [WatchPlatformAccount],
+        localFavorites: [WatchLocalFavoriteItem] = [],
+        readLater: [WatchReadLaterItem] = []
+    ) {
         self.updatedAt = updatedAt
         self.platformAccounts = platformAccounts
         self.localFavorites = localFavorites
+        self.readLater = readLater
     }
 
     enum CodingKeys: String, CodingKey {
         case updatedAt
         case platformAccounts
         case localFavorites
+        case readLater
     }
 
     init(from decoder: Decoder) throws {
@@ -30,6 +38,7 @@ struct WatchAccountSnapshot: Codable, Equatable {
         updatedAt = try container.decode(Date.self, forKey: .updatedAt)
         platformAccounts = try container.decode([WatchPlatformAccount].self, forKey: .platformAccounts)
         localFavorites = try container.decodeIfPresent([WatchLocalFavoriteItem].self, forKey: .localFavorites) ?? []
+        readLater = try container.decodeIfPresent([WatchReadLaterItem].self, forKey: .readLater) ?? []
     }
 }
 
@@ -167,6 +176,56 @@ struct WatchLocalFavoriteItem: Codable, Equatable, Identifiable, Hashable {
 }
 
 struct WatchLocalFavoriteDeletion: Codable, Equatable, Identifiable, Hashable {
+    var syncID: String
+    var deletedAt: Date
+
+    var id: String { syncID }
+
+    nonisolated init(syncID: String, deletedAt: Date) {
+        self.syncID = syncID
+        self.deletedAt = deletedAt
+    }
+}
+
+struct WatchReadLaterItem: Codable, Equatable, Identifiable, Hashable {
+    var id: String
+    var platformID: String
+    var title: String
+    var subtitle: String
+    var coverURLString: String
+    var tags: [String]
+    var pageCount: Int?
+    var likesCount: Int?
+    var addedAt: Date
+
+    nonisolated init(
+        id: String,
+        platformID: String,
+        title: String,
+        subtitle: String,
+        coverURLString: String,
+        tags: [String],
+        pageCount: Int?,
+        likesCount: Int?,
+        addedAt: Date
+    ) {
+        self.id = id
+        self.platformID = platformID
+        self.title = title
+        self.subtitle = subtitle
+        self.coverURLString = coverURLString
+        self.tags = tags
+        self.pageCount = pageCount
+        self.likesCount = likesCount
+        self.addedAt = addedAt
+    }
+
+    var syncID: String {
+        "\(platformID)-\(id)"
+    }
+}
+
+struct WatchReadLaterDeletion: Codable, Equatable, Identifiable, Hashable {
     var syncID: String
     var deletedAt: Date
 
@@ -321,9 +380,12 @@ enum WatchAccountSyncEnvelope {
     static let snapshotDataKey = "picax.accountSnapshot.data"
     static let localFavoritesDataKey = "picax.localFavorites.data"
     static let localFavoriteDeletionsDataKey = "picax.localFavoriteDeletions.data"
+    static let readLaterDataKey = "picax.readLater.data"
+    static let readLaterDeletionsDataKey = "picax.readLater.deletions.data"
     static let accountSnapshotKind = "accountSnapshot"
     static let requestSnapshotKind = "requestAccountSnapshot"
     static let localFavoritesSyncKind = "localFavoritesSync"
+    static let readLaterSyncKind = "readLaterSync"
 
     static var requestMessage: [String: Any] {
         [messageKindKey: requestSnapshotKind]
@@ -356,6 +418,23 @@ enum WatchAccountSyncEnvelope {
         return message
     }
 
+    static func message(
+        forReadLater readLater: [WatchReadLaterItem],
+        deletions: [WatchReadLaterDeletion] = []
+    ) -> [String: Any] {
+        guard let data = try? JSONEncoder().encode(readLater) else {
+            return [messageKindKey: readLaterSyncKind]
+        }
+        var message: [String: Any] = [
+            messageKindKey: readLaterSyncKind,
+            readLaterDataKey: data
+        ]
+        if let deletionData = try? JSONEncoder().encode(deletions) {
+            message[readLaterDeletionsDataKey] = deletionData
+        }
+        return message
+    }
+
     static func snapshot(from message: [String: Any]) -> WatchAccountSnapshot? {
         guard let data = message[snapshotDataKey] as? Data else { return nil }
         return try? JSONDecoder().decode(WatchAccountSnapshot.self, from: data)
@@ -374,11 +453,28 @@ enum WatchAccountSyncEnvelope {
         return deletions
     }
 
+    static func readLater(from message: [String: Any]) -> [WatchReadLaterItem]? {
+        guard let data = message[readLaterDataKey] as? Data else { return nil }
+        return try? JSONDecoder().decode([WatchReadLaterItem].self, from: data)
+    }
+
+    static func readLaterDeletions(from message: [String: Any]) -> [WatchReadLaterDeletion] {
+        guard let data = message[readLaterDeletionsDataKey] as? Data,
+              let deletions = try? JSONDecoder().decode([WatchReadLaterDeletion].self, from: data) else {
+            return []
+        }
+        return deletions
+    }
+
     static func isSnapshotRequest(_ message: [String: Any]) -> Bool {
         message[messageKindKey] as? String == requestSnapshotKind
     }
 
     static func isLocalFavoritesSync(_ message: [String: Any]) -> Bool {
         message[messageKindKey] as? String == localFavoritesSyncKind
+    }
+
+    static func isReadLaterSync(_ message: [String: Any]) -> Bool {
+        message[messageKindKey] as? String == readLaterSyncKind
     }
 }

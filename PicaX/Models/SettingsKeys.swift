@@ -92,6 +92,7 @@ enum WatchConnectivitySettingsKey {
     static let syncsReadingHistory = "settings.watchConnectivity.syncsReadingHistory"
     static let syncsReadingHistoryWithWatch = "settings.watchConnectivity.syncsReadingHistoryWithWatch"
     static let syncsLocalFavorites = "settings.watchConnectivity.syncsLocalFavorites"
+    static let syncsReadLater = "settings.watchConnectivity.syncsReadLater"
 }
 
 enum WatchConnectivitySettings {
@@ -105,6 +106,10 @@ enum WatchConnectivitySettings {
 
     static func syncsLocalFavorites(defaults: UserDefaults = .standard) -> Bool {
         defaults.object(forKey: WatchConnectivitySettingsKey.syncsLocalFavorites) as? Bool ?? true
+    }
+
+    static func syncsReadLater(defaults: UserDefaults = .standard) -> Bool {
+        defaults.object(forKey: WatchConnectivitySettingsKey.syncsReadLater) as? Bool ?? true
     }
 }
 
