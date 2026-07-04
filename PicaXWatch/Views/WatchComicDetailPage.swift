@@ -116,7 +116,7 @@ struct WatchComicDetailPage: View {
             HStack(alignment: .top, spacing: 8) {
                 NavigationLink {
                     WatchCoverPreviewPage(item: detail.item)
-                } label: {
+                } label: {	
                     WatchCoverThumbnail(url: detail.item.coverURL, width: 48, height: 64)
                 }
                 .buttonStyle(.plain)

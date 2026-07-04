@@ -27,6 +27,10 @@ struct ComicListSection: View {
     @State private var detailRequest: ComicListDetailRequest?
     @State private var readerRequest: ComicListReaderRequest?
     @State private var readingListRequest: ReadingListRequest?
+    @State private var renderedComicCount = Self.initialRenderedComicCount
+
+    private static let initialRenderedComicCount = 48
+    private static let renderedComicPageSize = 48
 
     var body: some View {
         Group {
@@ -50,7 +54,16 @@ struct ComicListSection: View {
 
     private var comicList: some View {
         let snapshot = makeRenderSnapshot()
+        let totalVisibleCount = snapshot.visibleComics.count
+        let displayCount = renderedCount(for: totalVisibleCount)
+        let displayedRows = makeDisplayedRows(
+            from: snapshot.visibleComics,
+            count: displayCount,
+            readingRecordsByID: snapshot.readingRecordsByID
+        )
         let readingListComics = readAllComics ?? snapshot.visibleComics
+        let lastDisplayedComicID = displayedRows.last?.id
+        let contentIdentity = makeContentIdentity(for: snapshot.visibleComics)
 
         return List {
             Section {
@@ -77,17 +90,17 @@ struct ComicListSection: View {
                     .disabled(isPreparingReadAll)
                 }
 
-                if snapshot.visibleComics.isEmpty, !comics.isEmpty {
+                if totalVisibleCount == 0, !comics.isEmpty {
                     ContentUnavailableView("已隐藏全部结果", systemImage: "eye.slash", description: Text("当前列表内容命中了屏蔽词或阅读进度过滤，可在设置中调整。"))
                         .listRowBackground(Color.clear)
                 }
 
-                ForEach(snapshot.visibleComics, id: \.readingHistoryID) { comic in
+                ForEach(displayedRows) { row in
                     ComicListActionLink(
-                        item: comic,
+                        item: row.item,
                         service: service,
-                        hasReadingProgress: snapshot.readingProgressIDs.contains(comic.readingHistoryID),
-                        readingProgressText: snapshot.readingProgressTextByID[comic.readingHistoryID],
+                        hasReadingProgress: row.hasReadingProgress,
+                        readingProgressText: row.readingProgressText,
                         showsFavoriteState: showsListFavoriteState,
                         showsTags: showsListTags,
                         maxVisibleTags: maxVisibleTags,
@@ -95,8 +108,8 @@ struct ComicListSection: View {
                         openDetail: { detailRequest = ComicListDetailRequest(item: $0) },
                         openReader: { readerRequest = $0 }
                     ) {
-                        if comic.readingHistoryID == snapshot.lastVisibleComicID {
-                            loadMore?()
+                        if row.id == lastDisplayedComicID {
+                            revealOrLoadMore(totalVisibleCount: totalVisibleCount)
                         }
                     }
                     .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 12))
@@ -104,6 +117,12 @@ struct ComicListSection: View {
 
                 if isLoadingMore {
                     LoadingMoreRow()
+                } else if canRevealMoreLocalComics(totalVisibleCount: totalVisibleCount) {
+                    Color.clear
+                        .frame(height: 1)
+                        .onAppear {
+                            revealMoreLocalComics(totalVisibleCount: totalVisibleCount)
+                        }
                 } else if hasMore {
                     Color.clear
                         .frame(height: 1)
@@ -114,23 +133,16 @@ struct ComicListSection: View {
             }
         }
         .picaxInsetGroupedListStyle()
+        .transaction { transaction in
+            transaction.animation = nil
+        }
+        .onChange(of: contentIdentity) { oldIdentity, newIdentity in
+            updateRenderedComicCount(oldIdentity: oldIdentity, newIdentity: newIdentity)
+        }
     }
 
     private func makeRenderSnapshot() -> ComicListRenderSnapshot {
         let readingRecordsByID = readingHistory.activeReadingRecordsByID
-        var readingProgressIDs = Set<String>()
-        var readingProgressTextByID: [String: String] = [:]
-        readingProgressIDs.reserveCapacity(readingRecordsByID.count)
-        if showsListReadingProgress {
-            readingProgressTextByID.reserveCapacity(readingRecordsByID.count)
-        }
-        for record in readingRecordsByID.values {
-            readingProgressIDs.insert(record.id)
-            if showsListReadingProgress {
-                readingProgressTextByID[record.id] = record.progressText
-            }
-        }
-
         var visibleComics: [ComicListItem] = []
         visibleComics.reserveCapacity(comics.count)
         for comic in comics {
@@ -145,10 +157,80 @@ struct ComicListSection: View {
 
         return ComicListRenderSnapshot(
             visibleComics: visibleComics,
-            readingProgressIDs: readingProgressIDs,
-            readingProgressTextByID: readingProgressTextByID,
-            lastVisibleComicID: visibleComics.last?.readingHistoryID
+            readingRecordsByID: readingRecordsByID
         )
+    }
+
+    private func makeDisplayedRows(
+        from visibleComics: [ComicListItem],
+        count: Int,
+        readingRecordsByID: [String: ReadingHistoryRecord]
+    ) -> [ComicListDisplayedRow] {
+        let displayCount = min(max(count, 0), visibleComics.count)
+        var rows: [ComicListDisplayedRow] = []
+        rows.reserveCapacity(displayCount)
+
+        for comic in visibleComics.prefix(displayCount) {
+            let readingRecord = readingRecordsByID[comic.readingHistoryID]
+            rows.append(
+                ComicListDisplayedRow(
+                    item: comic,
+                    hasReadingProgress: readingRecord != nil,
+                    readingProgressText: showsListReadingProgress ? readingRecord?.progressText : nil
+                )
+            )
+        }
+        return rows
+    }
+
+    private func makeContentIdentity(for visibleComics: [ComicListItem]) -> ComicListContentIdentity {
+        let prefixCount = min(Self.initialRenderedComicCount, visibleComics.count)
+        var hasher = Hasher()
+        hasher.combine(prefixCount)
+        for comic in visibleComics.prefix(prefixCount) {
+            hasher.combine(comic.readingHistoryID)
+        }
+        return ComicListContentIdentity(
+            totalCount: visibleComics.count,
+            leadingCount: prefixCount,
+            leadingHash: hasher.finalize()
+        )
+    }
+
+    private func renderedCount(for totalVisibleCount: Int) -> Int {
+        min(max(renderedComicCount, 0), totalVisibleCount)
+    }
+
+    private func canRevealMoreLocalComics(totalVisibleCount: Int) -> Bool {
+        renderedCount(for: totalVisibleCount) < totalVisibleCount
+    }
+
+    private func revealOrLoadMore(totalVisibleCount: Int) {
+        if canRevealMoreLocalComics(totalVisibleCount: totalVisibleCount) {
+            revealMoreLocalComics(totalVisibleCount: totalVisibleCount)
+        } else if hasMore {
+            loadMore?()
+        }
+    }
+
+    private func revealMoreLocalComics(totalVisibleCount: Int) {
+        guard renderedComicCount < totalVisibleCount else { return }
+        renderedComicCount = min(totalVisibleCount, renderedComicCount + Self.renderedComicPageSize)
+    }
+
+    private func updateRenderedComicCount(oldIdentity: ComicListContentIdentity, newIdentity: ComicListContentIdentity) {
+        let minimumRenderedCount = min(Self.initialRenderedComicCount, max(newIdentity.totalCount, 1))
+        let leadingContentChanged = oldIdentity.leadingCount != newIdentity.leadingCount
+            || oldIdentity.leadingHash != newIdentity.leadingHash
+        let contentShrank = newIdentity.totalCount < oldIdentity.totalCount
+
+        if leadingContentChanged || contentShrank {
+            renderedComicCount = minimumRenderedCount
+        } else if renderedComicCount > newIdentity.totalCount {
+            renderedComicCount = max(minimumRenderedCount, newIdentity.totalCount)
+        } else if renderedComicCount < minimumRenderedCount {
+            renderedComicCount = minimumRenderedCount
+        }
     }
 
     private func shouldHideReadComic(_ comic: ComicListItem, record: ReadingHistoryRecord?) -> Bool {
@@ -206,8 +288,8 @@ struct ComicListActionLink: View {
     @State private var errorMessage: String?
 
     var body: some View {
-        NavigationLink {
-            ComicDetailPage(item: item, service: service)
+        Button {
+            openDetail(item)
         } label: {
             ComicListRow(
                 item: item,
@@ -217,7 +299,10 @@ struct ComicListActionLink: View {
                 maxVisibleTags: maxVisibleTags,
                 showsPopularity: showsPopularity
             )
+            .equatable()
         }
+        .buttonStyle(.plain)
+        .contentShape(Rectangle())
         .contextMenu {
             Button {
                 openDetail(item)
@@ -329,13 +414,22 @@ struct ComicListReaderRequest: Identifiable, Hashable {
     }
 }
 
-struct ComicListRow: View {
+struct ComicListRow: View, Equatable {
     let item: ComicListItem
     var readingProgressText: String?
     var showsFavoriteState = true
     var showsTags = true
     var maxVisibleTags = 5
     var showsPopularity = true
+
+    static func == (lhs: ComicListRow, rhs: ComicListRow) -> Bool {
+        lhs.item == rhs.item
+            && lhs.readingProgressText == rhs.readingProgressText
+            && lhs.showsFavoriteState == rhs.showsFavoriteState
+            && lhs.showsTags == rhs.showsTags
+            && lhs.maxVisibleTags == rhs.maxVisibleTags
+            && lhs.showsPopularity == rhs.showsPopularity
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 14) {
@@ -382,20 +476,7 @@ struct ComicListRow: View {
                 }
 
                 if showsTags, !item.tags.isEmpty {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 6) {
-                            ForEach(Array(item.tags.prefix(visibleTagLimit).enumerated()), id: \.offset) { _, tag in
-                                Text(tag)
-                                    .font(.caption2.weight(.medium))
-                                    .foregroundStyle(item.accentColor)
-                                    .lineLimit(1)
-                                    .padding(.horizontal, 7)
-                                    .padding(.vertical, 4)
-                                    .background(item.accentColor.opacity(0.12), in: Capsule())
-                            }
-                        }
-                    }
-                    .clipped()
+                    ComicListTagRow(tags: item.tags, limit: visibleTagLimit, accentColor: item.accentColor)
                 }
             }
             .frame(maxWidth: .infinity, minHeight: 112, alignment: .topLeading)
@@ -412,9 +493,54 @@ struct ComicListRow: View {
 
 private struct ComicListRenderSnapshot {
     let visibleComics: [ComicListItem]
-    let readingProgressIDs: Set<String>
-    let readingProgressTextByID: [String: String]
-    let lastVisibleComicID: String?
+    let readingRecordsByID: [String: ReadingHistoryRecord]
+}
+
+private struct ComicListDisplayedRow: Identifiable {
+    let item: ComicListItem
+    let hasReadingProgress: Bool
+    let readingProgressText: String?
+
+    var id: String {
+        item.readingHistoryID
+    }
+}
+
+private struct ComicListContentIdentity: Equatable {
+    let totalCount: Int
+    let leadingCount: Int
+    let leadingHash: Int
+}
+
+private struct ComicListTagRow: View {
+    let tags: [String]
+    let limit: Int
+    let accentColor: Color
+
+    var body: some View {
+        tagRow(limit: visibleLimit)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .clipped()
+    }
+
+    private var visibleLimit: Int {
+        min(max(limit, 1), tags.count)
+    }
+
+    private func tagRow(limit: Int) -> some View {
+        HStack(spacing: 6) {
+            ForEach(0..<min(tags.count, limit), id: \.self) { index in
+                Text(tags[index])
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(accentColor)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 4)
+                    .background(accentColor.opacity(0.12), in: Capsule())
+            }
+        }
+    }
 }
 
 private struct ComicListMetaPill: View {
@@ -444,11 +570,9 @@ struct ComicCoverView: View {
     var storesInCache = true
 
     var body: some View {
-        GeometryReader { proxy in
-            CachedRemoteImageView(url: url, accentColor: accentColor, contentMode: .fill, storesInCache: storesInCache, maxPixelSize: 512)
-                .frame(width: proxy.size.width, height: proxy.size.height)
-                .clipped()
-        }
+        CachedRemoteImageView(url: url, accentColor: accentColor, contentMode: .fill, storesInCache: storesInCache, maxPixelSize: 512)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .clipped()
         .background(AppColor.secondaryGroupedBackground)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay {
