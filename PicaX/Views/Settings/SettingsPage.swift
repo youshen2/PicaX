@@ -2553,6 +2553,7 @@ private struct AboutSettingsView: View {
         let environment = Self.buildEnvironment
         return [
             ("构建时间", buildEnvironmentValue("BuildTime", in: environment)),
+            ("编译 Commit", buildEnvironmentValue("BuildCommit", in: environment)),
             ("主机名", buildEnvironmentValue("BuildHostName", in: environment)),
             ("编译用户", buildEnvironmentValue("BuildUser", in: environment)),
             ("主机系统", buildEnvironmentValue("BuildHostOS", in: environment)),
