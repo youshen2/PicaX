@@ -1579,6 +1579,8 @@ private struct ComicDetailSettingsView: View {
     @AppStorage(DetailSettingsKey.usesCoverAccent) private var usesCoverAccent = true
     @AppStorage(DetailSettingsKey.chapterSortOrder) private var chapterSortOrder = ComicDetailChapterSortOrder.ascending.rawValue
     @AppStorage(DetailSettingsKey.showsChaptersAsSection) private var showsChaptersAsSection = false
+    @AppStorage(DetailSettingsKey.contentOrder) private var contentOrderRaw = ComicDetailContentSectionKind.defaultRawValue
+    @State private var contentOrder = ComicDetailContentSectionKind.defaultOrder
 
     var body: some View {
         List {
@@ -1601,10 +1603,47 @@ private struct ComicDetailSettingsView: View {
             } footer: {
                 Text("开启后，章节会作为详情页里的独立分区显示，封面旁不再显示章节按钮。")
             }
+
+            Section {
+                ForEach(contentOrder) { section in
+                    Label(section.title, systemImage: section.systemImage)
+                }
+                .onMove(perform: moveContentSections)
+
+                Button("恢复默认排序") {
+                    contentOrder = ComicDetailContentSectionKind.defaultOrder
+                    saveContentOrder()
+                }
+            } header: {
+                Text("内容顺序")
+            } footer: {
+                Text("点按编辑后拖动项目调整详情页内容显示顺序。章节需要开启单独分区后才会显示在此顺序中。")
+            }
         }
         .picaxInsetGroupedListStyle()
         .navigationTitle("漫画详情")
         .picaxHidesTabBar()
+        #if os(iOS)
+        .toolbar {
+            EditButton()
+        }
+        #endif
+        .onAppear {
+            contentOrder = ComicDetailContentSectionKind.normalizedOrder(from: contentOrderRaw)
+            saveContentOrder()
+        }
+        .onChange(of: contentOrderRaw) { _, newValue in
+            contentOrder = ComicDetailContentSectionKind.normalizedOrder(from: newValue)
+        }
+    }
+
+    private func moveContentSections(from source: IndexSet, to destination: Int) {
+        contentOrder.move(fromOffsets: source, toOffset: destination)
+        saveContentOrder()
+    }
+
+    private func saveContentOrder() {
+        contentOrderRaw = ComicDetailContentSectionKind.rawValue(for: contentOrder)
     }
 }
 

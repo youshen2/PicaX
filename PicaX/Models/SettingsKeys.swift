@@ -200,6 +200,7 @@ enum DetailSettingsKey {
     static let usesCoverAccent = "settings.detail.usesCoverAccent"
     static let chapterSortOrder = "settings.detail.chapterSortOrder"
     static let showsChaptersAsSection = "settings.detail.showsChaptersAsSection"
+    static let contentOrder = "settings.detail.contentOrder"
 }
 
 enum ComicDetailChapterSortOrder: String, CaseIterable, Identifiable {
@@ -224,6 +225,93 @@ enum ComicDetailChapterSortOrder: String, CaseIterable, Identifiable {
         case .descending:
             "arrow.up"
         }
+    }
+}
+
+enum ComicDetailContentSectionKind: String, CaseIterable, Identifiable {
+    case comments
+    case actions
+    case chapters
+    case description
+    case uploader
+    case information
+    case tags
+    case related
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .comments:
+            "评论"
+        case .actions:
+            "操作"
+        case .chapters:
+            "章节"
+        case .description:
+            "简介"
+        case .uploader:
+            "上传者"
+        case .information:
+            "信息"
+        case .tags:
+            "标签"
+        case .related:
+            "相关推荐"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .comments:
+            "text.bubble"
+        case .actions:
+            "square.on.square"
+        case .chapters:
+            "list.bullet"
+        case .description:
+            "text.alignleft"
+        case .uploader:
+            "person.crop.circle"
+        case .information:
+            "info.circle"
+        case .tags:
+            "tag"
+        case .related:
+            "sparkles"
+        }
+    }
+
+    static let defaultOrder: [ComicDetailContentSectionKind] = [
+        .comments,
+        .actions,
+        .chapters,
+        .description,
+        .uploader,
+        .information,
+        .tags,
+        .related
+    ]
+
+    static var defaultRawValue: String {
+        rawValue(for: defaultOrder)
+    }
+
+    static func rawValue(for order: [ComicDetailContentSectionKind]) -> String {
+        order.map(\.rawValue).joined(separator: ",")
+    }
+
+    static func normalizedOrder(from rawValue: String) -> [ComicDetailContentSectionKind] {
+        var seen = Set<ComicDetailContentSectionKind>()
+        var result = rawValue
+            .split(separator: ",")
+            .compactMap { ComicDetailContentSectionKind(rawValue: String($0)) }
+            .filter { seen.insert($0).inserted }
+
+        for section in defaultOrder where !seen.contains(section) {
+            result.append(section)
+        }
+        return result
     }
 }
 

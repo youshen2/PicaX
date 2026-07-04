@@ -180,6 +180,7 @@ private struct ComicDetailContent: View {
     @EnvironmentObject private var readingHistory: ReadingHistoryService
     @AppStorage(DetailSettingsKey.chapterSortOrder) private var chapterSortOrder = ComicDetailChapterSortOrder.ascending.rawValue
     @AppStorage(DetailSettingsKey.showsChaptersAsSection) private var showsChaptersAsSection = false
+    @AppStorage(DetailSettingsKey.contentOrder) private var contentOrderRaw = ComicDetailContentSectionKind.defaultRawValue
     let detail: ComicDetailInfo
     let service: ComicContentService
     @State private var commentSheet: CommentSheetContext?
@@ -199,93 +200,8 @@ private struct ComicDetailContent: View {
                         .padding(.vertical, 4)
                 }
 
-                if detail.item.supportsComments {
-                    Section {
-                        Button {
-                            commentSheet = CommentSheetContext(item: detail.item)
-                        } label: {
-                            Label("查看评论", systemImage: "text.bubble")
-                        }
-                    }
-                }
-
-                if detail.item.copyAction != nil {
-                    Section("操作") {
-                        ComicCopyActionButton(item: detail.item)
-                    }
-                }
-
-                if showsChaptersAsSection, !detail.chapters.isEmpty {
-                    Section {
-                        ForEach(sortedChapterDisplayItems) { item in
-                            Button {
-                                readerTarget = ComicReaderTarget(chapterIndex: item.originalIndex, ignoresProgress: true)
-                            } label: {
-                                ComicChapterRow(chapter: item.chapter)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    } header: {
-                        ComicChaptersSectionHeader(
-                            chapterCount: detail.chapters.count,
-                            sortOrder: $chapterSortOrder
-                        )
-                    }
-                }
-
-                if !detail.description.isEmpty {
-                    Section("简介") {
-                        Text(detail.description)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
-                    }
-                }
-
-                if let uploader = detail.uploader {
-                    Section("上传者") {
-                        ComicUploaderInfoRow(uploader: uploader, accentColor: detail.item.accentColor) { tag in
-                            selectedTag = tag
-                        }
-                    }
-                }
-
-                Section("信息") {
-                    ComicInfoLine(title: "来源", value: detail.item.platformTitle)
-                    if let authorText = detail.selectableAuthorText {
-                        ComicInfoLine(title: "作者", value: authorText)
-                    }
-                    if let pageText = detail.item.pageText {
-                        ComicInfoLine(title: "页数", value: pageText)
-                    }
-                    if let updatedText = detail.updatedText, !updatedText.isEmpty {
-                        ComicInfoLine(title: "更新", value: updatedText)
-                    }
-                    ComicInfoLine(title: "编号", value: detail.item.target, monospaced: true)
-                }
-
-                ForEach(detail.tagGroups) { group in
-                    Section(group.title) {
-                        FlowTagLinks(tags: group.tags, color: detail.item.accentColor) { tag in
-                            selectedTag = tag
-                        }
-                            .padding(.vertical, 4)
-                    }
-                }
-
-                if !detail.related.isEmpty {
-                    Section("相关推荐") {
-                        ForEach(Array(detail.related.prefix(6))) { comic in
-                            ComicListActionLink(
-                                item: comic,
-                                service: service,
-                                hasReadingProgress: hasReadingProgress(for: comic),
-                                openDetail: { relatedDetailRequest = ComicListDetailRequest(item: $0) },
-                                openReader: { relatedReaderRequest = $0 }
-                            )
-                                .padding(.vertical, 2)
-                        }
-                    }
+                ForEach(contentOrder) { section in
+                    contentSection(for: section)
                 }
             }
             .picaxInsetGroupedListStyle()
@@ -337,6 +253,112 @@ private struct ComicDetailContent: View {
 
     private var selectedChapterSortOrder: ComicDetailChapterSortOrder {
         ComicDetailChapterSortOrder(rawValue: chapterSortOrder) ?? .ascending
+    }
+
+    private var contentOrder: [ComicDetailContentSectionKind] {
+        ComicDetailContentSectionKind.normalizedOrder(from: contentOrderRaw)
+    }
+
+    @ViewBuilder
+    private func contentSection(for section: ComicDetailContentSectionKind) -> some View {
+        switch section {
+        case .comments:
+            if detail.item.supportsComments {
+                Section {
+                    Button {
+                        commentSheet = CommentSheetContext(item: detail.item)
+                    } label: {
+                        Label("查看评论", systemImage: "text.bubble")
+                    }
+                }
+            }
+
+        case .actions:
+            if detail.item.copyAction != nil {
+                Section("操作") {
+                    ComicCopyActionButton(item: detail.item)
+                }
+            }
+
+        case .chapters:
+            if showsChaptersAsSection, !detail.chapters.isEmpty {
+                Section {
+                    ForEach(sortedChapterDisplayItems) { item in
+                        Button {
+                            readerTarget = ComicReaderTarget(chapterIndex: item.originalIndex, ignoresProgress: true)
+                        } label: {
+                            ComicChapterRow(chapter: item.chapter)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                } header: {
+                    ComicChaptersSectionHeader(
+                        chapterCount: detail.chapters.count,
+                        sortOrder: $chapterSortOrder
+                    )
+                }
+            }
+
+        case .description:
+            if !detail.description.isEmpty {
+                Section("简介") {
+                    Text(detail.description)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+            }
+
+        case .uploader:
+            if let uploader = detail.uploader {
+                Section("上传者") {
+                    ComicUploaderInfoRow(uploader: uploader, accentColor: detail.item.accentColor) { tag in
+                        selectedTag = tag
+                    }
+                }
+            }
+
+        case .information:
+            Section("信息") {
+                ComicInfoLine(title: "来源", value: detail.item.platformTitle)
+                if let authorText = detail.selectableAuthorText {
+                    ComicInfoLine(title: "作者", value: authorText)
+                }
+                if let pageText = detail.item.pageText {
+                    ComicInfoLine(title: "页数", value: pageText)
+                }
+                if let updatedText = detail.updatedText, !updatedText.isEmpty {
+                    ComicInfoLine(title: "更新", value: updatedText)
+                }
+                ComicInfoLine(title: "编号", value: detail.item.target, monospaced: true)
+            }
+
+        case .tags:
+            ForEach(detail.tagGroups) { group in
+                Section(group.title) {
+                    FlowTagLinks(tags: group.tags, color: detail.item.accentColor) { tag in
+                        selectedTag = tag
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+
+        case .related:
+            if !detail.related.isEmpty {
+                Section("相关推荐") {
+                    ForEach(Array(detail.related.prefix(6))) { comic in
+                        ComicListActionLink(
+                            item: comic,
+                            service: service,
+                            hasReadingProgress: hasReadingProgress(for: comic),
+                            openDetail: { relatedDetailRequest = ComicListDetailRequest(item: $0) },
+                            openReader: { relatedReaderRequest = $0 }
+                        )
+                        .padding(.vertical, 2)
+                    }
+                }
+            }
+        }
     }
 }
 
