@@ -425,15 +425,15 @@ struct ComicReaderPage: View {
                         backgroundOpacity: progressBackgroundOpacity,
                         usesGlassBackground: usesProgressGlassBackground
                     )
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, progressBottomPadding)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: readerProgressPosition.alignment)
-                    .contentShape(Rectangle())
+                    .contentShape(Capsule(style: .continuous))
                     .onTapGesture {
                         presentProgressSelection()
                     }
                     .accessibilityLabel("选择阅读进度")
                     .accessibilityAddTraits(progressTapSelectionEnabled ? .isButton : [])
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, progressBottomPadding)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: readerProgressPosition.alignment)
                     .allowsHitTesting(progressTapSelectionEnabled)
                 }
 
