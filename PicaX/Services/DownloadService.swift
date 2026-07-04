@@ -501,6 +501,12 @@ final class DownloadService: ObservableObject {
         saveTasks()
     }
 
+    func clearTasks() {
+        guard !tasks.isEmpty else { return }
+        tasks.removeAll()
+        saveTasks()
+    }
+
     func removeRecord(_ record: DownloadRecord) {
         let directoryURL = comicDirectoryURLIfAvailable(for: record.item)
         records.removeAll { $0.id == record.id }

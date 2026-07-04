@@ -391,6 +391,7 @@ private struct DownloadArchiveExportFeedback: Identifiable {
 private struct DownloadQueueSheet: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var downloadService: DownloadService
+    @State private var showsClearQueueConfirmation = false
 
     var body: some View {
         NavigationStack {
@@ -453,7 +454,16 @@ private struct DownloadQueueSheet: View {
             .navigationTitle("下载队列")
             .picaxNavigationBarTitleDisplayModeInline()
             .toolbar {
-                ToolbarItem(placement: .picaxTopBarTrailing) {
+                ToolbarItemGroup(placement: .picaxTopBarTrailing) {
+                    if !downloadService.tasks.isEmpty {
+                        Button(role: .destructive) {
+                            showsClearQueueConfirmation = true
+                        } label: {
+                            Image(systemName: "trash")
+                        }
+                        .accessibilityLabel("清空下载队列")
+                    }
+
                     Button {
                         dismiss()
                     } label: {
@@ -461,6 +471,14 @@ private struct DownloadQueueSheet: View {
                     }
                     .accessibilityLabel("关闭")
                 }
+            }
+            .alert("清空下载队列？", isPresented: $showsClearQueueConfirmation) {
+                Button("清空队列", role: .destructive) {
+                    downloadService.clearTasks()
+                }
+                Button("取消", role: .cancel) {}
+            } message: {
+                Text("此操作会移除所有等待中、下载中、暂停和失败的下载任务，不会删除已经下载完成的漫画文件。")
             }
         }
     }
