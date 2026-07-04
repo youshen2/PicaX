@@ -102,8 +102,8 @@ struct DownloadRecord: Identifiable, Equatable, Codable {
 struct ComicDownloadTask: Identifiable, Equatable, Codable {
     let id: String
     let item: ComicListItem
-    let chapters: [ComicChapter]
-    let chapterIndexes: [Int]
+    var chapters: [ComicChapter]
+    var chapterIndexes: [Int]
     var detail: ComicDetailInfo?
     var downloadsComments: Bool
     var status: ComicDownloadTaskStatus
@@ -134,7 +134,22 @@ struct ComicDownloadTask: Identifiable, Equatable, Codable {
         self.errorMessage = nil
     }
 
+    init(item: ComicListItem, downloadsComments: Bool) {
+        self.init(
+            item: item,
+            chapters: [],
+            chapterIndexes: [],
+            detail: nil,
+            downloadsComments: downloadsComments
+        )
+    }
+
+    var needsChapterResolution: Bool {
+        chapters.isEmpty && chapterIndexes.isEmpty
+    }
+
     var progress: Double {
+        guard !needsChapterResolution else { return 0 }
         let totalChapters = max(chapterIndexes.count, 1)
         let completed = Double(completedChapterIndexes.count)
         guard status == .downloading, currentPageCount > 0 else {
@@ -147,8 +162,14 @@ struct ComicDownloadTask: Identifiable, Equatable, Codable {
     var statusText: String {
         switch status {
         case .queued:
+            if needsChapterResolution {
+                return "等待解析章节"
+            }
             return "等待下载"
         case .downloading:
+            if needsChapterResolution {
+                return "正在准备章节"
+            }
             if let currentChapterIndex,
                chapters.indices.contains(currentChapterIndex) {
                 let chapter = chapters[currentChapterIndex]
@@ -166,7 +187,10 @@ struct ComicDownloadTask: Identifiable, Equatable, Codable {
     }
 
     var chapterCountText: String {
-        "\(completedChapterIndexes.count)/\(chapterIndexes.count) 章"
+        guard !needsChapterResolution else {
+            return "等待章节"
+        }
+        return "\(completedChapterIndexes.count)/\(chapterIndexes.count) 章"
     }
 }
 
@@ -190,6 +214,7 @@ enum DownloadEnqueueResult: Equatable {
     var message: String {
         switch self {
         case .queued(let count):
+            guard count > 0 else { return "已加入下载队列" }
             return "已加入下载队列：\(count) 章"
         case .alreadyDownloading:
             return "下载中"
@@ -405,6 +430,26 @@ final class DownloadService: ObservableObject {
         return .queued(uniqueIndexes.count)
     }
 
+    func enqueue(item: ComicListItem, downloadsComments: Bool = false) -> DownloadEnqueueResult {
+        guard task(for: item) == nil else {
+            return .alreadyDownloading
+        }
+
+        if let record = record(for: item),
+           record.totalChapterCount > 0,
+           record.chapters.count >= record.totalChapterCount {
+            return .alreadyDownloaded
+        }
+
+        tasks.append(ComicDownloadTask(
+            item: item,
+            downloadsComments: downloadsComments
+        ))
+        saveTasks()
+        startIfNeeded()
+        return .queued(0)
+    }
+
     func retry(_ task: ComicDownloadTask) {
         updateTask(task.id) { value in
             value.status = .queued
@@ -562,16 +607,17 @@ final class DownloadService: ObservableObject {
 
         do {
             let account = accountProvider?(task.item.platform)
-            let metadata = await loadMetadata(for: task, account: account)
-            for chapterIndex in task.chapterIndexes {
+            guard let preparedTask = try await prepareTaskForDownload(id: id, account: account) else { return }
+            let metadata = await loadMetadata(for: preparedTask, account: account)
+            for chapterIndex in preparedTask.chapterIndexes {
                 try Task.checkCancellation()
                 try checkTaskCanContinue(id)
-                guard task.chapters.indices.contains(chapterIndex) else { continue }
+                guard preparedTask.chapters.indices.contains(chapterIndex) else { continue }
                 if tasks.first(where: { $0.id == id })?.completedChapterIndexes.contains(chapterIndex) == true {
                     continue
                 }
 
-                let chapter = task.chapters[chapterIndex]
+                let chapter = preparedTask.chapters[chapterIndex]
                 updateTask(id) { value in
                     value.currentChapterIndex = chapterIndex
                     value.currentPageIndex = 0
@@ -580,15 +626,15 @@ final class DownloadService: ObservableObject {
                 saveTasks()
 
                 let images = try await contentService.loadChapterImages(
-                    item: task.item,
+                    item: preparedTask.item,
                     chapter: chapter,
                     account: account
                 )
-                let chapterComments = task.downloadsComments
-                    ? await loadChapterCommentsIfPossible(item: task.item, chapter: chapter, account: account)
+                let chapterComments = preparedTask.downloadsComments
+                    ? await loadChapterCommentsIfPossible(item: preparedTask.item, chapter: chapter, account: account)
                     : []
                 let downloadedChapter = try await downloadChapter(
-                    item: task.item,
+                    item: preparedTask.item,
                     chapter: chapter,
                     chapterIndex: chapterIndex,
                     images: images,
@@ -596,8 +642,8 @@ final class DownloadService: ObservableObject {
                     taskID: id
                 )
                 appendDownloadedChapter(
-                    item: task.item,
-                    totalChapterCount: task.chapters.count,
+                    item: preparedTask.item,
+                    totalChapterCount: preparedTask.chapters.count,
                     chapter: downloadedChapter,
                     detail: metadata.detail,
                     comments: metadata.comments,
@@ -628,6 +674,31 @@ final class DownloadService: ObservableObject {
             }
             saveTasks()
         }
+    }
+
+    private func prepareTaskForDownload(id: String, account: PlatformAccount?) async throws -> ComicDownloadTask? {
+        guard let task = tasks.first(where: { $0.id == id }) else { return nil }
+        guard task.needsChapterResolution else { return task }
+
+        try checkTaskCanContinue(id)
+        let detail = try await contentService.loadDetail(item: task.item, account: account)
+        try checkTaskCanContinue(id)
+
+        let downloaded = downloadedChapterIndexes(for: detail.item)
+        let indexes = Array(detail.chapters.indices.filter { !downloaded.contains($0) })
+        guard !indexes.isEmpty else {
+            tasks.removeAll { $0.id == id }
+            saveTasks()
+            return nil
+        }
+
+        updateTask(id) { value in
+            value.chapters = detail.chapters
+            value.chapterIndexes = indexes
+            value.detail = detail
+        }
+        saveTasks()
+        return tasks.first { $0.id == id }
     }
 
     private func loadMetadata(
