@@ -30,6 +30,7 @@ struct WatchReaderPage: View {
     @State private var currentChapterPosition: Int
     @State private var initialPageIndex: Int
     @State private var presentsReaderMenu = false
+    @State private var hidesReaderUI = false
 
     let item: WatchComicItem
     let totalChapters: Int
@@ -73,26 +74,38 @@ struct WatchReaderPage: View {
     var body: some View {
         readerContent
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .contentShape(Rectangle())
+        .simultaneousGesture(
+            TapGesture().onEnded {
+                if canToggleReaderUI {
+                    toggleReaderUI()
+                }
+            }
+        )
         .overlay {
             overlayLayer
                 .ignoresSafeArea(.container, edges: [.horizontal, .bottom])
         }
         .navigationTitle(currentChapter.title)
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    presentsReaderMenu = true
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .font(.system(size: 14, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.white)
-                        .frame(width: 32, height: 32)
-                        .watchReaderToolbarButtonSurface()
+            if !hidesReaderUI {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        presentsReaderMenu = true
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .font(.system(size: 14, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.white)
+                            .frame(width: 32, height: 32)
+                            .watchReaderToolbarButtonSurface()
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("更多")
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("更多")
             }
         }
+        .toolbar(hidesReaderUI ? .hidden : .visible, for: .navigationBar)
+        .animation(.easeInOut(duration: 0.18), value: hidesReaderUI)
         .sheet(isPresented: $presentsReaderMenu) {
             WatchReaderMenuSheet(
                 chapters: availableChapters,
@@ -122,7 +135,7 @@ struct WatchReaderPage: View {
 
     private var overlayLayer: some View {
         ZStack {
-            if showsProgress, currentPageCount > 0 {
+            if !hidesReaderUI, showsProgress, currentPageCount > 0 {
                 WatchReaderProgressCapsule(
                     pageIndex: currentPageIndex,
                     pageCount: currentPageCount,
@@ -134,7 +147,7 @@ struct WatchReaderPage: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: progressPosition.alignment)
             }
 
-            if showsSystemStatus {
+            if !hidesReaderUI, showsSystemStatus {
                 WatchReaderSystemStatusCapsule(usesGlassBackground: usesSystemStatusGlassBackground)
                     .padding(capsuleInsets(position: effectiveSystemStatusPosition, edgeInset: systemStatusEdgeInset, bottomInset: systemStatusBottomInset))
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: effectiveSystemStatusPosition.alignment)
@@ -325,6 +338,20 @@ struct WatchReaderPage: View {
             ? availableChapterIndexes[position] + 1
             : position + 1
         return "第 \(chapterNumber) 章 · \(chapter.title)"
+    }
+
+    private var canToggleReaderUI: Bool {
+        if case .loaded(let images) = viewModel.state {
+            return !images.isEmpty
+        }
+        return false
+    }
+
+    private func toggleReaderUI() {
+        hidesReaderUI.toggle()
+        if hidesReaderUI {
+            presentsReaderMenu = false
+        }
     }
 
     private var readingMode: WatchReaderReadingMode {
