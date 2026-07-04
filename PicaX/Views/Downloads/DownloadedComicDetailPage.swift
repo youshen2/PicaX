@@ -136,8 +136,7 @@ private struct DownloadedComicLocalHeader: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            ComicCoverView(url: coverURL, accentColor: record.item.accentColor)
-                .frame(width: 102, height: 136)
+            ComicCoverView(url: coverURL, accentColor: record.item.accentColor, width: 102, height: 136)
 
             VStack(alignment: .leading, spacing: 8) {
                 Text(record.item.title.trimmingCharacters(in: .whitespacesAndNewlines))

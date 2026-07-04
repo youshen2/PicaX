@@ -549,8 +549,7 @@ private struct DownloadTaskRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            ComicCoverView(url: task.item.coverURL, accentColor: task.item.accentColor)
-                .frame(width: 58, height: 78)
+            ComicCoverView(url: task.item.coverURL, accentColor: task.item.accentColor, width: 58, height: 78)
 
             VStack(alignment: .leading, spacing: 6) {
                 Text(task.item.title)
@@ -591,8 +590,7 @@ private struct DownloadRecordRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            ComicCoverView(url: coverURL, accentColor: record.item.accentColor)
-                .frame(width: 58, height: 78)
+            ComicCoverView(url: coverURL, accentColor: record.item.accentColor, width: 58, height: 78)
 
             VStack(alignment: .leading, spacing: 5) {
                 Text(record.item.title)

@@ -106,8 +106,7 @@ private struct ReadingDurationCardItem: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
-            ComicCoverView(url: record.item.coverURL, accentColor: record.item.accentColor)
-                .frame(width: 56, height: 76)
+            ComicCoverView(url: record.item.coverURL, accentColor: record.item.accentColor, width: 56, height: 76)
                 .layoutPriority(1)
 
             VStack(alignment: .leading, spacing: 5) {
@@ -279,8 +278,7 @@ private struct ReadingDurationComicSummaryRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            ComicCoverView(url: record.item.coverURL, accentColor: record.item.accentColor)
-                .frame(width: 58, height: 78)
+            ComicCoverView(url: record.item.coverURL, accentColor: record.item.accentColor, width: 58, height: 78)
 
             VStack(alignment: .leading, spacing: 5) {
                 Text(record.item.title)
@@ -374,8 +372,7 @@ private struct ReadingDurationRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            ComicCoverView(url: record.item.coverURL, accentColor: record.item.accentColor)
-                .frame(width: 58, height: 78)
+            ComicCoverView(url: record.item.coverURL, accentColor: record.item.accentColor, width: 58, height: 78)
 
             VStack(alignment: .leading, spacing: 5) {
                 Text(record.item.title)

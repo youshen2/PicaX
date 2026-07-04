@@ -340,8 +340,7 @@ struct ReadingListEntryRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            ComicCoverView(url: entry.coverURL ?? entry.item.coverURL, accentColor: entry.item.accentColor)
-                .frame(width: 46, height: 62)
+            ComicCoverView(url: entry.coverURL ?? entry.item.coverURL, accentColor: entry.item.accentColor, width: 46, height: 62)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(entry.item.title)

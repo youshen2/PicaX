@@ -96,8 +96,7 @@ private struct DownloadRecordCardItem: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            ComicCoverView(url: coverURL, accentColor: record.item.accentColor)
-                .frame(width: 92, height: 124)
+            ComicCoverView(url: coverURL, accentColor: record.item.accentColor, width: 92, height: 124)
 
             Text(record.item.title)
                 .font(.caption.weight(.semibold))

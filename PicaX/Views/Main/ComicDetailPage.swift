@@ -465,8 +465,7 @@ private struct ComicDetailHeader: View {
             Button {
                 showsCoverPreview = true
             } label: {
-                ComicCoverView(url: detail.item.coverURL, accentColor: detail.item.accentColor)
-                    .frame(width: 102, height: 136)
+                ComicCoverView(url: detail.item.coverURL, accentColor: detail.item.accentColor, width: 102, height: 136)
             }
             .buttonStyle(.plain)
 

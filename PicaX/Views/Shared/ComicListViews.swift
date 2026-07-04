@@ -433,8 +433,7 @@ struct ComicListRow: View, Equatable {
 
     var body: some View {
         HStack(alignment: .top, spacing: 14) {
-            ComicCoverView(url: item.coverURL, accentColor: item.accentColor)
-                .frame(width: 82, height: 112)
+            ComicCoverView(url: item.coverURL, accentColor: item.accentColor, width: 82, height: 112)
 
             VStack(alignment: .leading, spacing: 8) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -567,11 +566,17 @@ private struct ComicListMetaPill: View {
 struct ComicCoverView: View {
     let url: URL?
     let accentColor: Color
+    var width: CGFloat?
+    var height: CGFloat?
     var storesInCache = true
 
     var body: some View {
         CachedRemoteImageView(url: url, accentColor: accentColor, contentMode: .fill, storesInCache: storesInCache, maxPixelSize: 512)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(width: width, height: height)
+            .frame(
+                maxWidth: width == nil ? .infinity : nil,
+                maxHeight: height == nil ? .infinity : nil
+            )
             .clipped()
         .background(AppColor.secondaryGroupedBackground)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
