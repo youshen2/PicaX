@@ -213,9 +213,9 @@ enum ReaderOverlayPosition: String, CaseIterable, Identifiable, Equatable {
         case .topTrailing:
             EdgeInsets(top: 16, leading: 0, bottom: 0, trailing: 16)
         case .bottomLeading:
-            EdgeInsets(top: 0, leading: 16, bottom: 16, trailing: 0)
+            EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 0)
         case .bottomTrailing:
-            EdgeInsets(top: 0, leading: 0, bottom: 16, trailing: 16)
+            EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 16)
         }
     }
 
@@ -251,12 +251,12 @@ struct ReaderProgressOverlay: View {
         HStack(spacing: showsPageLabel ? 7 : 0) {
             ZStack {
                 Circle()
-                    .stroke(.white.opacity(0.18), lineWidth: 3)
+                    .stroke(.black.opacity(0.12), lineWidth: 3)
                 Circle()
                     .trim(from: 0, to: CGFloat(normalizedProgress))
                     .stroke(
                         AngularGradient(
-                            colors: [.white.opacity(0.72), .white, .white.opacity(0.86)],
+                            colors: [.black.opacity(0.58), .black.opacity(0.82), .black.opacity(0.66)],
                             center: .center,
                             startAngle: .degrees(-90),
                             endAngle: .degrees(270)
@@ -267,14 +267,14 @@ struct ReaderProgressOverlay: View {
                 Text(percentText)
                     .font(.system(size: 9, weight: .semibold, design: .rounded))
                     .monospacedDigit()
-                    .foregroundStyle(.white)
+                    .foregroundStyle(.black.opacity(0.82))
             }
             .frame(width: 34, height: 34)
 
             if showsPageLabel {
                 Text(title)
                     .font(.caption2.weight(.medium))
-                    .foregroundStyle(.white.opacity(0.82))
+                    .foregroundStyle(.black.opacity(0.72))
                     .lineLimit(1)
                     .minimumScaleFactor(0.78)
             }
@@ -283,36 +283,42 @@ struct ReaderProgressOverlay: View {
         .padding(.trailing, showsPageLabel ? 10 : 6)
         .padding(.vertical, 5)
         .frame(minWidth: showsPageLabel ? 112 : 44, alignment: .leading)
-        .readerCapsuleSurface(opacity: backgroundOpacity, usesLiquidGlass: usesGlassBackground, fillScale: 0.42)
+        .readerLightCapsuleSurface(opacity: backgroundOpacity, usesLiquidGlass: usesGlassBackground)
     }
 
     private var capsuleBody: some View {
         HStack(spacing: 8) {
-            Text(percentText)
-                .font(.callout.weight(.bold))
-                .monospacedDigit()
-                .foregroundStyle(.white)
+            Image(systemName: "book.pages")
+                .font(.callout.weight(.semibold))
+                .foregroundStyle(.black.opacity(0.78))
 
             if showsPageLabel {
                 Text(title)
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.white.opacity(0.88))
+                    .font(.callout.weight(.bold))
+                    .monospacedDigit()
+                    .foregroundStyle(.black.opacity(0.86))
                     .lineLimit(1)
+                    .minimumScaleFactor(0.78)
+            } else {
+                Text(percentText)
+                    .font(.callout.weight(.bold))
+                    .monospacedDigit()
+                    .foregroundStyle(.black.opacity(0.86))
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .frame(minWidth: showsPageLabel ? 158 : 76, alignment: .leading)
-        .readerCapsuleSurface(opacity: backgroundOpacity, usesLiquidGlass: usesGlassBackground, fillScale: 0.38)
-        .overlay(alignment: .leading) {
+        .padding(.horizontal, 13)
+        .padding(.vertical, 9)
+        .frame(minWidth: showsPageLabel ? 148 : 82, alignment: .leading)
+        .background(alignment: .leading) {
             GeometryReader { proxy in
                 Capsule()
-                    .fill(.white.opacity(0.16))
+                    .fill(.black.opacity(0.07))
                     .frame(width: max(proxy.size.width * CGFloat(normalizedProgress), 8))
             }
             .clipShape(Capsule())
             .allowsHitTesting(false)
         }
+        .readerLightCapsuleSurface(opacity: backgroundOpacity, usesLiquidGlass: usesGlassBackground)
     }
 
     private var normalizedProgress: Double {
@@ -435,6 +441,225 @@ struct ReaderSystemStatusOverlay: View {
         default:
             return "电量"
         }
+    }
+}
+
+enum ReaderChromeMetrics {
+    static let bottomBarHeight: CGFloat = 46
+    static let bottomBarBottomSpacing: CGFloat = 5
+    static let bottomButtonSize: CGFloat = 34
+    static let bottomOverlayClearance: CGFloat = bottomBarHeight + bottomBarBottomSpacing + 8
+}
+
+enum ReaderPlatformSafeArea {
+    static var bottomInset: CGFloat {
+        #if os(iOS)
+        keyWindow?.safeAreaInsets.bottom ?? 0
+        #else
+        0
+        #endif
+    }
+
+    #if os(iOS)
+    private static var keyWindow: UIWindow? {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows)
+            .first { $0.isKeyWindow }
+    }
+    #endif
+}
+
+struct ReaderBottomChromeOverlay: View {
+    let isVisible: Bool
+    let isAutoPaging: Bool
+    let showsReadingListButton: Bool
+    let canMovePreviousBook: Bool
+    let canLoadPreviousChapter: Bool
+    let canLoadNextChapter: Bool
+    let canMoveNextBook: Bool
+    let onToggleAutoPaging: () -> Void
+    let onShowChapters: () -> Void
+    let onShowReadingList: () -> Void
+    let onMovePreviousBook: () -> Void
+    let onLoadPreviousChapter: () -> Void
+    let onLoadNextChapter: () -> Void
+    let onMoveNextBook: () -> Void
+
+    var body: some View {
+        Group {
+            if isVisible {
+                GeometryReader { proxy in
+                    let bottomInset = max(proxy.safeAreaInsets.bottom, ReaderPlatformSafeArea.bottomInset)
+                    VStack(spacing: 0) {
+                        Spacer(minLength: 0)
+
+                        ReaderBottomChromeBar(
+                            isAutoPaging: isAutoPaging,
+                            showsReadingListButton: showsReadingListButton,
+                            canMovePreviousBook: canMovePreviousBook,
+                            canLoadPreviousChapter: canLoadPreviousChapter,
+                            canLoadNextChapter: canLoadNextChapter,
+                            canMoveNextBook: canMoveNextBook,
+                            onToggleAutoPaging: onToggleAutoPaging,
+                            onShowChapters: onShowChapters,
+                            onShowReadingList: onShowReadingList,
+                            onMovePreviousBook: onMovePreviousBook,
+                            onLoadPreviousChapter: onLoadPreviousChapter,
+                            onLoadNextChapter: onLoadNextChapter,
+                            onMoveNextBook: onMoveNextBook
+                        )
+                        .padding(.horizontal, 12)
+                        .padding(.bottom, bottomInset + ReaderChromeMetrics.bottomBarBottomSpacing)
+                    }
+                }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .ignoresSafeArea(.container)
+    }
+}
+
+private struct ReaderBottomChromeBar: View {
+    let isAutoPaging: Bool
+    let showsReadingListButton: Bool
+    let canMovePreviousBook: Bool
+    let canLoadPreviousChapter: Bool
+    let canLoadNextChapter: Bool
+    let canMoveNextBook: Bool
+    let onToggleAutoPaging: () -> Void
+    let onShowChapters: () -> Void
+    let onShowReadingList: () -> Void
+    let onMovePreviousBook: () -> Void
+    let onLoadPreviousChapter: () -> Void
+    let onLoadNextChapter: () -> Void
+    let onMoveNextBook: () -> Void
+
+    var body: some View {
+        chromeContainer {
+            HStack(alignment: .bottom) {
+                ReaderChromeControlGroup {
+                    ReaderChromeIconButton(
+                        systemName: isAutoPaging ? "timer.circle.fill" : "timer",
+                        accessibilityLabel: isAutoPaging ? "停止自动翻页" : "自动翻页",
+                        isActive: isAutoPaging,
+                        action: onToggleAutoPaging
+                    )
+
+                    ReaderChromeIconButton(
+                        systemName: "list.bullet",
+                        accessibilityLabel: "章节",
+                        action: onShowChapters
+                    )
+
+                    if showsReadingListButton {
+                        ReaderChromeIconButton(
+                            systemName: "list.bullet.rectangle",
+                            accessibilityLabel: "阅读列表",
+                            action: onShowReadingList
+                        )
+                    }
+                }
+
+                Spacer(minLength: 6)
+
+                ReaderChromeControlGroup {
+                    ReaderChromeIconButton(
+                        systemName: "backward.end",
+                        accessibilityLabel: "上一本",
+                        isEnabled: canMovePreviousBook,
+                        action: onMovePreviousBook
+                    )
+
+                    ReaderChromeIconButton(
+                        systemName: "chevron.up",
+                        accessibilityLabel: "上一章",
+                        isEnabled: canLoadPreviousChapter,
+                        action: onLoadPreviousChapter
+                    )
+
+                    ReaderChromeIconButton(
+                        systemName: "chevron.down",
+                        accessibilityLabel: "下一章",
+                        isEnabled: canLoadNextChapter,
+                        action: onLoadNextChapter
+                    )
+
+                    ReaderChromeIconButton(
+                        systemName: "forward.end",
+                        accessibilityLabel: "下一本",
+                        isEnabled: canMoveNextBook,
+                        action: onMoveNextBook
+                    )
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func chromeContainer<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        if #available(iOS 26, macOS 26, visionOS 26, *) {
+            GlassEffectContainer(spacing: 16) {
+                content()
+            }
+        } else {
+            content()
+        }
+    }
+}
+
+private struct ReaderChromeControlGroup<Content: View>: View {
+    let content: Content
+
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            content
+        }
+        .padding(.horizontal, 7)
+        .padding(.vertical, 6)
+        .frame(height: ReaderChromeMetrics.bottomBarHeight)
+        .readerChromeCapsuleSurface()
+    }
+}
+
+private struct ReaderChromeIconButton: View {
+    let systemName: String
+    let accessibilityLabel: String
+    var isEnabled = true
+    var isActive = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            ReaderChromeGlyph(
+                systemName: systemName,
+                size: 19,
+                foregroundStyle: isActive ? AnyShapeStyle(.blue) : AnyShapeStyle(.black.opacity(0.86))
+            )
+        }
+        .buttonStyle(.plain)
+        .frame(width: ReaderChromeMetrics.bottomButtonSize, height: ReaderChromeMetrics.bottomButtonSize)
+        .opacity(isEnabled ? 1 : 0.32)
+        .disabled(!isEnabled)
+        .accessibilityLabel(accessibilityLabel)
+    }
+}
+
+private struct ReaderChromeGlyph: View {
+    let systemName: String
+    var size: CGFloat = 24
+    var foregroundStyle = AnyShapeStyle(.black.opacity(0.86))
+
+    var body: some View {
+        Image(systemName: systemName)
+            .font(.system(size: size, weight: .semibold, design: .rounded))
+            .symbolRenderingMode(.hierarchical)
+            .foregroundStyle(foregroundStyle)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
@@ -737,5 +962,71 @@ extension View {
                     .stroke(.white.opacity(strokeOpacity), lineWidth: 0.5)
             }
             .shadow(color: .black.opacity(0.16), radius: 10, y: 5)
+    }
+
+    @ViewBuilder
+    func readerLightCapsuleSurface(opacity: Double, usesLiquidGlass: Bool) -> some View {
+        let fillOpacity = max(opacity * 0.72, 0.48)
+        if usesLiquidGlass {
+            if #available(iOS 26, macOS 26, visionOS 26, *) {
+                self
+                    .background {
+                        Capsule(style: .continuous)
+                            .fill(.white.opacity(max(opacity * 0.2, 0.1)))
+                    }
+                    .glassEffect(.regular.tint(.white.opacity(max(opacity * 0.34, 0.2))), in: .capsule)
+                    .overlay {
+                        Capsule(style: .continuous)
+                            .stroke(.white.opacity(0.58), lineWidth: 0.5)
+                    }
+                    .shadow(color: .black.opacity(0.12), radius: 14, y: 7)
+            } else {
+                self
+                    .readerLightCapsuleFallbackSurface(fillOpacity: fillOpacity)
+            }
+        } else {
+            self
+                .readerLightCapsuleFallbackSurface(fillOpacity: fillOpacity)
+        }
+    }
+
+    func readerLightCapsuleFallbackSurface(fillOpacity: Double) -> some View {
+        self
+            .background(.ultraThinMaterial, in: Capsule(style: .continuous))
+            .background {
+                Capsule(style: .continuous)
+                    .fill(.white.opacity(fillOpacity))
+            }
+            .overlay {
+                Capsule(style: .continuous)
+                    .stroke(.white.opacity(0.68), lineWidth: 0.5)
+            }
+            .shadow(color: .black.opacity(0.13), radius: 13, y: 6)
+    }
+
+    @ViewBuilder
+    func readerChromeCapsuleSurface() -> some View {
+        if #available(iOS 26, macOS 26, visionOS 26, *) {
+            self
+                .background {
+                    Capsule(style: .continuous)
+                        .fill(.white.opacity(0.2))
+                }
+                .glassEffect(.regular.tint(.white.opacity(0.44)).interactive(), in: .capsule)
+                .overlay {
+                    Capsule(style: .continuous)
+                        .stroke(.white.opacity(0.62), lineWidth: 0.5)
+                }
+                .shadow(color: .black.opacity(0.16), radius: 18, y: 9)
+        } else {
+            self
+                .background(.ultraThinMaterial, in: Capsule(style: .continuous))
+                .background(.white.opacity(0.58), in: Capsule(style: .continuous))
+                .overlay {
+                    Capsule(style: .continuous)
+                        .stroke(.white.opacity(0.7), lineWidth: 0.5)
+                }
+                .shadow(color: .black.opacity(0.14), radius: 16, y: 8)
+        }
     }
 }

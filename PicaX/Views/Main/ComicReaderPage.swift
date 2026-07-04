@@ -22,7 +22,7 @@ struct ComicReaderPage: View {
     @AppStorage(ReaderSettingsKey.progressFollowsUIVisibility) private var progressFollowsUIVisibility = false
     @AppStorage(ReaderSettingsKey.progressTapSelectionEnabled) private var progressTapSelectionEnabled = false
     @AppStorage(ReaderSettingsKey.progressBackgroundOpacity) private var progressBackgroundOpacity = 0.78
-    @AppStorage(ReaderSettingsKey.progressBottomInset) private var progressBottomInset = 16.0
+    @AppStorage(ReaderSettingsKey.progressBottomInset) private var progressBottomInset = 0.0
     @AppStorage(ReaderSettingsKey.readingMode) private var readingMode = ReaderReadingMode.topToBottomContinuous.rawValue
     @AppStorage(ReaderSettingsKey.imageSpacing) private var imageSpacing = 0.0
     @AppStorage(ReaderSettingsKey.firstImageTopPadding) private var firstImageTopPadding = 115.0
@@ -51,7 +51,7 @@ struct ComicReaderPage: View {
     @AppStorage(ReaderSettingsKey.systemStatusFollowsUIVisibility) private var systemStatusFollowsUIVisibility = false
     @AppStorage(ReaderSettingsKey.systemStatusStyle) private var systemStatusStyle = ReaderSystemStatusStyle.compact.rawValue
     @AppStorage(ReaderSettingsKey.systemStatusPosition) private var systemStatusPosition = ReaderOverlayPosition.bottomLeading.rawValue
-    @AppStorage(ReaderSettingsKey.systemStatusBottomInset) private var systemStatusBottomInset = 16.0
+    @AppStorage(ReaderSettingsKey.systemStatusBottomInset) private var systemStatusBottomInset = 0.0
     @AppStorage(ReaderSettingsKey.usesProgressGlassBackground) private var usesProgressGlassBackground = false
     @AppStorage(ReaderSettingsKey.usesSystemStatusGlassBackground) private var usesSystemStatusGlassBackground = false
     @AppStorage(ReaderSettingsKey.showsReadingListBookToast) private var showsReadingListBookToast = true
@@ -69,7 +69,7 @@ struct ComicReaderPage: View {
     let listContext: ComicReaderListContext?
     let initialToastMessage: String?
     @StateObject private var viewModel: ComicReaderViewModel
-    @State private var showsChapters = false
+    @State private var presentedChapterSheetTab: ReaderChapterSheetTab?
     @State private var hidesReaderUI = false
     @State private var pagedPageIndex = 0
     @State private var continuousScrollPosition = ScrollPosition()
@@ -88,6 +88,7 @@ struct ComicReaderPage: View {
     @State private var pendingHistoryRecord: ReaderHistoryRecordSnapshot?
     @State private var progressSelectionContext: ReaderProgressSelectionContext?
     @State private var progressJumpRequest: ReaderProgressJumpRequest?
+    @State private var detailRequest: ComicListDetailRequest?
     @State private var readingDurationSessionStart: Date?
     @State private var didShowInitialToast = false
 
@@ -154,37 +155,34 @@ struct ComicReaderPage: View {
         .picaxHidesTabBar()
         .picaxReaderChrome(hidesNavigationBar: shouldHideNavigationBar, hidesStatusBar: hidesStatusBar)
         .tint(.white)
-        .overlay(alignment: readerProgressPosition.alignment) {
-            if showsProgressOverlay {
-                ReaderProgressOverlay(
-                    title: viewModel.progressTitle,
-                    progress: viewModel.progress,
-                    style: readerProgressStyle,
-                    showsPageLabel: showsPageLabel,
-                    backgroundOpacity: progressBackgroundOpacity,
-                    usesGlassBackground: usesProgressGlassBackground
-                )
-                .padding(.horizontal, 16)
-                .padding(.bottom, progressBottomPadding)
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    presentProgressSelection()
-                }
-                .accessibilityLabel("选择阅读进度")
-                .accessibilityAddTraits(progressTapSelectionEnabled ? .isButton : [])
-                .allowsHitTesting(progressTapSelectionEnabled)
-            }
+        .overlay {
+            readerAuxiliaryOverlayLayer()
         }
-        .overlay(alignment: readerSystemStatusPosition.alignment) {
-            if showsSystemStatusOverlay {
-                ReaderSystemStatusOverlay(
-                    style: readerSystemStatus,
-                    backgroundOpacity: progressBackgroundOpacity,
-                    usesGlassBackground: usesSystemStatusGlassBackground
-                )
-                .padding(readerSystemStatusInsets)
-                .allowsHitTesting(false)
-            }
+        .overlay {
+            ReaderBottomChromeOverlay(
+                isVisible: showsReaderUI,
+                isAutoPaging: isAutoPaging,
+                showsReadingListButton: hasReadingList,
+                canMovePreviousBook: canMoveToPreviousBook,
+                canLoadPreviousChapter: viewModel.canLoadPreviousChapter,
+                canLoadNextChapter: viewModel.canLoadNextChapter,
+                canMoveNextBook: canMoveToNextBook,
+                onToggleAutoPaging: { toggleAutoPaging() },
+                onShowChapters: { presentChapterSheet(.chapters) },
+                onShowReadingList: { presentChapterSheet(.readingList) },
+                onMovePreviousBook: {
+                    _ = moveReadingList(.previous)
+                },
+                onLoadPreviousChapter: {
+                    Task { await loadPreviousChapter() }
+                },
+                onLoadNextChapter: {
+                    Task { await loadNextChapter() }
+                },
+                onMoveNextBook: {
+                    _ = moveReadingList(.next)
+                }
+            )
         }
         .overlay(alignment: .bottom) {
             if let readerToastMessage {
@@ -199,62 +197,111 @@ struct ComicReaderPage: View {
         .animation(readerChromeAnimation, value: showsReaderUI)
         .animation(.easeInOut(duration: 0.16), value: readerToastMessage)
         .toolbar {
-            ToolbarItemGroup(placement: .picaxTopBarTrailing) {
-                Button {
-                    Task {
-                        await handlePreviousToolbarNavigation()
+            ToolbarItem(placement: .principal) {
+                Menu {
+                    ForEach(Array(detail.chapters.enumerated()), id: \.element.id) { index, chapter in
+                        Button {
+                            requestChapterLoad(at: index)
+                        } label: {
+                            if index == viewModel.currentChapterIndex {
+                                Label(chapterMenuTitle(for: chapter, at: index), systemImage: "checkmark")
+                            } else {
+                                Text(chapterMenuTitle(for: chapter, at: index))
+                            }
+                        }
                     }
                 } label: {
-                    Image(systemName: previousNavigationSystemImage)
-                }
-                .disabled(!canNavigatePrevious)
-                .accessibilityLabel(previousNavigationAccessibilityLabel)
+                    HStack(spacing: 5) {
+                        Text(viewModel.navigationTitle)
+                            .font(.headline.weight(.semibold))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.78)
 
-                Button {
-                    toggleAutoPaging()
-                } label: {
-                    Image(systemName: isAutoPaging ? "timer.circle.fill" : "timer")
+                        Image(systemName: "chevron.down")
+                            .font(.caption.weight(.bold))
+                    }
                 }
-                .accessibilityLabel(isAutoPaging ? "停止自动翻页" : "自动翻页")
-
-                Button {
-                    showsChapters = true
-                } label: {
-                    Image(systemName: "list.bullet")
-                }
+                .buttonStyle(.plain)
                 .accessibilityLabel("章节")
+            }
 
-                Button {
-                    Task {
-                        await handleNextToolbarNavigation()
+            ToolbarItem(placement: .picaxTopBarTrailing) {
+                Menu {
+                    Section("自动翻页") {
+                        Button {
+                            toggleAutoPaging()
+                        } label: {
+                            Label(isAutoPaging ? "停止自动翻页" : "开始自动翻页", systemImage: isAutoPaging ? "timer.circle.fill" : "timer")
+                        }
+
+                        Menu("翻页间隔") {
+                            ForEach(autoPagingIntervalOptions, id: \.self) { seconds in
+                                Button {
+                                    autoPagingInterval = Double(seconds)
+                                } label: {
+                                    if Int(autoPagingInterval.rounded()) == seconds {
+                                        Label("\(seconds) 秒", systemImage: "checkmark")
+                                    } else {
+                                        Text("\(seconds) 秒")
+                                    }
+                                }
+                            }
+                        }
+
+                        Menu("翻页距离") {
+                            ForEach(autoPagingDistanceOptions, id: \.self) { percent in
+                                Button {
+                                    autoPagingDistancePercent = percent
+                                } label: {
+                                    if autoPagingDistancePercent == percent {
+                                        Label("\(percent)% 屏幕高度", systemImage: "checkmark")
+                                    } else {
+                                        Text("\(percent)% 屏幕高度")
+                                    }
+                                }
+                            }
+                        }
+                        .disabled(readerReadingMode != .topToBottomContinuous)
+
+                        Toggle(isOn: $autoPagingTurnsChapter) {
+                            Label("自动进入下一章", systemImage: "arrow.down.doc")
+                        }
+                    }
+
+                    Section {
+                        Button {
+                            detailRequest = ComicListDetailRequest(item: detail.item)
+                        } label: {
+                            Label("打开详情页", systemImage: "info.circle")
+                        }
+
+                        Button {
+                            presentProgressSelection(respectsTapSetting: false)
+                        } label: {
+                            Label("选择阅读进度", systemImage: "slider.horizontal.3")
+                        }
                     }
                 } label: {
-                    Image(systemName: nextNavigationSystemImage)
+                    Image(systemName: "ellipsis")
                 }
-                .disabled(!canNavigateNext)
-                .accessibilityLabel(nextNavigationAccessibilityLabel)
+                .accessibilityLabel("更多")
             }
         }
-        .sheet(isPresented: $showsChapters) {
+        .navigationDestination(item: $detailRequest) { request in
+            ComicDetailPage(item: request.item, service: service)
+        }
+        .sheet(item: $presentedChapterSheetTab) { tab in
             ReaderChapterPickerSheet(
                 chapters: detail.chapters,
                 selectedIndex: viewModel.currentChapterIndex,
+                initialTab: tab,
                 listContext: listContext,
                 onSelectReadingListEntry: { entry in
                     listContext?.selectEntry(entry)
                 }
             ) { index in
-                showsChapters = false
-                Task {
-                    await viewModel.loadChapter(
-                        index: index,
-                        pageIndex: 0,
-                        account: platformAccounts.account(for: detail.item.platform),
-                        force: true,
-                        preloadImageCount: boundedPreloadImageCount,
-                        preloadDelay: readerPreloadDelay
-                    )
-                }
+                presentedChapterSheetTab = nil
+                requestChapterLoad(at: index)
             }
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
@@ -297,59 +344,110 @@ struct ComicReaderPage: View {
         }
     }
 
-    private var canNavigatePrevious: Bool {
-        viewModel.canLoadPreviousChapter || (listContext?.canMovePrevious ?? false)
+    private var canMoveToPreviousBook: Bool {
+        listContext?.canMovePrevious ?? false
     }
 
-    private var canNavigateNext: Bool {
-        viewModel.canLoadNextChapter || (listContext?.canMoveNext ?? false)
+    private var canMoveToNextBook: Bool {
+        listContext?.canMoveNext ?? false
     }
 
-    private var previousNavigationSystemImage: String {
-        canMoveToPreviousReadingListEntry ? "backward.end" : "chevron.up"
+    private var hasReadingList: Bool {
+        listContext != nil
     }
 
-    private var nextNavigationSystemImage: String {
-        canMoveToNextReadingListEntry ? "forward.end" : "chevron.down"
+    private var isChapterSheetPresented: Bool {
+        presentedChapterSheetTab != nil
     }
 
-    private var previousNavigationAccessibilityLabel: String {
-        canMoveToPreviousReadingListEntry ? "上一本" : "上一章"
+    private var autoPagingIntervalOptions: [Int] {
+        [1, 3, 5, 6, 8, 10, 15, 20, 30]
     }
 
-    private var nextNavigationAccessibilityLabel: String {
-        canMoveToNextReadingListEntry ? "下一本" : "下一章"
+    private var autoPagingDistanceOptions: [Int] {
+        [40, 60, 80, 85, 100, 120]
     }
 
-    private var canMoveToPreviousReadingListEntry: Bool {
-        !viewModel.canLoadPreviousChapter && (listContext?.canMovePrevious ?? false)
+    private func presentChapterSheet(_ tab: ReaderChapterSheetTab) {
+        guard tab == .chapters || hasReadingList else { return }
+        presentedChapterSheetTab = tab
     }
 
-    private var canMoveToNextReadingListEntry: Bool {
-        !viewModel.canLoadNextChapter && (listContext?.canMoveNext ?? false)
+    private func chapterMenuTitle(for chapter: ComicChapter, at index: Int) -> String {
+        chapter.title.isEmpty ? "第 \(index + 1) 章" : chapter.title
     }
 
-    private func handlePreviousToolbarNavigation() async {
-        if viewModel.canLoadPreviousChapter {
-            await viewModel.loadPreviousChapter(
-                account: platformAccounts.account(for: detail.item.platform),
-                preloadImageCount: boundedPreloadImageCount,
-                preloadDelay: readerPreloadDelay
-            )
-        } else {
-            _ = moveReadingList(.previous)
+    private func requestChapterLoad(at index: Int) {
+        Task {
+            await loadChapter(at: index, pageIndex: 0, force: true)
         }
     }
 
-    private func handleNextToolbarNavigation() async {
-        if viewModel.canLoadNextChapter {
-            await viewModel.loadNextChapter(
-                account: platformAccounts.account(for: detail.item.platform),
-                preloadImageCount: boundedPreloadImageCount,
-                preloadDelay: readerPreloadDelay
-            )
-        } else {
-            _ = moveReadingList(.next)
+    private func loadChapter(at index: Int, pageIndex: Int, force: Bool = false) async {
+        await viewModel.loadChapter(
+            index: index,
+            pageIndex: pageIndex,
+            account: platformAccounts.account(for: detail.item.platform),
+            force: force,
+            preloadImageCount: boundedPreloadImageCount,
+            preloadDelay: readerPreloadDelay
+        )
+    }
+
+    private func loadPreviousChapter() async {
+        guard viewModel.canLoadPreviousChapter else { return }
+        await viewModel.loadPreviousChapter(
+            account: platformAccounts.account(for: detail.item.platform),
+            preloadImageCount: boundedPreloadImageCount,
+            preloadDelay: readerPreloadDelay
+        )
+    }
+
+    private func loadNextChapter() async {
+        guard viewModel.canLoadNextChapter else { return }
+        await viewModel.loadNextChapter(
+            account: platformAccounts.account(for: detail.item.platform),
+            preloadImageCount: boundedPreloadImageCount,
+            preloadDelay: readerPreloadDelay
+        )
+    }
+
+    @ViewBuilder
+    private func readerAuxiliaryOverlayLayer() -> some View {
+        GeometryReader { _ in
+            ZStack {
+                if showsProgressOverlay {
+                    ReaderProgressOverlay(
+                        title: viewModel.progressTitle,
+                        progress: viewModel.progress,
+                        style: readerProgressStyle,
+                        showsPageLabel: showsPageLabel,
+                        backgroundOpacity: progressBackgroundOpacity,
+                        usesGlassBackground: usesProgressGlassBackground
+                    )
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, progressBottomPadding)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: readerProgressPosition.alignment)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        presentProgressSelection()
+                    }
+                    .accessibilityLabel("选择阅读进度")
+                    .accessibilityAddTraits(progressTapSelectionEnabled ? .isButton : [])
+                    .allowsHitTesting(progressTapSelectionEnabled)
+                }
+
+                if showsSystemStatusOverlay {
+                    ReaderSystemStatusOverlay(
+                        style: readerSystemStatus,
+                        backgroundOpacity: progressBackgroundOpacity,
+                        usesGlassBackground: usesSystemStatusGlassBackground
+                    )
+                    .padding(readerSystemStatusInsets)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: readerSystemStatusPosition.alignment)
+                    .allowsHitTesting(false)
+                }
+            }
         }
     }
 
@@ -824,14 +922,7 @@ struct ComicReaderPage: View {
         let progress = ignoresHistoryProgress ? nil : record?.progress
         let chapterIndex = progress?.status == .viewed ? initialChapterIndex : progress?.chapterIndex ?? initialChapterIndex
         let pageIndex = progress?.status == .viewed ? initialPageIndex : progress?.pageIndex ?? initialPageIndex
-        await viewModel.loadChapter(
-            index: chapterIndex,
-            pageIndex: pageIndex,
-            account: platformAccounts.account(for: detail.item.platform),
-            force: force,
-            preloadImageCount: boundedPreloadImageCount,
-            preloadDelay: readerPreloadDelay
-        )
+        await loadChapter(at: chapterIndex, pageIndex: pageIndex, force: force)
     }
 
     private func scrollToInitialPage(proxy: ScrollViewProxy) {
@@ -975,7 +1066,7 @@ struct ComicReaderPage: View {
         targetPixelWidth: Int?,
         selectPage: @escaping (Int) -> Void
     ) {
-        guard isAutoPaging, !isAutoPagingTurnInFlight, !showsChapters else { return }
+        guard isAutoPaging, !isAutoPagingTurnInFlight, !isChapterSheetPresented else { return }
         isAutoPagingTurnInFlight = true
         Task {
             if await handlePagedAutoPagingAtCommentBoundary(images: images, selectPage: selectPage) {
@@ -1036,7 +1127,7 @@ struct ComicReaderPage: View {
         viewportHeight: CGFloat,
         targetPixelWidth: Int?
     ) {
-        guard isAutoPaging, !isAutoPagingTurnInFlight, !showsChapters else { return }
+        guard isAutoPaging, !isAutoPagingTurnInFlight, !isChapterSheetPresented else { return }
         guard viewportHeight.isFinite, viewportHeight > 0 else { return }
 
         isAutoPagingTurnInFlight = true
@@ -1219,8 +1310,8 @@ struct ComicReaderPage: View {
         scheduleReadingHistoryRecord(pageIndex: index, totalPages: totalPages)
     }
 
-    private func presentProgressSelection() {
-        guard progressTapSelectionEnabled,
+    private func presentProgressSelection(respectsTapSetting: Bool = true) {
+        guard (!respectsTapSetting || progressTapSelectionEnabled),
               case .loaded(let images) = viewModel.state,
               !images.isEmpty else {
             return
@@ -1556,10 +1647,6 @@ struct ComicReaderPage: View {
         showsSystemStatus && (showsReaderUI || !systemStatusFollowsUIVisibility)
     }
 
-    private var shouldHideNavigationBar: Bool {
-        hidesReaderUI
-    }
-
     private func toggleReaderUI() {
         withAnimation(readerChromeAnimation) {
             hidesReaderUI.toggle()
@@ -1648,7 +1735,7 @@ struct ComicReaderPage: View {
     }
 
     private var readerChromeAnimation: Animation {
-        .easeInOut(duration: 0.22)
+        .easeInOut(duration: 0.26)
     }
 
     private var readerPageTurnAnimation: Animation {
@@ -1656,38 +1743,60 @@ struct ComicReaderPage: View {
     }
 
     private func migrateReaderVisibilityDefaultsIfNeeded() {
-        guard visibilityDefaultsVersion < 1 else { return }
-        progressFollowsUIVisibility = false
-        systemStatusFollowsUIVisibility = false
-        visibilityDefaultsVersion = 1
+        if visibilityDefaultsVersion < 1 {
+            progressFollowsUIVisibility = false
+            systemStatusFollowsUIVisibility = false
+            visibilityDefaultsVersion = 1
+        }
+
+        if visibilityDefaultsVersion < 2 {
+            if progressBottomInset == 16 {
+                progressBottomInset = 0
+            }
+            if systemStatusBottomInset == 16 {
+                systemStatusBottomInset = 0
+            }
+            visibilityDefaultsVersion = 2
+        }
+    }
+
+    private var shouldHideNavigationBar: Bool {
+        hidesReaderUI
+    }
+
+    private var readerBottomChromeClearance: CGFloat {
+        guard showsReaderUI else { return 0 }
+        return ReaderPlatformSafeArea.bottomInset + ReaderChromeMetrics.bottomOverlayClearance
     }
 
     private var progressBottomPadding: CGFloat {
-        let baseInset = CGFloat(progressBottomInset)
-        guard showsSystemStatus else { return baseInset }
+        let bottomChromeClearance = readerBottomChromeClearance
+        let padding = max(CGFloat(progressBottomInset), 0) + bottomChromeClearance
+        guard showsSystemStatus else { return padding }
         switch (readerProgressPosition, readerSystemStatusPosition) {
         case (.leading, .bottomLeading), (.trailing, .bottomTrailing):
-            return max(baseInset, CGFloat(systemStatusBottomInset) + readerSystemStatus.bottomClearance)
+            return max(
+                padding,
+                max(CGFloat(systemStatusBottomInset), 0) + bottomChromeClearance + readerSystemStatus.bottomClearance
+            )
         default:
-            return baseInset
+            return padding
         }
     }
 
     private var readerSystemStatusInsets: EdgeInsets {
         var insets = readerSystemStatusPosition.edgeInsets
-        if shouldHideNavigationBar {
-            switch readerSystemStatusPosition {
-            case .topLeading, .topTrailing:
-                insets.top = 64
-            case .bottomLeading, .bottomTrailing:
-                break
-            }
+        switch readerSystemStatusPosition {
+        case .topLeading, .topTrailing:
+            insets.top = 64
+        case .bottomLeading, .bottomTrailing:
+            break
         }
         switch readerSystemStatusPosition {
         case .topLeading, .topTrailing:
             break
         case .bottomLeading, .bottomTrailing:
-            insets.bottom = CGFloat(systemStatusBottomInset)
+            insets.bottom = max(CGFloat(systemStatusBottomInset), 0) + readerBottomChromeClearance
         }
         return insets
     }

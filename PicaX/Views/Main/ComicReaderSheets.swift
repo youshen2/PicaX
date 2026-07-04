@@ -248,7 +248,23 @@ struct ReaderChapterPickerSheet: View {
     let listContext: ComicReaderListContext?
     let onSelectReadingListEntry: (ReadingListEntry) -> Void
     let onSelect: (Int) -> Void
-    @State private var selectedTab = ReaderChapterSheetTab.chapters
+    @State private var selectedTab: ReaderChapterSheetTab
+
+    init(
+        chapters: [ComicChapter],
+        selectedIndex: Int,
+        initialTab: ReaderChapterSheetTab = .chapters,
+        listContext: ComicReaderListContext?,
+        onSelectReadingListEntry: @escaping (ReadingListEntry) -> Void,
+        onSelect: @escaping (Int) -> Void
+    ) {
+        self.chapters = chapters
+        self.selectedIndex = selectedIndex
+        self.listContext = listContext
+        self.onSelectReadingListEntry = onSelectReadingListEntry
+        self.onSelect = onSelect
+        _selectedTab = State(initialValue: listContext == nil ? .chapters : initialTab)
+    }
 
     var body: some View {
         NavigationStack {
@@ -280,16 +296,6 @@ struct ReaderChapterPickerSheet: View {
     private var content: some View {
         if let listContext {
             VStack(spacing: 0) {
-                Picker("内容", selection: $selectedTab) {
-                    ForEach(ReaderChapterSheetTab.allCases) { tab in
-                        Text(tab.title)
-                            .tag(tab)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
-
                 switch selectedTab {
                 case .chapters:
                     chapterList

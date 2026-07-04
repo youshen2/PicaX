@@ -1827,7 +1827,7 @@ private struct ReaderSettingsView: View {
     @AppStorage(ReaderSettingsKey.progressFollowsUIVisibility) private var progressFollowsUIVisibility = false
     @AppStorage(ReaderSettingsKey.progressTapSelectionEnabled) private var progressTapSelectionEnabled = false
     @AppStorage(ReaderSettingsKey.progressBackgroundOpacity) private var progressBackgroundOpacity = 0.78
-    @AppStorage(ReaderSettingsKey.progressBottomInset) private var progressBottomInset = 16.0
+    @AppStorage(ReaderSettingsKey.progressBottomInset) private var progressBottomInset = 0.0
     @AppStorage(ReaderSettingsKey.readingMode) private var readingMode = ReaderReadingMode.topToBottomContinuous.rawValue
     @AppStorage(ReaderSettingsKey.imageSpacing) private var imageSpacing = 0.0
     @AppStorage(ReaderSettingsKey.firstImageTopPadding) private var firstImageTopPadding = 115.0
@@ -1856,7 +1856,7 @@ private struct ReaderSettingsView: View {
     @AppStorage(ReaderSettingsKey.systemStatusFollowsUIVisibility) private var systemStatusFollowsUIVisibility = false
     @AppStorage(ReaderSettingsKey.systemStatusStyle) private var systemStatusStyle = ReaderSystemStatusStyle.compact.rawValue
     @AppStorage(ReaderSettingsKey.systemStatusPosition) private var systemStatusPosition = ReaderOverlayPosition.bottomLeading.rawValue
-    @AppStorage(ReaderSettingsKey.systemStatusBottomInset) private var systemStatusBottomInset = 16.0
+    @AppStorage(ReaderSettingsKey.systemStatusBottomInset) private var systemStatusBottomInset = 0.0
     @AppStorage(ReaderSettingsKey.usesProgressGlassBackground) private var usesProgressGlassBackground = false
     @AppStorage(ReaderSettingsKey.usesSystemStatusGlassBackground) private var usesSystemStatusGlassBackground = false
     @AppStorage(ReaderSettingsKey.showsReadingListBookToast) private var showsReadingListBookToast = true
@@ -1988,7 +1988,7 @@ private struct ReaderSettingsView: View {
             } header: {
                 Text("批量阅读")
             } footer: {
-                Text("批量阅读切换书籍时会保留当前阅读器并显示加载提示，加载完成后再切换内容。关闭自动切换后，顶部上一章/下一章按钮仍可在书籍边界手动切换。")
+                Text("批量阅读切换书籍时会保留当前阅读器并显示加载提示，加载完成后再切换内容。关闭自动切换后，底栏上一章/下一章按钮仍可在书籍边界手动切换。")
             }
 
             Section {
@@ -2180,10 +2180,21 @@ private struct ReaderSettingsView: View {
     }
 
     private func migrateReaderVisibilityDefaultsIfNeeded() {
-        guard visibilityDefaultsVersion < 1 else { return }
-        progressFollowsUIVisibility = false
-        systemStatusFollowsUIVisibility = false
-        visibilityDefaultsVersion = 1
+        if visibilityDefaultsVersion < 1 {
+            progressFollowsUIVisibility = false
+            systemStatusFollowsUIVisibility = false
+            visibilityDefaultsVersion = 1
+        }
+
+        if visibilityDefaultsVersion < 2 {
+            if progressBottomInset == 16 {
+                progressBottomInset = 0
+            }
+            if systemStatusBottomInset == 16 {
+                systemStatusBottomInset = 0
+            }
+            visibilityDefaultsVersion = 2
+        }
     }
 }
 
