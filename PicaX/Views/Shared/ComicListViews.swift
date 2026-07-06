@@ -644,18 +644,20 @@ struct ComicListRow: View, Equatable {
                         .lineLimit(1)
                 }
 
-                HStack(spacing: 8) {
-                    if let pageText = item.pageText {
-                        ComicListMetaPill(text: pageText)
-                    }
-                    if let readingProgressText {
-                        ComicListMetaPill(text: readingProgressText, systemImage: "book")
-                    }
-                    if showsPopularity, item.likesCount != nil {
-                        ComicListMetaPill(text: item.metadataText)
-                    }
-                    if showsFavoriteState, item.favoriteDate != nil {
-                        ComicListMetaPill(text: item.favoriteDateText, systemImage: "star.fill")
+                ComicListHorizontalContentRow {
+                    HStack(spacing: 8) {
+                        if let pageText = item.pageText {
+                            ComicListMetaPill(text: pageText)
+                        }
+                        if let readingProgressText {
+                            ComicListMetaPill(text: readingProgressText, systemImage: "book")
+                        }
+                        if showsPopularity, item.likesCount != nil {
+                            ComicListMetaPill(text: item.metadataText)
+                        }
+                        if showsFavoriteState, item.favoriteDate != nil {
+                            ComicListMetaPill(text: item.favoriteDateText, systemImage: "star.fill")
+                        }
                     }
                 }
 
@@ -996,15 +998,27 @@ private struct ComicListContentIdentity: Equatable, Sendable {
     static let empty = ComicListContentIdentity(totalCount: 0, leadingCount: 0, leadingHash: 0)
 }
 
+private struct ComicListHorizontalContentRow<Content: View>: View {
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            content
+                .fixedSize(horizontal: true, vertical: false)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
 private struct ComicListTagRow: View {
     let tags: [String]
     let limit: Int
     let accentColor: Color
 
     var body: some View {
-        tagRow(limit: visibleLimit)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .clipped()
+        ComicListHorizontalContentRow {
+            tagRow(limit: visibleLimit)
+        }
     }
 
     private var visibleLimit: Int {
@@ -1018,7 +1032,7 @@ private struct ComicListTagRow: View {
                     .font(.caption2.weight(.medium))
                     .foregroundStyle(accentColor)
                     .lineLimit(1)
-                    .truncationMode(.tail)
+                    .fixedSize(horizontal: true, vertical: false)
                     .padding(.horizontal, 7)
                     .padding(.vertical, 4)
                     .background(accentColor.opacity(0.12), in: Capsule())
@@ -1039,6 +1053,7 @@ private struct ComicListMetaPill: View {
             }
             Text(text)
                 .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
         }
         .font(.caption2)
         .foregroundStyle(.secondary)
