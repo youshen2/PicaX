@@ -1,7 +1,7 @@
 import Combine
 import Foundation
 
-struct ReadingHistoryRecord: Identifiable, Equatable, Codable {
+struct ReadingHistoryRecord: Identifiable, Equatable, Codable, Sendable {
     let item: ComicListItem
     var viewedAt: Date
     var progress: ReadingProgress?
@@ -49,7 +49,7 @@ struct ReadingHistoryRecord: Identifiable, Equatable, Codable {
     }()
 }
 
-struct ReadingProgress: Equatable, Codable {
+struct ReadingProgress: Equatable, Codable, Sendable {
     var status: ReadingProgressStatus
     var chapterIndex: Int
     var pageIndex: Int
@@ -59,7 +59,7 @@ struct ReadingProgress: Equatable, Codable {
     var updatedAt: Date
 }
 
-enum ReadingProgressStatus: String, Codable {
+enum ReadingProgressStatus: String, Codable, Sendable {
     case viewed
     case reading
     case finished

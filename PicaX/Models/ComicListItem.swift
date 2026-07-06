@@ -1,7 +1,7 @@
 import Foundation
 import SwiftUI
 
-struct ComicListItem: Identifiable, Equatable, Codable {
+struct ComicListItem: Identifiable, Equatable, Codable, Sendable {
     let id: String
     let platform: ComicPlatform
     let title: String
@@ -12,7 +12,7 @@ struct ComicListItem: Identifiable, Equatable, Codable {
     let likesCount: Int?
     let favoriteDate: Date?
 
-    var target: String { id }
+    nonisolated var target: String { id }
 
     nonisolated var readingHistoryID: String {
         "\(platform.rawValue)-\(id)"
@@ -26,11 +26,11 @@ struct ComicListItem: Identifiable, Equatable, Codable {
         platform.accentColor
     }
 
-    var platformTitle: String {
+    nonisolated var platformTitle: String {
         platform.title
     }
 
-    var supportsComments: Bool {
+    nonisolated var supportsComments: Bool {
         switch platform {
         case .picacg, .nhentai, .eHentai, .jmComic:
             true
@@ -39,12 +39,12 @@ struct ComicListItem: Identifiable, Equatable, Codable {
         }
     }
 
-    var pageText: String? {
+    nonisolated var pageText: String? {
         guard let pageCount else { return nil }
         return "\(pageCount) 页"
     }
 
-    var metadataText: String {
+    nonisolated var metadataText: String {
         if let likesCount {
             return "\(likesCount) 喜欢"
         }
@@ -314,13 +314,13 @@ extension URL {
     }
 }
 
-struct LocalFavoriteFolder: Identifiable, Hashable {
+struct LocalFavoriteFolder: Identifiable, Hashable, Sendable {
     let id: String
     let title: String
     let subtitle: String
 }
 
-struct PlatformFavoriteFolder: Identifiable, Hashable {
+struct PlatformFavoriteFolder: Identifiable, Hashable, Sendable {
     let id: String
     let title: String
     let subtitle: String

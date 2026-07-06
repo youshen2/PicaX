@@ -28,6 +28,7 @@ struct ComicListSection: View {
     @State private var readerRequest: ComicListReaderRequest?
     @State private var readingListRequest: ReadingListRequest?
     @State private var renderedComicCount = Self.initialRenderedComicCount
+    @State private var renderSnapshot = ComicListRenderSnapshot.empty
 
     private static let initialRenderedComicCount = 48
     private static let renderedComicPageSize = 48
@@ -53,17 +54,23 @@ struct ComicListSection: View {
     }
 
     private var comicList: some View {
-        let snapshot = makeRenderSnapshot()
-        let totalVisibleCount = snapshot.visibleComics.count
+        let request = makeSnapshotRequest()
+        let snapshot = renderSnapshot
+        let snapshotIsCurrent = snapshot.key == request.key
+        let keepsStaleSnapshot = !snapshotIsCurrent && snapshot.canDisplayWhileRebuilding(for: request)
+        let usesSnapshot = snapshotIsCurrent || keepsStaleSnapshot
+        let visibleComics = usesSnapshot ? snapshot.visibleComics : []
+        let readingRecordsByID = usesSnapshot ? snapshot.readingRecordsByID : [:]
+        let totalVisibleCount = visibleComics.count
         let displayCount = renderedCount(for: totalVisibleCount)
         let displayedRows = makeDisplayedRows(
-            from: snapshot.visibleComics,
+            from: visibleComics,
             count: displayCount,
-            readingRecordsByID: snapshot.readingRecordsByID
+            readingRecordsByID: readingRecordsByID
         )
-        let readingListComics = readAllComics ?? snapshot.visibleComics
+        let readingListComics = readAllComics ?? (usesSnapshot ? visibleComics : [])
         let lastDisplayedComicID = displayedRows.last?.id
-        let contentIdentity = makeContentIdentity(for: snapshot.visibleComics)
+        let isPreparingSnapshot = !snapshotIsCurrent && !comics.isEmpty
 
         return List {
             Section {
@@ -90,7 +97,11 @@ struct ComicListSection: View {
                     .disabled(isPreparingReadAll)
                 }
 
-                if totalVisibleCount == 0, !comics.isEmpty {
+                if isPreparingSnapshot, displayedRows.isEmpty {
+                    PreparingComicListSnapshotRow()
+                }
+
+                if snapshotIsCurrent, totalVisibleCount == 0, !comics.isEmpty {
                     ContentUnavailableView("已隐藏全部结果", systemImage: "eye.slash", description: Text("当前列表内容命中了屏蔽词或阅读进度过滤，可在设置中调整。"))
                         .listRowBackground(Color.clear)
                 }
@@ -115,7 +126,15 @@ struct ComicListSection: View {
                     .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 12))
                 }
 
-                if isLoadingMore {
+                if isPreparingSnapshot, !displayedRows.isEmpty {
+                    if isLoadingMore {
+                        LoadingMoreRow()
+                    } else {
+                        PreparingComicListSnapshotRow()
+                    }
+                } else if !snapshotIsCurrent {
+                    EmptyView()
+                } else if isLoadingMore {
                     LoadingMoreRow()
                 } else if canRevealMoreLocalComics(totalVisibleCount: totalVisibleCount) {
                     Color.clear
@@ -136,29 +155,54 @@ struct ComicListSection: View {
         .transaction { transaction in
             transaction.animation = nil
         }
-        .onChange(of: contentIdentity) { oldIdentity, newIdentity in
-            updateRenderedComicCount(oldIdentity: oldIdentity, newIdentity: newIdentity)
+        .task(id: request.key) {
+            await rebuildRenderSnapshot(for: request)
         }
     }
 
-    private func makeRenderSnapshot() -> ComicListRenderSnapshot {
+    private func makeSnapshotRequest() -> ComicListSnapshotRequest {
         let readingRecordsByID = readingHistory.activeReadingRecordsByID
-        var visibleComics: [ComicListItem] = []
-        visibleComics.reserveCapacity(comics.count)
-        for comic in comics {
-            if appliesBlocking, blockingKeywords.blockedKeyword(for: comic) != nil {
-                continue
-            }
-            if appliesReadProgressFilter, shouldHideReadComic(comic, record: readingRecordsByID[comic.readingHistoryID]) {
-                continue
-            }
-            visibleComics.append(comic)
+        let blockingMatcher = blockingKeywords.commonKeywordMatcher
+        return ComicListSnapshotRequest(
+            key: ComicListSnapshotKey(
+                comics: comics,
+                readingRecordsByID: readingRecordsByID,
+                blockingMatcher: blockingMatcher,
+                appliesBlocking: appliesBlocking,
+                appliesReadProgressFilter: appliesReadProgressFilter,
+                hidesReadComicsInLists: hidesReadComicsInLists,
+                hiddenProgressThreshold: hiddenProgressThreshold
+            ),
+            comics: comics,
+            readingRecordsByID: readingRecordsByID,
+            blockingMatcher: blockingMatcher,
+            appliesBlocking: appliesBlocking,
+            appliesReadProgressFilter: appliesReadProgressFilter,
+            hidesReadComicsInLists: hidesReadComicsInLists,
+            hiddenProgressThreshold: hiddenProgressThreshold
+        )
+    }
+
+    @MainActor
+    private func rebuildRenderSnapshot(for request: ComicListSnapshotRequest) async {
+        let buildTask = Task.detached(priority: .userInitiated) {
+            try ComicListRenderSnapshot.make(for: request)
         }
 
-        return ComicListRenderSnapshot(
-            visibleComics: visibleComics,
-            readingRecordsByID: readingRecordsByID
-        )
+        do {
+            let snapshot = try await withTaskCancellationHandler {
+                try await buildTask.value
+            } onCancel: {
+                buildTask.cancel()
+            }
+            guard !Task.isCancelled else { return }
+            updateRenderedComicCount(oldIdentity: renderSnapshot.contentIdentity, newIdentity: snapshot.contentIdentity)
+            renderSnapshot = snapshot
+        } catch is CancellationError {
+            return
+        } catch {
+            return
+        }
     }
 
     private func makeDisplayedRows(
@@ -181,20 +225,6 @@ struct ComicListSection: View {
             )
         }
         return rows
-    }
-
-    private func makeContentIdentity(for visibleComics: [ComicListItem]) -> ComicListContentIdentity {
-        let prefixCount = min(Self.initialRenderedComicCount, visibleComics.count)
-        var hasher = Hasher()
-        hasher.combine(prefixCount)
-        for comic in visibleComics.prefix(prefixCount) {
-            hasher.combine(comic.readingHistoryID)
-        }
-        return ComicListContentIdentity(
-            totalCount: visibleComics.count,
-            leadingCount: prefixCount,
-            leadingHash: hasher.finalize()
-        )
     }
 
     private func renderedCount(for totalVisibleCount: Int) -> Int {
@@ -233,25 +263,6 @@ struct ComicListSection: View {
         }
     }
 
-    private func shouldHideReadComic(_ comic: ComicListItem, record: ReadingHistoryRecord?) -> Bool {
-        guard hidesReadComicsInLists else { return false }
-        guard let progress = record?.progress,
-              progress.status != .viewed else {
-            return false
-        }
-
-        let threshold = min(max(hiddenProgressThreshold, 0), 100)
-        let progressPercent: Int
-        if progress.status == .finished {
-            progressPercent = 100
-        } else if progress.totalPages > 0 {
-            let currentPage = min(max(progress.pageIndex + 1, 0), progress.totalPages)
-            progressPercent = min(max(Int((Double(currentPage) / Double(progress.totalPages) * 100).rounded()), 0), 100)
-        } else {
-            progressPercent = progress.pageIndex > 0 ? 100 : 0
-        }
-        return progressPercent >= threshold
-    }
 }
 
 private struct LoadingMoreRow: View {
@@ -265,6 +276,155 @@ private struct LoadingMoreRow: View {
         .frame(maxWidth: .infinity)
         .padding(.vertical, 12)
         .listRowBackground(Color.clear)
+    }
+}
+
+private struct PreparingComicListSnapshotRow: View {
+    var body: some View {
+        HStack(spacing: 10) {
+            ProgressView()
+            Text("正在整理列表")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 12)
+        .listRowBackground(Color.clear)
+    }
+}
+
+enum ComicListItemIdentity: Sendable {
+    case id
+    case readingHistoryID
+    case platformAndID
+}
+
+struct ComicListUniqueResult: Sendable {
+    let items: [ComicListItem]
+    let loadedIDs: Set<String>
+}
+
+enum ComicListBackgroundProcessing {
+    nonisolated static func localFavorites(folderID: String) async throws -> [ComicListItem] {
+        try await run {
+            try Task.checkCancellation()
+            return LocalFavoritesStore().items(folderID: folderID)
+        }
+    }
+
+    nonisolated static func filteredFavorites(from comics: [ComicListItem], keyword rawKeyword: String) async throws -> [ComicListItem] {
+        let keyword = rawKeyword.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !keyword.isEmpty else { return comics }
+
+        return try await run {
+            var result: [ComicListItem] = []
+            result.reserveCapacity(comics.count)
+            for (index, comic) in comics.enumerated() {
+                if index.isMultiple(of: 64) {
+                    try Task.checkCancellation()
+                }
+                if comicMatches(comic, keyword: keyword) {
+                    result.append(comic)
+                }
+            }
+            return result
+        }
+    }
+
+    nonisolated static func loadedIDs(from items: [ComicListItem], identity: ComicListItemIdentity) async throws -> Set<String> {
+        try await run {
+            var ids = Set<String>()
+            ids.reserveCapacity(items.count)
+            for (index, item) in items.enumerated() {
+                if index.isMultiple(of: 128) {
+                    try Task.checkCancellation()
+                }
+                ids.insert(key(for: item, identity: identity))
+            }
+            return ids
+        }
+    }
+
+    nonisolated static func uniqueItems(
+        from items: [ComicListItem],
+        loadedIDs: Set<String>,
+        identity: ComicListItemIdentity
+    ) async throws -> ComicListUniqueResult {
+        try await run {
+            var nextIDs = loadedIDs
+            var uniqueItems: [ComicListItem] = []
+            uniqueItems.reserveCapacity(items.count)
+            for (index, item) in items.enumerated() {
+                if index.isMultiple(of: 64) {
+                    try Task.checkCancellation()
+                }
+                guard nextIDs.insert(key(for: item, identity: identity)).inserted else { continue }
+                uniqueItems.append(item)
+            }
+            return ComicListUniqueResult(items: uniqueItems, loadedIDs: nextIDs)
+        }
+    }
+
+    nonisolated static func interleavedUniqueItems(
+        from groups: [[ComicListItem]],
+        loadedIDs: Set<String>,
+        identity: ComicListItemIdentity
+    ) async throws -> ComicListUniqueResult {
+        try await run {
+            let maxCount = groups.map(\.count).max() ?? 0
+            guard maxCount > 0 else {
+                return ComicListUniqueResult(items: [], loadedIDs: loadedIDs)
+            }
+
+            var nextIDs = loadedIDs
+            var uniqueItems: [ComicListItem] = []
+            uniqueItems.reserveCapacity(groups.reduce(0) { $0 + $1.count })
+
+            for index in 0..<maxCount {
+                if index.isMultiple(of: 16) {
+                    try Task.checkCancellation()
+                }
+                for group in groups where group.indices.contains(index) {
+                    let item = group[index]
+                    guard nextIDs.insert(key(for: item, identity: identity)).inserted else { continue }
+                    uniqueItems.append(item)
+                }
+            }
+
+            return ComicListUniqueResult(items: uniqueItems, loadedIDs: nextIDs)
+        }
+    }
+
+    private nonisolated static func run<T: Sendable>(_ operation: @escaping @Sendable () throws -> T) async throws -> T {
+        let task = Task.detached(priority: .userInitiated) {
+            try operation()
+        }
+        return try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
+    }
+
+    private nonisolated static func key(for item: ComicListItem, identity: ComicListItemIdentity) -> String {
+        switch identity {
+        case .id:
+            item.id
+        case .readingHistoryID:
+            item.readingHistoryID
+        case .platformAndID:
+            "\(item.platform.id)-\(item.id)"
+        }
+    }
+
+    private nonisolated static func comicMatches(_ comic: ComicListItem, keyword: String) -> Bool {
+        comic.title.localizedCaseInsensitiveContains(keyword)
+            || comic.subtitle.localizedCaseInsensitiveContains(keyword)
+            || comic.id.localizedCaseInsensitiveContains(keyword)
+            || comic.platformTitle.localizedCaseInsensitiveContains(keyword)
+            || (comic.pageText?.localizedCaseInsensitiveContains(keyword) ?? false)
+            || comic.metadataText.localizedCaseInsensitiveContains(keyword)
+            || comic.tags.contains { $0.localizedCaseInsensitiveContains(keyword) }
     }
 }
 
@@ -505,9 +665,262 @@ struct ComicListRow: View, Equatable {
     }
 }
 
-private struct ComicListRenderSnapshot {
+private struct ComicListSnapshotKey: Hashable, Sendable {
+    nonisolated private static let sourcePrefixLimit = 128
+
+    let comicsCount: Int
+    let comicsHash: Int
+    let sourcePrefix: [ComicListSourceItemIdentity]
+    let readingRecordsHash: Int
+    let blockingFingerprint: Int
+    let appliesBlocking: Bool
+    let appliesReadProgressFilter: Bool
+    let hidesReadComicsInLists: Bool
+    let hiddenProgressThreshold: Int
+
+    static let empty = ComicListSnapshotKey(
+        comicsCount: 0,
+        comicsHash: 0,
+        sourcePrefix: [],
+        readingRecordsHash: 0,
+        blockingFingerprint: 0,
+        appliesBlocking: false,
+        appliesReadProgressFilter: false,
+        hidesReadComicsInLists: false,
+        hiddenProgressThreshold: 0
+    )
+
+    init(
+        comics: [ComicListItem],
+        readingRecordsByID: [String: ReadingHistoryRecord],
+        blockingMatcher: BlockingKeywordMatcher,
+        appliesBlocking: Bool,
+        appliesReadProgressFilter: Bool,
+        hidesReadComicsInLists: Bool,
+        hiddenProgressThreshold: Int
+    ) {
+        comicsCount = comics.count
+        comicsHash = Self.comicsHash(comics)
+        sourcePrefix = Self.sourcePrefix(for: comics)
+        readingRecordsHash = Self.readingRecordsHash(readingRecordsByID)
+        blockingFingerprint = appliesBlocking ? blockingMatcher.fingerprint : 0
+        self.appliesBlocking = appliesBlocking
+        self.appliesReadProgressFilter = appliesReadProgressFilter
+        self.hidesReadComicsInLists = hidesReadComicsInLists
+        self.hiddenProgressThreshold = hiddenProgressThreshold
+    }
+
+    private init(
+        comicsCount: Int,
+        comicsHash: Int,
+        sourcePrefix: [ComicListSourceItemIdentity],
+        readingRecordsHash: Int,
+        blockingFingerprint: Int,
+        appliesBlocking: Bool,
+        appliesReadProgressFilter: Bool,
+        hidesReadComicsInLists: Bool,
+        hiddenProgressThreshold: Int
+    ) {
+        self.comicsCount = comicsCount
+        self.comicsHash = comicsHash
+        self.sourcePrefix = sourcePrefix
+        self.readingRecordsHash = readingRecordsHash
+        self.blockingFingerprint = blockingFingerprint
+        self.appliesBlocking = appliesBlocking
+        self.appliesReadProgressFilter = appliesReadProgressFilter
+        self.hidesReadComicsInLists = hidesReadComicsInLists
+        self.hiddenProgressThreshold = hiddenProgressThreshold
+    }
+
+    nonisolated func canRetainDisplayedRows(whileRebuilding requestKey: ComicListSnapshotKey) -> Bool {
+        guard comicsCount > 0, requestKey.comicsCount > comicsCount else { return false }
+        guard appliesBlocking == requestKey.appliesBlocking,
+              appliesReadProgressFilter == requestKey.appliesReadProgressFilter,
+              hidesReadComicsInLists == requestKey.hidesReadComicsInLists,
+              hiddenProgressThreshold == requestKey.hiddenProgressThreshold,
+              blockingFingerprint == requestKey.blockingFingerprint else {
+            return false
+        }
+
+        if appliesReadProgressFilter,
+           hidesReadComicsInLists,
+           readingRecordsHash != requestKey.readingRecordsHash {
+            return false
+        }
+
+        return requestKey.sourcePrefix.starts(with: sourcePrefix)
+    }
+
+    private nonisolated static func comicsHash(_ comics: [ComicListItem]) -> Int {
+        var hasher = Hasher()
+        hasher.combine(comics.count)
+        for comic in comics {
+            hasher.combine(comic.id)
+            hasher.combine(comic.platform.rawValue)
+            hasher.combine(comic.title)
+            hasher.combine(comic.subtitle)
+            hasher.combine(comic.coverURLString)
+            hasher.combine(comic.pageCount)
+            hasher.combine(comic.likesCount)
+            hasher.combine(comic.favoriteDate?.timeIntervalSinceReferenceDate)
+            hasher.combine(comic.tags.count)
+            for tag in comic.tags {
+                hasher.combine(tag)
+            }
+        }
+        return hasher.finalize()
+    }
+
+    private nonisolated static func sourcePrefix(for comics: [ComicListItem]) -> [ComicListSourceItemIdentity] {
+        comics.prefix(sourcePrefixLimit).map(ComicListSourceItemIdentity.init)
+    }
+
+    private nonisolated static func readingRecordsHash(_ records: [String: ReadingHistoryRecord]) -> Int {
+        var hasher = Hasher()
+        hasher.combine(records.count)
+        for id in records.keys.sorted() {
+            guard let record = records[id] else { continue }
+            hasher.combine(id)
+            hasher.combine(record.viewedAt.timeIntervalSinceReferenceDate)
+            if let progress = record.progress {
+                hasher.combine(progress.status.rawValue)
+                hasher.combine(progress.chapterIndex)
+                hasher.combine(progress.pageIndex)
+                hasher.combine(progress.totalPages)
+                hasher.combine(progress.totalChapters)
+                hasher.combine(progress.updatedAt.timeIntervalSinceReferenceDate)
+                for chapterIndex in progress.readChapterIndexes.sorted() {
+                    hasher.combine(chapterIndex)
+                }
+            } else {
+                hasher.combine("none")
+            }
+        }
+        return hasher.finalize()
+    }
+}
+
+private struct ComicListSourceItemIdentity: Hashable, Sendable {
+    let platform: ComicPlatform
+    let id: String
+    let title: String
+    let subtitle: String
+    let coverURLString: String
+    let tags: [String]
+    let pageCount: Int?
+    let likesCount: Int?
+    let favoriteDate: Date?
+
+    nonisolated init(item: ComicListItem) {
+        platform = item.platform
+        id = item.id
+        title = item.title
+        subtitle = item.subtitle
+        coverURLString = item.coverURLString
+        tags = item.tags
+        pageCount = item.pageCount
+        likesCount = item.likesCount
+        favoriteDate = item.favoriteDate
+    }
+}
+
+private struct ComicListSnapshotRequest: Sendable {
+    let key: ComicListSnapshotKey
+    let comics: [ComicListItem]
+    let readingRecordsByID: [String: ReadingHistoryRecord]
+    let blockingMatcher: BlockingKeywordMatcher
+    let appliesBlocking: Bool
+    let appliesReadProgressFilter: Bool
+    let hidesReadComicsInLists: Bool
+    let hiddenProgressThreshold: Int
+}
+
+private struct ComicListRenderSnapshot: Sendable {
+    let key: ComicListSnapshotKey
     let visibleComics: [ComicListItem]
     let readingRecordsByID: [String: ReadingHistoryRecord]
+    let contentIdentity: ComicListContentIdentity
+
+    static let empty = ComicListRenderSnapshot(
+        key: .empty,
+        visibleComics: [],
+        readingRecordsByID: [:],
+        contentIdentity: .empty
+    )
+
+    nonisolated func canDisplayWhileRebuilding(for request: ComicListSnapshotRequest) -> Bool {
+        key.canRetainDisplayedRows(whileRebuilding: request.key)
+    }
+
+    nonisolated static func make(for request: ComicListSnapshotRequest) throws -> ComicListRenderSnapshot {
+        var visibleComics: [ComicListItem] = []
+        visibleComics.reserveCapacity(request.comics.count)
+
+        for (index, comic) in request.comics.enumerated() {
+            if index.isMultiple(of: 64), Task.isCancelled {
+                throw CancellationError()
+            }
+            if request.appliesBlocking, request.blockingMatcher.blockedKeyword(for: comic) != nil {
+                continue
+            }
+            if request.appliesReadProgressFilter,
+               shouldHideReadComic(
+                    comic,
+                    record: request.readingRecordsByID[comic.readingHistoryID],
+                    hidesReadComicsInLists: request.hidesReadComicsInLists,
+                    hiddenProgressThreshold: request.hiddenProgressThreshold
+               ) {
+                continue
+            }
+            visibleComics.append(comic)
+        }
+
+        return ComicListRenderSnapshot(
+            key: request.key,
+            visibleComics: visibleComics,
+            readingRecordsByID: request.readingRecordsByID,
+            contentIdentity: makeContentIdentity(for: visibleComics)
+        )
+    }
+
+    private nonisolated static func makeContentIdentity(for visibleComics: [ComicListItem]) -> ComicListContentIdentity {
+        let prefixCount = min(48, visibleComics.count)
+        var hasher = Hasher()
+        hasher.combine(prefixCount)
+        for comic in visibleComics.prefix(prefixCount) {
+            hasher.combine(comic.readingHistoryID)
+        }
+        return ComicListContentIdentity(
+            totalCount: visibleComics.count,
+            leadingCount: prefixCount,
+            leadingHash: hasher.finalize()
+        )
+    }
+
+    private nonisolated static func shouldHideReadComic(
+        _ comic: ComicListItem,
+        record: ReadingHistoryRecord?,
+        hidesReadComicsInLists: Bool,
+        hiddenProgressThreshold: Int
+    ) -> Bool {
+        guard hidesReadComicsInLists else { return false }
+        guard let progress = record?.progress,
+              progress.status != .viewed else {
+            return false
+        }
+
+        let threshold = min(max(hiddenProgressThreshold, 0), 100)
+        let progressPercent: Int
+        if progress.status == .finished {
+            progressPercent = 100
+        } else if progress.totalPages > 0 {
+            let currentPage = min(max(progress.pageIndex + 1, 0), progress.totalPages)
+            progressPercent = min(max(Int((Double(currentPage) / Double(progress.totalPages) * 100).rounded()), 0), 100)
+        } else {
+            progressPercent = progress.pageIndex > 0 ? 100 : 0
+        }
+        return progressPercent >= threshold
+    }
 }
 
 private struct ComicListDisplayedRow: Identifiable {
@@ -520,10 +933,12 @@ private struct ComicListDisplayedRow: Identifiable {
     }
 }
 
-private struct ComicListContentIdentity: Equatable {
+private struct ComicListContentIdentity: Equatable, Sendable {
     let totalCount: Int
     let leadingCount: Int
     let leadingHash: Int
+
+    static let empty = ComicListContentIdentity(totalCount: 0, leadingCount: 0, leadingHash: 0)
 }
 
 private struct ComicListTagRow: View {
@@ -1418,10 +1833,13 @@ private final class ComicTagComicsViewModel: ObservableObject {
         isLoadingMore = false
         do {
             let comics = try await service.loadTagComics(tag: tag, account: account, page: 1)
+            let nextLoadedIDs = try await ComicListBackgroundProcessing.loadedIDs(from: comics, identity: .id)
             currentPage = 1
-            loadedIDs = Set(comics.map(\.id))
+            loadedIDs = nextLoadedIDs
             hasMore = !comics.isEmpty
             state = .loaded(comics)
+        } catch is CancellationError {
+            return
         } catch {
             state = .failed(error.localizedDescription)
         }
@@ -1438,11 +1856,18 @@ private final class ComicTagComicsViewModel: ObservableObject {
         do {
             let nextPage = currentPage + 1
             let newComics = try await service.loadTagComics(tag: tag, account: account, page: nextPage)
+            let uniqueResult = try await ComicListBackgroundProcessing.uniqueItems(
+                from: newComics,
+                loadedIDs: loadedIDs,
+                identity: .id
+            )
             currentPage = nextPage
-            let uniqueComics = newComics.filter { loadedIDs.insert($0.id).inserted }
-            hasMore = !newComics.isEmpty && !uniqueComics.isEmpty
-            guard !uniqueComics.isEmpty else { return }
-            state = .loaded(comics + uniqueComics)
+            loadedIDs = uniqueResult.loadedIDs
+            hasMore = !newComics.isEmpty && !uniqueResult.items.isEmpty
+            guard !uniqueResult.items.isEmpty else { return }
+            state = .loaded(comics + uniqueResult.items)
+        } catch is CancellationError {
+            return
         } catch {
             hasMore = false
         }
@@ -1530,7 +1955,20 @@ private final class ComicSearchViewModel: ObservableObject {
         }
 
         currentPage = 1
-        let comics = uniqueComics(from: interleaved(groups))
+        let uniqueResult: ComicListUniqueResult
+        do {
+            uniqueResult = try await ComicListBackgroundProcessing.interleavedUniqueItems(
+                from: groups,
+                loadedIDs: loadedIDs,
+                identity: .platformAndID
+            )
+        } catch is CancellationError {
+            return
+        } catch {
+            uniqueResult = ComicListUniqueResult(items: [], loadedIDs: loadedIDs)
+        }
+        loadedIDs = uniqueResult.loadedIDs
+        let comics = uniqueResult.items
         hasMore = platformHasMore.values.contains(true)
         if !comics.isEmpty || failures.count < target.platforms.count {
             state = .loaded(comics)
@@ -1567,7 +2005,20 @@ private final class ComicSearchViewModel: ObservableObject {
         }
 
         currentPage += 1
-        let uniqueComics = uniqueComics(from: interleaved(groups))
+        let uniqueResult: ComicListUniqueResult
+        do {
+            uniqueResult = try await ComicListBackgroundProcessing.interleavedUniqueItems(
+                from: groups,
+                loadedIDs: loadedIDs,
+                identity: .platformAndID
+            )
+        } catch is CancellationError {
+            return
+        } catch {
+            uniqueResult = ComicListUniqueResult(items: [], loadedIDs: loadedIDs)
+        }
+        loadedIDs = uniqueResult.loadedIDs
+        let uniqueComics = uniqueResult.items
         hasMore = platformHasMore.values.contains(true)
         guard !uniqueComics.isEmpty else {
             if !hasMore {
@@ -1591,26 +2042,6 @@ private final class ComicSearchViewModel: ObservableObject {
         currentOptions = ComicSearchAdvancedOptions()
     }
 
-    private func interleaved(_ groups: [[ComicListItem]]) -> [ComicListItem] {
-        let maxCount = groups.map(\.count).max() ?? 0
-        guard maxCount > 0 else { return [] }
-        var result: [ComicListItem] = []
-        result.reserveCapacity(groups.reduce(0) { $0 + $1.count })
-        for index in 0..<maxCount {
-            for group in groups where group.indices.contains(index) {
-                result.append(group[index])
-            }
-        }
-        return result
-    }
-
-    private func uniqueComics(from comics: [ComicListItem]) -> [ComicListItem] {
-        comics.filter { loadedIDs.insert(itemKey($0)).inserted }
-    }
-
-    private func itemKey(_ item: ComicListItem) -> String {
-        "\(item.platform.id)-\(item.id)"
-    }
 }
 
 private enum ComicSearchLoadState {

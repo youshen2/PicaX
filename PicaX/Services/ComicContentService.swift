@@ -3227,16 +3227,16 @@ private extension ComicContentService {
     }
 }
 
-struct LocalFavoritesStore {
+struct LocalFavoritesStore: Sendable {
     nonisolated init() {}
 
-    var folders: [LocalFavoriteFolder] {
+    nonisolated var folders: [LocalFavoriteFolder] {
         [
             LocalFavoriteFolder(id: "default", title: "本地收藏", subtitle: "保存在当前设备")
         ]
     }
 
-    func items(folderID: String) -> [ComicListItem] {
+    nonisolated func items(folderID: String) -> [ComicListItem] {
         PicaXSQLiteStore.loadLocalFavorites(folderID: folderID).map(\.item)
     }
 
@@ -3246,7 +3246,7 @@ struct LocalFavoritesStore {
     }
 }
 
-struct StoredLocalFavorite: Codable {
+struct StoredLocalFavorite: Codable, Sendable {
     let id: String
     let platform: ComicPlatform
     let title: String
@@ -3257,7 +3257,19 @@ struct StoredLocalFavorite: Codable {
     let likesCount: Int?
     let favoriteDate: Date?
 
-    init(item: ComicListItem, favoriteDate: Date?) {
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case platform
+        case title
+        case subtitle
+        case coverURLString
+        case tags
+        case pageCount
+        case likesCount
+        case favoriteDate
+    }
+
+    nonisolated init(item: ComicListItem, favoriteDate: Date?) {
         id = item.id
         platform = item.platform
         title = item.title
@@ -3269,7 +3281,33 @@ struct StoredLocalFavorite: Codable {
         self.favoriteDate = favoriteDate
     }
 
-    var item: ComicListItem {
+    nonisolated init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        platform = try container.decode(ComicPlatform.self, forKey: .platform)
+        title = try container.decode(String.self, forKey: .title)
+        subtitle = try container.decode(String.self, forKey: .subtitle)
+        coverURLString = try container.decode(String.self, forKey: .coverURLString)
+        tags = try container.decode([String].self, forKey: .tags)
+        pageCount = try container.decodeIfPresent(Int.self, forKey: .pageCount)
+        likesCount = try container.decodeIfPresent(Int.self, forKey: .likesCount)
+        favoriteDate = try container.decodeIfPresent(Date.self, forKey: .favoriteDate)
+    }
+
+    nonisolated func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(platform, forKey: .platform)
+        try container.encode(title, forKey: .title)
+        try container.encode(subtitle, forKey: .subtitle)
+        try container.encode(coverURLString, forKey: .coverURLString)
+        try container.encode(tags, forKey: .tags)
+        try container.encodeIfPresent(pageCount, forKey: .pageCount)
+        try container.encodeIfPresent(likesCount, forKey: .likesCount)
+        try container.encodeIfPresent(favoriteDate, forKey: .favoriteDate)
+    }
+
+    nonisolated var item: ComicListItem {
         ComicListItem(
             id: id,
             platform: platform,

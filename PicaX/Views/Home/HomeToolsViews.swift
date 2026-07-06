@@ -156,10 +156,13 @@ private final class EhentaiSubscriptionViewModel: ObservableObject {
         isLoadingMore = false
         do {
             let comics = try await service.loadEhentaiSubscription(page: 1)
+            let nextLoadedIDs = try await ComicListBackgroundProcessing.loadedIDs(from: comics, identity: .id)
             currentPage = 1
-            loadedIDs = Set(comics.map(\.id))
+            loadedIDs = nextLoadedIDs
             hasMore = !comics.isEmpty
             state = .loaded(comics)
+        } catch is CancellationError {
+            return
         } catch {
             state = .failed(error.localizedDescription)
         }
@@ -176,11 +179,18 @@ private final class EhentaiSubscriptionViewModel: ObservableObject {
         do {
             let nextPage = currentPage + 1
             let newComics = try await service.loadEhentaiSubscription(page: nextPage)
+            let uniqueResult = try await ComicListBackgroundProcessing.uniqueItems(
+                from: newComics,
+                loadedIDs: loadedIDs,
+                identity: .id
+            )
             currentPage = nextPage
-            let uniqueComics = newComics.filter { loadedIDs.insert($0.id).inserted }
-            hasMore = !newComics.isEmpty && !uniqueComics.isEmpty
-            guard !uniqueComics.isEmpty else { return }
-            state = .loaded(comics + uniqueComics)
+            loadedIDs = uniqueResult.loadedIDs
+            hasMore = !newComics.isEmpty && !uniqueResult.items.isEmpty
+            guard !uniqueResult.items.isEmpty else { return }
+            state = .loaded(comics + uniqueResult.items)
+        } catch is CancellationError {
+            return
         } catch {
             hasMore = false
         }

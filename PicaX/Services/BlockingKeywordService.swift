@@ -39,11 +39,14 @@ final class BlockingKeywordService: ObservableObject {
     @Published private(set) var jmComicKeywords: [String]
 
     private let defaults: UserDefaults
+    private(set) var commonKeywordMatcher: BlockingKeywordMatcher
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        commonKeywords = Self.loadKeywords(defaults: defaults, key: BlockingKeywordSettingsKey.common)
+        let loadedCommonKeywords = Self.loadKeywords(defaults: defaults, key: BlockingKeywordSettingsKey.common)
+        commonKeywords = loadedCommonKeywords
         jmComicKeywords = Self.loadKeywords(defaults: defaults, key: BlockingKeywordSettingsKey.jmComic)
+        commonKeywordMatcher = BlockingKeywordMatcher(keywords: loadedCommonKeywords)
     }
 
     func keywords(for scope: BlockingKeywordScope) -> [String] {
@@ -97,7 +100,7 @@ final class BlockingKeywordService: ObservableObject {
     }
 
     func blockedKeyword(for item: ComicListItem) -> String? {
-        Self.blockedKeyword(for: item, commonKeywords: commonKeywords)
+        commonKeywordMatcher.blockedKeyword(for: item)
     }
 
     func visibleItems(from items: [ComicListItem]) -> [ComicListItem] {
@@ -105,7 +108,9 @@ final class BlockingKeywordService: ObservableObject {
     }
 
     func reloadFromDefaults() {
-        commonKeywords = Self.loadKeywords(defaults: defaults, key: BlockingKeywordSettingsKey.common)
+        let loadedCommonKeywords = Self.loadKeywords(defaults: defaults, key: BlockingKeywordSettingsKey.common)
+        commonKeywordMatcher = BlockingKeywordMatcher(keywords: loadedCommonKeywords)
+        commonKeywords = loadedCommonKeywords
         jmComicKeywords = Self.loadKeywords(defaults: defaults, key: BlockingKeywordSettingsKey.jmComic)
     }
 
@@ -127,43 +132,14 @@ final class BlockingKeywordService: ObservableObject {
     }
 
     nonisolated static func blockedKeyword(for item: ComicListItem, commonKeywords: [String]) -> String? {
-        for keyword in commonKeywords {
-            let rule = blockingRule(for: keyword)
-            guard !rule.word.isEmpty else { continue }
-
-            switch rule.mode {
-            case 0:
-                if contains(item.title, rule.word) || contains(item.subtitle, rule.word) {
-                    return keyword
-                }
-            case 1:
-                if contains(item.title, rule.word) {
-                    return keyword
-                }
-            case 2:
-                if contains(item.subtitle, rule.word) {
-                    return keyword
-                }
-            case 3:
-                break
-            default:
-                break
-            }
-
-            if rule.mode == 0 || rule.mode == 3 {
-                if item.tags.contains(where: { tagMatches($0, word: rule.word) }) {
-                    return keyword
-                }
-            }
-        }
-
-        return nil
+        BlockingKeywordMatcher(keywords: commonKeywords).blockedKeyword(for: item)
     }
 
     private func setKeywords(_ keywords: [String], for scope: BlockingKeywordScope) {
         let normalized = uniqueKeywords(keywords)
         switch scope {
         case .common:
+            commonKeywordMatcher = BlockingKeywordMatcher(keywords: normalized)
             commonKeywords = normalized
         case .jmComic:
             jmComicKeywords = normalized
@@ -191,16 +167,73 @@ final class BlockingKeywordService: ObservableObject {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty } ?? []
     }
+}
 
-    private nonisolated static func contains(_ value: String, _ keyword: String) -> Bool {
-        value.range(of: keyword, options: [.caseInsensitive, .diacriticInsensitive]) != nil
+struct BlockingKeywordMatcher: Sendable {
+    let fingerprint: Int
+
+    private let rules: [BlockingKeywordRule]
+
+    nonisolated init(keywords: [String]) {
+        var hasher = Hasher()
+        var rules: [BlockingKeywordRule] = []
+        rules.reserveCapacity(keywords.count)
+
+        for keyword in keywords {
+            hasher.combine(keyword)
+            guard let rule = BlockingKeywordRule(rawValue: keyword) else { continue }
+            rules.append(rule)
+        }
+
+        self.rules = rules
+        fingerprint = hasher.finalize()
     }
 
-    private nonisolated static func tagMatches(_ tag: String, word: String) -> Bool {
-        let candidates = tagCandidates(for: tag)
-        return candidates.contains { candidate in
-            candidate.compare(word, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame
+    nonisolated var isEmpty: Bool {
+        rules.isEmpty
+    }
+
+    nonisolated func blockedKeyword(for item: ComicListItem) -> String? {
+        guard !rules.isEmpty else { return nil }
+
+        let title = Self.comparisonValue(item.title)
+        let subtitle = Self.comparisonValue(item.subtitle)
+        var tagCandidateSet: Set<String>?
+
+        for rule in rules {
+            switch rule.mode {
+            case .all:
+                if title.contains(rule.comparisonWord) || subtitle.contains(rule.comparisonWord) {
+                    return rule.rawValue
+                }
+                if Self.tagCandidateSet(for: item.tags, cachedIn: &tagCandidateSet).contains(rule.comparisonWord) {
+                    return rule.rawValue
+                }
+            case .title:
+                if title.contains(rule.comparisonWord) {
+                    return rule.rawValue
+                }
+            case .uploader:
+                if subtitle.contains(rule.comparisonWord) {
+                    return rule.rawValue
+                }
+            case .tag:
+                if Self.tagCandidateSet(for: item.tags, cachedIn: &tagCandidateSet).contains(rule.comparisonWord) {
+                    return rule.rawValue
+                }
+            }
         }
+
+        return nil
+    }
+
+    private nonisolated static func tagCandidateSet(for tags: [String], cachedIn cache: inout Set<String>?) -> Set<String> {
+        if let cache {
+            return cache
+        }
+        let candidates = Set(tags.flatMap(tagCandidates(for:)))
+        cache = candidates
+        return candidates
     }
 
     private nonisolated static func tagCandidates(for tag: String) -> [String] {
@@ -213,21 +246,13 @@ final class BlockingKeywordService: ObservableObject {
             candidates.append(sexMarkerNormalized(right))
         }
 
-        return candidates.filter { !$0.isEmpty }
+        return candidates
+            .filter { !$0.isEmpty }
+            .map(comparisonValue)
     }
 
-    private nonisolated static func blockingRule(for rawValue: String) -> (mode: Int, word: String) {
-        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.hasPrefix("title:") {
-            return (1, String(trimmed.dropFirst("title:".count)).trimmingCharacters(in: .whitespacesAndNewlines))
-        }
-        if trimmed.hasPrefix("uploader:") {
-            return (2, String(trimmed.dropFirst("uploader:".count)).trimmingCharacters(in: .whitespacesAndNewlines))
-        }
-        if trimmed.hasPrefix("tag:") {
-            return (3, String(trimmed.dropFirst("tag:".count)).trimmingCharacters(in: .whitespacesAndNewlines))
-        }
-        return (0, trimmed)
+    private nonisolated static func comparisonValue(_ value: String) -> String {
+        value.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
     }
 
     private nonisolated static func sexMarkerNormalized(_ value: String) -> String {
@@ -237,5 +262,54 @@ final class BlockingKeywordService: ObservableObject {
             .replacingOccurrences(of: "♀", with: "")
             .replacingOccurrences(of: "♂", with: "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+private struct BlockingKeywordRule: Sendable {
+    enum Mode: Sendable {
+        case all
+        case title
+        case uploader
+        case tag
+    }
+
+    let rawValue: String
+    let mode: Mode
+    let comparisonWord: String
+
+    nonisolated init?(rawValue: String) {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasPrefix("title:") {
+            let word = String(trimmed.dropFirst("title:".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !word.isEmpty else { return nil }
+            self.rawValue = rawValue
+            mode = .title
+            comparisonWord = Self.comparisonValue(word)
+            return
+        }
+        if trimmed.hasPrefix("uploader:") {
+            let word = String(trimmed.dropFirst("uploader:".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !word.isEmpty else { return nil }
+            self.rawValue = rawValue
+            mode = .uploader
+            comparisonWord = Self.comparisonValue(word)
+            return
+        }
+        if trimmed.hasPrefix("tag:") {
+            let word = String(trimmed.dropFirst("tag:".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !word.isEmpty else { return nil }
+            self.rawValue = rawValue
+            mode = .tag
+            comparisonWord = Self.comparisonValue(word)
+            return
+        }
+        guard !trimmed.isEmpty else { return nil }
+        self.rawValue = rawValue
+        mode = .all
+        comparisonWord = Self.comparisonValue(trimmed)
+    }
+
+    private nonisolated static func comparisonValue(_ value: String) -> String {
+        value.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
     }
 }

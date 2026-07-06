@@ -1,15 +1,15 @@
 import Foundation
 import SQLite3
 
-private let sqliteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+nonisolated(unsafe) private let sqliteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
-final class PicaXSQLiteDatabase {
-    static let shared = PicaXSQLiteDatabase()
+final class PicaXSQLiteDatabase: @unchecked Sendable {
+    nonisolated static let shared = PicaXSQLiteDatabase()
 
     private let lock = NSRecursiveLock()
-    private var db: OpaquePointer?
+    nonisolated(unsafe) private var db: OpaquePointer?
 
-    private init() {
+    private nonisolated init() {
         open()
         createTables()
     }
@@ -20,7 +20,7 @@ final class PicaXSQLiteDatabase {
         }
     }
 
-    func execute(_ sql: String, bindings: [SQLiteBinding] = []) {
+    nonisolated func execute(_ sql: String, bindings: [SQLiteBinding] = []) {
         lock.lock()
         defer { lock.unlock() }
 
@@ -31,7 +31,7 @@ final class PicaXSQLiteDatabase {
         sqlite3_step(statement)
     }
 
-    func dataRows(_ sql: String, bindings: [SQLiteBinding] = []) -> [Data] {
+    nonisolated func dataRows(_ sql: String, bindings: [SQLiteBinding] = []) -> [Data] {
         lock.lock()
         defer { lock.unlock() }
 
@@ -52,7 +52,7 @@ final class PicaXSQLiteDatabase {
         return rows
     }
 
-    func tableBytes(_ table: String) -> Int {
+    nonisolated func tableBytes(_ table: String) -> Int {
         lock.lock()
         defer { lock.unlock() }
 
@@ -65,7 +65,7 @@ final class PicaXSQLiteDatabase {
         return Int(sqlite3_column_int64(statement, 0))
     }
 
-    func transaction(_ operation: () -> Void) {
+    nonisolated func transaction(_ operation: () -> Void) {
         lock.lock()
         defer { lock.unlock() }
 
@@ -74,7 +74,7 @@ final class PicaXSQLiteDatabase {
         execute("COMMIT")
     }
 
-    private func open() {
+    private nonisolated func open() {
         let url = Self.databaseURL()
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         sqlite3_open(url.path, &db)
@@ -82,7 +82,7 @@ final class PicaXSQLiteDatabase {
         sqlite3_exec(db, "PRAGMA synchronous=NORMAL", nil, nil, nil)
     }
 
-    private func createTables() {
+    private nonisolated func createTables() {
         execute("""
         CREATE TABLE IF NOT EXISTS reading_history (
             id TEXT PRIMARY KEY NOT NULL,
@@ -148,7 +148,7 @@ final class PicaXSQLiteDatabase {
         execute("CREATE INDEX IF NOT EXISTS idx_download_records_sort ON download_records(sort_date DESC)")
     }
 
-    private func bind(_ bindings: [SQLiteBinding], to statement: OpaquePointer?) {
+    private nonisolated func bind(_ bindings: [SQLiteBinding], to statement: OpaquePointer?) {
         for (index, binding) in bindings.enumerated() {
             let position = Int32(index + 1)
             switch binding {
@@ -164,7 +164,7 @@ final class PicaXSQLiteDatabase {
         }
     }
 
-    private static func databaseURL() -> URL {
+    private nonisolated static func databaseURL() -> URL {
         let baseURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
         return baseURL
@@ -173,16 +173,14 @@ final class PicaXSQLiteDatabase {
     }
 }
 
-enum SQLiteBinding {
+enum SQLiteBinding: Sendable {
     case text(String)
     case double(Double)
     case data(Data)
 }
 
 enum PicaXSQLiteStore {
-    private static let db = PicaXSQLiteDatabase.shared
-    private static let encoder = JSONEncoder()
-    private static let decoder = JSONDecoder()
+    nonisolated private static let db = PicaXSQLiteDatabase.shared
 
     static func loadReadingHistory() -> [ReadingHistoryRecord] {
         loadValues("SELECT value FROM reading_history ORDER BY sort_date DESC")
@@ -285,7 +283,7 @@ enum PicaXSQLiteStore {
         db.transaction {
             clear(table: "platform_accounts")
             for account in accounts {
-                guard let data = try? encoder.encode(account) else { continue }
+                guard let data = encoded(account) else { continue }
                 db.execute(
                     """
                     INSERT OR REPLACE INTO platform_accounts(platform, sort_date, value)
@@ -298,7 +296,7 @@ enum PicaXSQLiteStore {
     }
 
     static func upsertPlatformAccount(_ account: PlatformAccount) {
-        guard let data = try? encoder.encode(account) else { return }
+        guard let data = encoded(account) else { return }
         db.execute(
             """
             INSERT OR REPLACE INTO platform_accounts(platform, sort_date, value)
@@ -312,7 +310,7 @@ enum PicaXSQLiteStore {
         db.execute("DELETE FROM platform_accounts WHERE platform = ?", bindings: [.text(platform.id)])
     }
 
-    static func loadLocalFavorites(folderID: String) -> [StoredLocalFavorite] {
+    nonisolated static func loadLocalFavorites(folderID: String) -> [StoredLocalFavorite] {
         loadValues(
             "SELECT value FROM local_favorites WHERE folder_id = ? ORDER BY sort_date DESC",
             bindings: [.text(folderID)]
@@ -329,7 +327,7 @@ enum PicaXSQLiteStore {
     }
 
     static func upsertLocalFavorite(_ favorite: StoredLocalFavorite, folderID: String) {
-        guard let data = try? encoder.encode(favorite) else { return }
+        guard let data = encoded(favorite) else { return }
         db.execute(
             """
             INSERT OR REPLACE INTO local_favorites(folder_id, id, sort_date, value)
@@ -372,7 +370,7 @@ enum PicaXSQLiteStore {
     }
 
     private static func upsert<Value: Encodable>(table: String, id: String, sortDate: Date, value: Value) {
-        guard let data = try? encoder.encode(value) else { return }
+        guard let data = encoded(value) else { return }
         db.execute(
             """
             INSERT OR REPLACE INTO \(table)(id, sort_date, value)
@@ -404,8 +402,13 @@ enum PicaXSQLiteStore {
         db.execute("DELETE FROM \(table)")
     }
 
-    private static func loadValues<Value: Decodable>(_ sql: String, bindings: [SQLiteBinding] = []) -> [Value] {
-        db.dataRows(sql, bindings: bindings).compactMap { data in
+    private nonisolated static func encoded<Value: Encodable>(_ value: Value) -> Data? {
+        try? JSONEncoder().encode(value)
+    }
+
+    private nonisolated static func loadValues<Value: Decodable>(_ sql: String, bindings: [SQLiteBinding] = []) -> [Value] {
+        let decoder = JSONDecoder()
+        return db.dataRows(sql, bindings: bindings).compactMap { data in
             try? decoder.decode(Value.self, from: data)
         }
     }

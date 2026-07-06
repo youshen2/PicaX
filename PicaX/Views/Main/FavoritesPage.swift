@@ -185,6 +185,7 @@ private struct FavoritesCollectionPage: View {
     @State private var hasMoreRemoteFavorites = false
     @State private var loadedComicIDs = Set<String>()
     @State private var readingListRequest: ReadingListRequest?
+    @State private var filterTask: Task<Void, Never>?
 
     private static let localFavoriteInitialCount = 48
     private static let localFavoriteBatchSize = 48
@@ -239,7 +240,7 @@ private struct FavoritesCollectionPage: View {
         .picaxHidesTabBar()
         .searchable(text: $searchText, placement: .picaxNavigationSearch, prompt: "搜索当前收藏夹")
         .onChange(of: searchText) { _, _ in
-            refreshFilteredComics(resetVisibleCount: true)
+            queueFilteredComicsRefresh(resetVisibleCount: true)
             if !normalizedSearchText.isEmpty {
                 downloadSheetContext = nil
             }
@@ -285,6 +286,10 @@ private struct FavoritesCollectionPage: View {
         }
         .task {
             await load()
+        }
+        .onDisappear {
+            filterTask?.cancel()
+            filterTask = nil
         }
     }
 
@@ -338,44 +343,48 @@ private struct FavoritesCollectionPage: View {
         visibleLocalComicCount = min(filteredComics.count, visibleLocalComicCount + Self.localFavoriteBatchSize)
     }
 
-    private func refreshFilteredComics(resetVisibleCount: Bool) {
-        filteredComics = filteredFavorites(from: comics)
-        if resetVisibleCount {
-            visibleLocalComicCount = Self.localFavoriteInitialCount
+    private func queueFilteredComicsRefresh(resetVisibleCount: Bool) {
+        filterTask?.cancel()
+        filterTask = Task {
+            await refreshFilteredComics(resetVisibleCount: resetVisibleCount)
         }
     }
 
-    private func filteredFavorites(from comics: [ComicListItem]) -> [ComicListItem] {
+    @MainActor
+    private func refreshFilteredComics(resetVisibleCount: Bool) async {
+        let sourceComics = comics
         let keyword = normalizedSearchText
-        guard !keyword.isEmpty else { return comics }
-        return comics.filter { comicMatches($0, keyword: keyword) }
-    }
-
-    private func comicMatches(_ comic: ComicListItem, keyword: String) -> Bool {
-        comic.title.localizedCaseInsensitiveContains(keyword)
-            || comic.subtitle.localizedCaseInsensitiveContains(keyword)
-            || comic.id.localizedCaseInsensitiveContains(keyword)
-            || comic.platformTitle.localizedCaseInsensitiveContains(keyword)
-            || (comic.pageText?.localizedCaseInsensitiveContains(keyword) ?? false)
-            || comic.metadataText.localizedCaseInsensitiveContains(keyword)
-            || comic.tags.contains { $0.localizedCaseInsensitiveContains(keyword) }
+        do {
+            let filtered = try await ComicListBackgroundProcessing.filteredFavorites(from: sourceComics, keyword: keyword)
+            guard !Task.isCancelled else { return }
+            filteredComics = filtered
+            if resetVisibleCount {
+                visibleLocalComicCount = Self.localFavoriteInitialCount
+            }
+        } catch is CancellationError {
+            return
+        } catch {
+            filteredComics = sourceComics
+        }
     }
 
     @MainActor
     private func load(force: Bool = false) async {
         if !force, !comics.isEmpty {
             isLoading = false
-            refreshFilteredComics(resetVisibleCount: false)
+            filterTask?.cancel()
+            await refreshFilteredComics(resetVisibleCount: false)
             return
         }
 
         isLoading = true
         isLoadingMoreFavorites = false
         errorMessage = nil
+        defer { isLoading = false }
         do {
             switch source {
             case .local(let folder):
-                comics = service.loadLocalFavorites(folder: folder)
+                comics = try await ComicListBackgroundProcessing.localFavorites(folderID: folder.id)
                 hasMoreRemoteFavorites = false
                 nextFavoritePage = 2
             case .platform(let account):
@@ -389,8 +398,11 @@ private struct FavoritesCollectionPage: View {
                 hasMoreRemoteFavorites = page.hasMore
                 nextFavoritePage = page.page + 1
             }
-            loadedComicIDs = Set(comics.map(\.readingHistoryID))
-            refreshFilteredComics(resetVisibleCount: true)
+            loadedComicIDs = try await ComicListBackgroundProcessing.loadedIDs(from: comics, identity: .readingHistoryID)
+            filterTask?.cancel()
+            await refreshFilteredComics(resetVisibleCount: true)
+        } catch is CancellationError {
+            return
         } catch {
             errorMessage = error.localizedDescription
             comics = []
@@ -398,20 +410,21 @@ private struct FavoritesCollectionPage: View {
             hasMoreRemoteFavorites = false
             loadedComicIDs = []
         }
-        isLoading = false
     }
 
     @MainActor
     private func loadMoreRemoteFavorites() async {
         guard hasMoreRemoteFavorites, !isLoadingMoreFavorites else { return }
         isLoadingMoreFavorites = true
+        defer { isLoadingMoreFavorites = false }
         do {
             try await loadNextRemoteFavoritesPage()
+        } catch is CancellationError {
+            return
         } catch {
             errorMessage = error.localizedDescription
             hasMoreRemoteFavorites = false
         }
-        isLoadingMoreFavorites = false
     }
 
     @MainActor
@@ -426,18 +439,19 @@ private struct FavoritesCollectionPage: View {
             page = try await service.loadFavoritePage(account: account, folder: folder, page: nextFavoritePage)
         }
 
-        let oldCount = comics.count
-        appendUniqueFavorites(page.items)
+        let uniqueResult = try await ComicListBackgroundProcessing.uniqueItems(
+            from: page.items,
+            loadedIDs: loadedComicIDs,
+            identity: .readingHistoryID
+        )
+        loadedComicIDs = uniqueResult.loadedIDs
         nextFavoritePage = page.page + 1
-        hasMoreRemoteFavorites = page.hasMore && comics.count > oldCount
+        hasMoreRemoteFavorites = page.hasMore && !uniqueResult.items.isEmpty
+        guard !uniqueResult.items.isEmpty else { return }
+        comics += uniqueResult.items
         if refreshFiltered {
-            refreshFilteredComics(resetVisibleCount: false)
-        }
-    }
-
-    private func appendUniqueFavorites(_ newItems: [ComicListItem]) {
-        for item in newItems where loadedComicIDs.insert(item.readingHistoryID).inserted {
-            comics.append(item)
+            filterTask?.cancel()
+            await refreshFilteredComics(resetVisibleCount: false)
         }
     }
 
@@ -445,17 +459,20 @@ private struct FavoritesCollectionPage: View {
     private func prepareReadAll() async {
         guard !isPreparingReadAll else { return }
         isPreparingReadAll = true
+        defer { isPreparingReadAll = false }
         do {
             try await loadCompleteFavorites()
-            refreshFilteredComics(resetVisibleCount: false)
+            filterTask?.cancel()
+            await refreshFilteredComics(resetVisibleCount: false)
             readingListRequest = ReadingListRequest(
                 title: source.title,
                 entries: filteredComics.map(ReadingListEntry.online)
             )
+        } catch is CancellationError {
+            return
         } catch {
             errorMessage = error.localizedDescription
         }
-        isPreparingReadAll = false
     }
 
     @MainActor
@@ -478,7 +495,8 @@ private struct FavoritesCollectionPage: View {
             throw FavoriteDownloadAllError.searchActive
         }
 
-        refreshFilteredComics(resetVisibleCount: false)
+        filterTask?.cancel()
+        await refreshFilteredComics(resetVisibleCount: false)
         return comics
     }
 }

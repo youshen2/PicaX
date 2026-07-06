@@ -215,10 +215,13 @@ private final class ExploreEntryViewModel: ObservableObject {
         isLoadingMore = false
         do {
             let items = try await service.loadExplore(platform: platform, entry: entry, account: account, page: 1)
+            let nextLoadedIDs = try await ComicListBackgroundProcessing.loadedIDs(from: items, identity: .id)
             currentPage = 1
-            loadedIDs = Set(items.map(\.id))
+            loadedIDs = nextLoadedIDs
             hasMore = !items.isEmpty
             state = .loaded(items)
+        } catch is CancellationError {
+            return
         } catch {
             state = .failed(error.localizedDescription)
         }
@@ -235,11 +238,18 @@ private final class ExploreEntryViewModel: ObservableObject {
         do {
             let nextPage = currentPage + 1
             let newItems = try await service.loadExplore(platform: platform, entry: entry, account: account, page: nextPage)
+            let uniqueResult = try await ComicListBackgroundProcessing.uniqueItems(
+                from: newItems,
+                loadedIDs: loadedIDs,
+                identity: .id
+            )
             currentPage = nextPage
-            let uniqueItems = newItems.filter { loadedIDs.insert($0.id).inserted }
-            hasMore = !newItems.isEmpty && !uniqueItems.isEmpty
-            guard !uniqueItems.isEmpty else { return }
-            state = .loaded(items + uniqueItems)
+            loadedIDs = uniqueResult.loadedIDs
+            hasMore = !newItems.isEmpty && !uniqueResult.items.isEmpty
+            guard !uniqueResult.items.isEmpty else { return }
+            state = .loaded(items + uniqueResult.items)
+        } catch is CancellationError {
+            return
         } catch {
             hasMore = false
         }

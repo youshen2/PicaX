@@ -1,7 +1,7 @@
 import Foundation
 import SwiftUI
 
-enum ComicPlatform: String, CaseIterable, Codable, Identifiable {
+enum ComicPlatform: String, CaseIterable, Codable, Identifiable, Sendable {
     case picacg
     case jmComic
     case nhentai
@@ -11,7 +11,24 @@ enum ComicPlatform: String, CaseIterable, Codable, Identifiable {
 
     nonisolated var id: String { rawValue }
 
-    var title: String {
+    nonisolated init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let rawValue = try container.decode(String.self)
+        guard let platform = ComicPlatform(rawValue: rawValue) else {
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Invalid comic platform: \(rawValue)"
+            )
+        }
+        self = platform
+    }
+
+    nonisolated func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+
+    nonisolated var title: String {
         switch self {
         case .picacg:
             "PicACG"
