@@ -24,8 +24,15 @@ struct DownloadedComicDetailPage: View {
                 }
             }
 
-            if copyItem.copyAction != nil {
-                Section("操作") {
+            Section("操作") {
+                NavigationLink {
+                    ComicDetailPage(item: record.item, service: service)
+                        .picaxHidesTabBar()
+                } label: {
+                    Label("打开联网详情页", systemImage: "network")
+                }
+
+                if copyItem.copyAction != nil {
                     ComicCopyActionButton(item: copyItem)
                 }
             }

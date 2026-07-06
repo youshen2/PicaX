@@ -62,6 +62,7 @@ struct ComicReaderPage: View {
     let initialChapterIndex: Int
     let initialPageIndex: Int
     let ignoresHistoryProgress: Bool
+    let recordsReadingHistory: Bool
     let service: ComicContentService
     let localChapterImageProvider: ((ComicChapter, Int) async -> [ComicChapterImage])?
     let localChapterCommentsProvider: ((ComicChapter, Int) async -> [ComicComment])?
@@ -97,6 +98,7 @@ struct ComicReaderPage: View {
         initialChapterIndex: Int = 0,
         initialPageIndex: Int = 0,
         ignoresHistoryProgress: Bool = false,
+        recordsReadingHistory: Bool = true,
         service: ComicContentService,
         localChapterImageProvider: ((ComicChapter, Int) async -> [ComicChapterImage])? = nil,
         localChapterCommentsProvider: ((ComicChapter, Int) async -> [ComicComment])? = nil,
@@ -108,6 +110,7 @@ struct ComicReaderPage: View {
         self.initialChapterIndex = initialChapterIndex
         self.initialPageIndex = initialPageIndex
         self.ignoresHistoryProgress = ignoresHistoryProgress
+        self.recordsReadingHistory = recordsReadingHistory
         self.service = service
         self.localChapterImageProvider = localChapterImageProvider
         self.localChapterCommentsProvider = localChapterCommentsProvider
@@ -1480,6 +1483,7 @@ struct ComicReaderPage: View {
     }
 
     private func scheduleReadingHistoryRecord(pageIndex: Int, totalPages: Int) {
+        guard recordsReadingHistory else { return }
         let snapshot = ReaderHistoryRecordSnapshot(
             item: detail.item,
             chapterIndex: historyChapterIndexResolver(viewModel.currentChapterIndex),
@@ -1501,6 +1505,10 @@ struct ComicReaderPage: View {
     private func flushPendingHistoryRecord() {
         historyRecordTask?.cancel()
         historyRecordTask = nil
+        guard recordsReadingHistory else {
+            pendingHistoryRecord = nil
+            return
+        }
         guard let pendingHistoryRecord else { return }
         persistHistoryRecord(pendingHistoryRecord)
         self.pendingHistoryRecord = nil

@@ -4,6 +4,7 @@ struct DownloadedComicInfoSheet: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var downloadService: DownloadService
     @EnvironmentObject private var readingHistory: ReadingHistoryService
+    @AppStorage(DownloadSettingsKey.recordsDownloadedReadingHistory) private var recordsDownloadedReadingHistory = true
 
     let record: DownloadRecord
     let service: ComicContentService
@@ -27,7 +28,7 @@ struct DownloadedComicInfoSheet: View {
                     Section("章节") {
                         ForEach(Array(downloadedChapterRecords.enumerated()), id: \.element.id) { index, chapter in
                             Button {
-                                openLocalReader(chapterIndex: index, pageIndex: 0, ignoresHistoryProgress: true)
+                                openLocalReader(chapterIndex: index, pageIndex: 0)
                             } label: {
                                 DownloadedChapterRow(chapter: chapter)
                             }
@@ -137,15 +138,14 @@ struct DownloadedComicInfoSheet: View {
             let chapterIndex = compactChapterIndex(for: readableProgress.chapterIndex) ?? 0
             openLocalReader(
                 chapterIndex: chapterIndex,
-                pageIndex: readableProgress.pageIndex,
-                ignoresHistoryProgress: true
+                pageIndex: readableProgress.pageIndex
             )
         } else {
-            openLocalReader(chapterIndex: 0, pageIndex: 0, ignoresHistoryProgress: true)
+            openLocalReader(chapterIndex: 0, pageIndex: 0)
         }
     }
 
-    private func openLocalReader(chapterIndex: Int, pageIndex: Int, ignoresHistoryProgress: Bool) {
+    private func openLocalReader(chapterIndex: Int, pageIndex: Int) {
         let detail = localDetail
         let boundedIndex = min(max(chapterIndex, 0), max(detail.chapters.count - 1, 0))
         openReader(DownloadedComicReaderRequest(
@@ -154,7 +154,8 @@ struct DownloadedComicInfoSheet: View {
             localChapterIndexes: localChapterIndexes,
             initialChapterIndex: boundedIndex,
             initialPageIndex: max(pageIndex, 0),
-            ignoresHistoryProgress: ignoresHistoryProgress
+            ignoresHistoryProgress: true,
+            recordsReadingHistory: recordsDownloadedReadingHistory
         ))
         dismiss()
     }
@@ -172,6 +173,7 @@ struct DownloadedComicReaderRequest: Identifiable, Hashable {
     let initialChapterIndex: Int
     let initialPageIndex: Int
     let ignoresHistoryProgress: Bool
+    let recordsReadingHistory: Bool
 
     static func == (lhs: DownloadedComicReaderRequest, rhs: DownloadedComicReaderRequest) -> Bool {
         lhs.id == rhs.id

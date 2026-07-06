@@ -106,6 +106,7 @@ struct DownloadListPage: View {
                 initialChapterIndex: request.initialChapterIndex,
                 initialPageIndex: request.initialPageIndex,
                 ignoresHistoryProgress: request.ignoresHistoryProgress,
+                recordsReadingHistory: request.recordsReadingHistory,
                 service: service,
                 localChapterImageProvider: { _, chapterIndex in
                     guard request.localChapterIndexes.indices.contains(chapterIndex) else { return [] }

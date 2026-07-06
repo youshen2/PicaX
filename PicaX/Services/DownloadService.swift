@@ -378,6 +378,9 @@ final class DownloadService: ObservableObject {
         if defaults.object(forKey: DownloadSettingsKey.readsImagesFromCache) == nil {
             defaults.set(true, forKey: DownloadSettingsKey.readsImagesFromCache)
         }
+        if defaults.object(forKey: DownloadSettingsKey.recordsDownloadedReadingHistory) == nil {
+            defaults.set(true, forKey: DownloadSettingsKey.recordsDownloadedReadingHistory)
+        }
         if defaults.object(forKey: DownloadSettingsKey.archiveFileNameTemplate) == nil {
             defaults.set(DownloadSettingsKey.defaultArchiveFileNameTemplate, forKey: DownloadSettingsKey.archiveFileNameTemplate)
         }

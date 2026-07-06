@@ -152,6 +152,7 @@ enum DownloadSettingsKey {
     static let speedLimitEnabled = "settings.download.speedLimitEnabled"
     static let speedLimitKBPerSecond = "settings.download.speedLimitKBPerSecond"
     static let readsImagesFromCache = "settings.download.readsImagesFromCache"
+    static let recordsDownloadedReadingHistory = "settings.download.recordsDownloadedReadingHistory"
     static let downloadsCommentsByDefault = "settings.download.downloadsCommentsByDefault"
     static let archiveFileNameTemplate = "settings.download.archiveFileNameTemplate"
     static let showsProgressNotifications = "settings.download.showsProgressNotifications"

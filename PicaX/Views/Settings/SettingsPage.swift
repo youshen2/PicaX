@@ -608,6 +608,7 @@ private struct DownloadSettingsView: View {
     @AppStorage(DownloadSettingsKey.speedLimitEnabled) private var speedLimitEnabled = false
     @AppStorage(DownloadSettingsKey.speedLimitKBPerSecond) private var speedLimitKBPerSecond = 1024
     @AppStorage(DownloadSettingsKey.readsImagesFromCache) private var readsImagesFromCache = true
+    @AppStorage(DownloadSettingsKey.recordsDownloadedReadingHistory) private var recordsDownloadedReadingHistory = true
     @AppStorage(DownloadSettingsKey.downloadsCommentsByDefault) private var downloadsCommentsByDefault = false
     @AppStorage(DownloadSettingsKey.archiveFileNameTemplate) private var archiveFileNameTemplate = DownloadSettingsKey.defaultArchiveFileNameTemplate
     @AppStorage(DownloadSettingsKey.showsProgressNotifications) private var showsProgressNotifications = true
@@ -618,10 +619,11 @@ private struct DownloadSettingsView: View {
         List {
             Section {
                 Toggle("默认保存评论区", isOn: $downloadsCommentsByDefault)
+                Toggle("已下载阅读计入历史", isOn: $recordsDownloadedReadingHistory)
             } header: {
                 Text("下载内容")
             } footer: {
-                Text("开启后，支持评论区的漫画在打开下载面板时会默认一并保存详情评论和章节评论。")
+                Text("评论开关会让支持评论区的漫画在打开下载面板时默认一并保存评论；历史开关会让本地已下载漫画的阅读进度写入阅读历史。")
             }
 
             Section {
