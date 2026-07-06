@@ -215,7 +215,7 @@ struct ComicListSection: View {
                 buildTask.cancel()
             }
             guard !Task.isCancelled else { return }
-            updateRenderedComicCount(oldIdentity: renderSnapshot.contentIdentity, newIdentity: snapshot.contentIdentity)
+            updateRenderedComicCount(oldSnapshot: renderSnapshot, newSnapshot: snapshot)
             renderSnapshot = snapshot
             service.warmNhentaiTagNameCache(for: snapshot.visibleComics)
         } catch is CancellationError {
@@ -270,8 +270,15 @@ struct ComicListSection: View {
         renderedComicCount = min(totalVisibleCount, renderedComicCount + Self.renderedComicPageSize)
     }
 
-    private func updateRenderedComicCount(oldIdentity: ComicListContentIdentity, newIdentity: ComicListContentIdentity) {
+    private func updateRenderedComicCount(oldSnapshot: ComicListRenderSnapshot, newSnapshot: ComicListRenderSnapshot) {
+        let oldIdentity = oldSnapshot.contentIdentity
+        let newIdentity = newSnapshot.contentIdentity
         let minimumRenderedCount = min(Self.initialRenderedComicCount, max(newIdentity.totalCount, 1))
+        if oldSnapshot.key.canPreserveRenderedCount(afterRebuildingFor: newSnapshot.key) {
+            renderedComicCount = min(max(renderedComicCount, minimumRenderedCount), newIdentity.totalCount)
+            return
+        }
+
         let leadingContentChanged = oldIdentity.leadingCount != newIdentity.leadingCount
             || oldIdentity.leadingHash != newIdentity.leadingHash
         let contentShrank = newIdentity.totalCount < oldIdentity.totalCount
@@ -792,6 +799,10 @@ private struct ComicListSnapshotKey: Hashable, Sendable {
 
     nonisolated func canRetainDisplayedRows(whileRebuilding requestKey: ComicListSnapshotKey) -> Bool {
         guard comicsCount > 0 else { return false }
+        if hasSameSourceContent(as: requestKey) {
+            return true
+        }
+
         guard appliesBlocking == requestKey.appliesBlocking,
               appliesReadProgressFilter == requestKey.appliesReadProgressFilter,
               appliesReadLaterFilter == requestKey.appliesReadLaterFilter,
@@ -820,6 +831,16 @@ private struct ComicListSnapshotKey: Hashable, Sendable {
             && requestKey.comicsHash == comicsHash
             && requestKey.sourcePrefix == sourcePrefix
         return keepsAppendedContent || keepsSameContent
+    }
+
+    nonisolated func canPreserveRenderedCount(afterRebuildingFor requestKey: ComicListSnapshotKey) -> Bool {
+        hasSameSourceContent(as: requestKey)
+    }
+
+    private nonisolated func hasSameSourceContent(as other: ComicListSnapshotKey) -> Bool {
+        comicsCount == other.comicsCount
+            && comicsHash == other.comicsHash
+            && sourcePrefix == other.sourcePrefix
     }
 
     private nonisolated static func comicsHash(_ comics: [ComicListItem]) -> Int {
