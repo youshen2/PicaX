@@ -66,7 +66,24 @@ enum NhentaiTagSuggestionService {
         }
     }
 
-    fileprivate static func normalizedTag(_ value: String) -> String {
+    nonisolated static func translatedTitle(forTagName tagName: String, group: String? = nil) -> String {
+        let trimmed = tagName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return tagName }
+
+        if let namespace = ehentaiNamespace(for: group) {
+            let translated = EhTagTranslationService.translatedTagTitle(
+                title: trimmed,
+                query: "\(namespace):\(trimmed)",
+                namespace: namespace
+            )
+            if translated != trimmed {
+                return translated
+            }
+        }
+        return EhTagTranslationService.translatedAnyTagTitle(trimmed)
+    }
+
+    fileprivate nonisolated static func normalizedTag(_ value: String) -> String {
         value
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
@@ -127,5 +144,16 @@ enum NhentaiTagSuggestionService {
             return suggestions
         }
         return suggestionBuckets[String(Character(scalar))] ?? []
+    }
+
+    private nonisolated static func ehentaiNamespace(for group: String?) -> String? {
+        switch normalizedTag(group ?? "") {
+        case "artist", "character", "group", "language", "parody":
+            return normalizedTag(group ?? "")
+        case "category":
+            return "reclass"
+        default:
+            return nil
+        }
     }
 }

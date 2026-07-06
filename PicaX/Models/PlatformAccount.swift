@@ -126,9 +126,9 @@ enum ComicPlatform: String, CaseIterable, Codable, Identifiable, Sendable {
 }
 
 enum PlatformWebUserAgent {
-    static let defaultBrowser = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36"
+    nonisolated static let defaultBrowser = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36"
 
-    static func normalized(_ userAgent: String?) -> String {
+    nonisolated static func normalized(_ userAgent: String?) -> String {
         let trimmed = userAgent?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return trimmed.isEmpty ? defaultBrowser : trimmed
     }

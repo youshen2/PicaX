@@ -146,6 +146,14 @@ final class PicaXSQLiteDatabase: @unchecked Sendable {
         )
         """)
         execute("CREATE INDEX IF NOT EXISTS idx_download_records_sort ON download_records(sort_date DESC)")
+
+        execute("""
+        CREATE TABLE IF NOT EXISTS nhentai_tag_names (
+            id TEXT PRIMARY KEY NOT NULL,
+            sort_date REAL NOT NULL,
+            value BLOB NOT NULL
+        )
+        """)
     }
 
     private nonisolated func bind(_ bindings: [SQLiteBinding], to statement: OpaquePointer?) {
@@ -365,11 +373,48 @@ enum PicaXSQLiteStore {
         clear(table: "download_records")
     }
 
+    nonisolated static func loadNhentaiTagNames(ids: [Int]) -> [Int: StoredNhentaiTagName] {
+        let uniqueIDs = Array(Set(ids.filter { $0 > 0 })).sorted()
+        guard !uniqueIDs.isEmpty else { return [:] }
+
+        let placeholders = Array(repeating: "?", count: uniqueIDs.count).joined(separator: ", ")
+        let records: [StoredNhentaiTagName] = loadValues(
+            "SELECT value FROM nhentai_tag_names WHERE id IN (\(placeholders))",
+            bindings: uniqueIDs.map { .text(String($0)) }
+        )
+        return records.reduce(into: [:]) { result, record in
+            guard record.id > 0, !record.name.isEmpty else { return }
+            result[record.id] = record
+        }
+    }
+
+    nonisolated static func upsertNhentaiTagNames(_ records: [StoredNhentaiTagName]) {
+        var latestByID: [Int: StoredNhentaiTagName] = [:]
+        for record in records where record.id > 0 && !record.name.isEmpty {
+            latestByID[record.id] = record
+        }
+        guard !latestByID.isEmpty else { return }
+
+        db.transaction {
+            for record in latestByID.values.sorted(by: { $0.id < $1.id }) {
+                upsert(
+                    table: "nhentai_tag_names",
+                    id: String(record.id),
+                    sortDate: record.updatedAt,
+                    value: record
+                )
+            }
+        }
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: .picaxNhentaiTagNamesDidChange, object: nil)
+        }
+    }
+
     static func bytes(for table: SQLiteBackedTable) -> Int {
         db.tableBytes(table.rawValue)
     }
 
-    private static func upsert<Value: Encodable>(table: String, id: String, sortDate: Date, value: Value) {
+    private nonisolated static func upsert<Value: Encodable>(table: String, id: String, sortDate: Date, value: Value) {
         guard let data = encoded(value) else { return }
         db.execute(
             """
@@ -422,4 +467,19 @@ enum SQLiteBackedTable: String {
     case platformAccounts = "platform_accounts"
     case localFavorites = "local_favorites"
     case downloadRecords = "download_records"
+    case nhentaiTagNames = "nhentai_tag_names"
+}
+
+struct StoredNhentaiTagName: Codable, Hashable, Sendable {
+    let id: Int
+    let group: String
+    let name: String
+    let updatedAt: Date
+
+    nonisolated init(id: Int, group: String, name: String, updatedAt: Date = Date()) {
+        self.id = id
+        self.group = group
+        self.name = name
+        self.updatedAt = updatedAt
+    }
 }

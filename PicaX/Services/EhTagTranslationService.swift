@@ -77,12 +77,12 @@ enum EhTagTranslationService {
         $0.normalizedTag.first.map(String.init) ?? ""
     }
 
-    static func translatedGroupTitle(_ title: String) -> String {
+    nonisolated static func translatedGroupTitle(_ title: String) -> String {
         let namespace = normalizedNamespace(title)
         return translations["rows"]?[namespace] ?? fallbackRows[namespace] ?? title
     }
 
-    static func translatedTagTitle(title: String, query: String, namespace: String) -> String {
+    nonisolated static func translatedTagTitle(title: String, query: String, namespace: String) -> String {
         let namespace = normalizedNamespace(namespace)
         let rawTag = rawTagValue(title: title, query: query, namespace: namespace)
         let translated = translatedTag(rawTag, namespace: namespace)
@@ -117,7 +117,7 @@ enum EhTagTranslationService {
         }
     }
 
-    static func translatedAnyTagTitle(_ title: String) -> String {
+    nonisolated static func translatedAnyTagTitle(_ title: String) -> String {
         let rawTag = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !rawTag.isEmpty else { return title }
         for namespace in suggestionNamespaces {
@@ -129,7 +129,7 @@ enum EhTagTranslationService {
         return title
     }
 
-    private static func translatedTag(_ tag: String, namespace: String) -> String {
+    private nonisolated static func translatedTag(_ tag: String, namespace: String) -> String {
         if tag.contains(" | ") {
             for value in tag.components(separatedBy: " | ") {
                 let translated = translatedTag(value, namespace: namespace)
@@ -153,7 +153,7 @@ enum EhTagTranslationService {
         return tag
     }
 
-    private static func rawTagValue(title: String, query: String, namespace: String) -> String {
+    private nonisolated static func rawTagValue(title: String, query: String, namespace: String) -> String {
         let currentNamespace = normalizedNamespace(namespace)
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         if let separatorIndex = trimmedQuery.firstIndex(of: ":") {
@@ -166,13 +166,13 @@ enum EhTagTranslationService {
         return title.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private static func normalizedNamespace(_ value: String) -> String {
+    private nonisolated static func normalizedNamespace(_ value: String) -> String {
         value
             .trimmingCharacters(in: CharacterSet(charactersIn: " :\n\t"))
             .lowercased()
     }
 
-    fileprivate static func normalizedTag(_ value: String) -> String {
+    fileprivate nonisolated static func normalizedTag(_ value: String) -> String {
         htmlDecoded(value)
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
@@ -233,7 +233,7 @@ enum EhTagTranslationService {
         return value
     }
 
-    private static func htmlDecoded(_ value: String) -> String {
+    private nonisolated static func htmlDecoded(_ value: String) -> String {
         value
             .replacingOccurrences(of: "&amp;", with: "&")
             .replacingOccurrences(of: "&quot;", with: "\"")

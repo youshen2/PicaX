@@ -65,6 +65,10 @@ struct ComicContentService {
         self.localStore = localStore
     }
 
+    nonisolated func warmNhentaiTagNameCache(for items: [ComicListItem]) {
+        NhentaiTagNameCacheWarmupService.warm(items: items)
+    }
+
     var localFolders: [LocalFavoriteFolder] {
         localStore.folders
     }
@@ -620,6 +624,104 @@ private struct JmLoginInfo {
     let userID: String?
 }
 
+private enum NhentaiTagNameCacheWarmupService {
+    nonisolated private static let lock = NSLock()
+    nonisolated(unsafe) private static var warmingItemIDs = Set<String>()
+    private nonisolated static let maxItemsPerBatch = 12
+
+    nonisolated static func warm(items: [ComicListItem]) {
+        let candidates = reserveCandidates(from: items)
+        guard !candidates.isEmpty else { return }
+
+        Task.detached(priority: .utility) {
+            defer { release(candidates) }
+
+            let session = AppNetworkSettings.makeSession()
+            for item in candidates {
+                if Task.isCancelled { break }
+                guard let itemRecords = try? await tagRecords(for: item, session: session) else {
+                    continue
+                }
+                PicaXSQLiteStore.upsertNhentaiTagNames(itemRecords)
+            }
+        }
+    }
+
+    private nonisolated static func reserveCandidates(from items: [ComicListItem]) -> [ComicListItem] {
+        let nhentaiItems = items.filter { $0.platform == .nhentai }
+        let cachedIDs = Set(PicaXSQLiteStore.loadNhentaiTagNames(ids: nhentaiItems.flatMap(tagIDs(in:))).keys)
+        var candidates: [ComicListItem] = []
+        candidates.reserveCapacity(min(maxItemsPerBatch, nhentaiItems.count))
+
+        lock.lock()
+        defer { lock.unlock() }
+
+        for item in nhentaiItems {
+            guard candidates.count < maxItemsPerBatch else { break }
+            let ids = tagIDs(in: item)
+            guard ids.contains(where: { !cachedIDs.contains($0) }) else { continue }
+            guard warmingItemIDs.insert(item.readingHistoryID).inserted else { continue }
+            candidates.append(item)
+        }
+
+        return candidates
+    }
+
+    private nonisolated static func release(_ items: [ComicListItem]) {
+        lock.lock()
+        defer { lock.unlock() }
+        for item in items {
+            warmingItemIDs.remove(item.readingHistoryID)
+        }
+    }
+
+    private nonisolated static func tagIDs(in item: ComicListItem) -> [Int] {
+        item.tags.compactMap { tag in
+            let trimmed = tag.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard trimmed.lowercased().hasPrefix("tag:") else { return nil }
+            return Int(trimmed.dropFirst("tag:".count))
+        }
+    }
+
+    private nonisolated static func tagRecords(for item: ComicListItem, session: URLSession) async throws -> [StoredNhentaiTagName] {
+        let id = item.id.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !id.isEmpty, let url = URL(string: "https://nhentai.net/api/v2/galleries/\(id)") else {
+            return []
+        }
+
+        var request = URLRequest(url: url)
+        request.allHTTPHeaderFields = nhentaiHeaders
+        let (data, response) = try await session.data(for: request)
+        guard let statusCode = (response as? HTTPURLResponse)?.statusCode,
+              (200..<300).contains(statusCode) else {
+            return []
+        }
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let tags = json["tags"] as? [[String: Any]] else {
+            return []
+        }
+
+        return tags.compactMap { tag in
+            guard let id = tag.intValue(for: "id"), id > 0 else { return nil }
+            let name = (tag["name"] as? String ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else { return nil }
+            let group = (tag["type"] as? String ?? "tag")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return StoredNhentaiTagName(id: id, group: group.isEmpty ? "tag" : group, name: name)
+        }
+    }
+
+    private nonisolated static var nhentaiHeaders: [String: String] {
+        [
+            "Accept": "application/json",
+            "Accept-Language": "zh-CN,zh-TW;q=0.9,zh;q=0.8,en-US;q=0.7,en;q=0.6",
+            "Referer": "https://nhentai.net/",
+            "User-Agent": PlatformWebUserAgent.normalized(nil)
+        ]
+    }
+}
+
 private extension ComicContentService {
     func singleReaderChapter(title: String = "第 1 章") -> [ComicChapter] {
         [ComicChapter(id: "1", title: title, subtitle: nil)]
@@ -1120,21 +1222,26 @@ private extension ComicContentService {
         guard let result = json["result"] as? [[String: Any]] else {
             throw ComicContentError.invalidResponse("NHentai 响应缺少 result。")
         }
-        return result.map { doc in
+        var cachedTagRecords: [StoredNhentaiTagName] = []
+        let items = result.map { doc in
             let id = "\(doc.intValue(for: "id") ?? 0)"
             let thumbnail = doc["thumbnail"] as? String ?? ""
+            let tagRecords = nhentaiTagNameRecords(from: doc["tags"] as? [[String: Any]] ?? [])
+            cachedTagRecords.append(contentsOf: tagRecords)
             return ComicListItem(
                 id: id,
                 platform: .nhentai,
                 title: doc["english_title"] as? String ?? doc["japanese_title"] as? String ?? id,
                 subtitle: id,
                 coverURLString: absoluteNhentaiThumbnail(thumbnail),
-                tags: (doc["tag_ids"] as? [Int] ?? []).prefix(6).map { "tag:\($0)" },
+                tags: nhentaiListTags(from: doc, tagRecords: tagRecords),
                 pageCount: doc.intValue(for: "num_pages"),
                 likesCount: nil,
                 favoriteDate: favoriteDate
             )
         }
+        PicaXSQLiteStore.upsertNhentaiTagNames(cachedTagRecords)
+        return items
     }
 
     func loadNhentaiDetail(item: ComicListItem) async throws -> ComicDetailInfo {
@@ -1148,6 +1255,7 @@ private extension ComicContentService {
         let subtitle = json.value(at: ["title", "japanese"]) as? String ?? json["scanlator"] as? String ?? item.subtitle
         let coverPath = json.value(at: ["cover", "path"]) as? String ?? json.value(at: ["thumbnail", "path"]) as? String ?? item.coverURLString
         let tags = json["tags"] as? [[String: Any]] ?? []
+        PicaXSQLiteStore.upsertNhentaiTagNames(nhentaiTagNameRecords(from: tags))
         let grouped = Dictionary(grouping: tags) { tag in
             tag["type"] as? String ?? "tag"
         }
@@ -1176,6 +1284,36 @@ private extension ComicContentService {
             related: [],
             updatedText: (json.intValue(for: "upload_date")).map { Date(timeIntervalSince1970: TimeInterval($0)).formatted(date: .abbreviated, time: .omitted) }
         )
+    }
+
+    func nhentaiListTags(from doc: [String: Any], tagRecords: [StoredNhentaiTagName]) -> [String] {
+        let tagIDs = nhentaiTagIDs(from: doc)
+        if !tagIDs.isEmpty {
+            return tagIDs.prefix(6).map { "tag:\($0)" }
+        }
+        return tagRecords.prefix(6).map(\.name)
+    }
+
+    func nhentaiTagIDs(from doc: [String: Any]) -> [Int] {
+        if let ids = doc["tag_ids"] as? [Int] {
+            return ids
+        }
+        if let ids = doc["tag_ids"] as? [NSNumber] {
+            return ids.map(\.intValue)
+        }
+        return []
+    }
+
+    func nhentaiTagNameRecords(from tags: [[String: Any]]) -> [StoredNhentaiTagName] {
+        tags.compactMap { tag in
+            guard let id = tag.intValue(for: "id"), id > 0 else { return nil }
+            let name = (tag["name"] as? String ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else { return nil }
+            let group = (tag["type"] as? String ?? "tag")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return StoredNhentaiTagName(id: id, group: group.isEmpty ? "tag" : group, name: name)
+        }
     }
 
     func nhentaiTagGroupTitle(_ key: String) -> String {
@@ -3360,7 +3498,7 @@ enum ComicContentError: LocalizedError {
 }
 
 private extension Dictionary where Key == String, Value == Any {
-    func value(at path: [String]) -> Any? {
+    nonisolated func value(at path: [String]) -> Any? {
         var current: Any? = self
         for key in path {
             current = (current as? [String: Any])?[key]
@@ -3368,8 +3506,9 @@ private extension Dictionary where Key == String, Value == Any {
         return current
     }
 
-    func intValue(for key: String) -> Int? {
+    nonisolated func intValue(for key: String) -> Int? {
         if let value = self[key] as? Int { return value }
+        if let value = self[key] as? NSNumber { return value.intValue }
         if let value = self[key] as? String { return Int(value) }
         if let value = self[key] as? Double { return Int(value) }
         return nil

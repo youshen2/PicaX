@@ -32,6 +32,7 @@ struct ComicListSection: View {
     @State private var readingListRequest: ReadingListRequest?
     @State private var renderedComicCount = Self.initialRenderedComicCount
     @State private var renderSnapshot = ComicListRenderSnapshot.empty
+    @State private var tagDisplayVersion = 0
 
     private static let initialRenderedComicCount = 48
     private static let renderedComicPageSize = 48
@@ -64,12 +65,14 @@ struct ComicListSection: View {
         let usesSnapshot = snapshotIsCurrent || keepsStaleSnapshot
         let visibleComics = usesSnapshot ? snapshot.visibleComics : []
         let readingRecordsByID = usesSnapshot ? snapshot.readingRecordsByID : [:]
+        let displayTagsByID = usesSnapshot ? snapshot.displayTagsByID : [:]
         let totalVisibleCount = visibleComics.count
         let displayCount = renderedCount(for: totalVisibleCount)
         let displayedRows = makeDisplayedRows(
             from: visibleComics,
             count: displayCount,
-            readingRecordsByID: readingRecordsByID
+            readingRecordsByID: readingRecordsByID,
+            displayTagsByID: displayTagsByID
         )
         let readingListComics = readAllComics ?? (usesSnapshot ? visibleComics : [])
         let lastDisplayedComicID = displayedRows.last?.id
@@ -115,6 +118,7 @@ struct ComicListSection: View {
                         service: service,
                         hasReadingProgress: row.hasReadingProgress,
                         readingProgressText: row.readingProgressText,
+                        displayTags: row.displayTags,
                         showsFavoriteState: showsListFavoriteState,
                         showsTags: showsListTags,
                         maxVisibleTags: maxVisibleTags,
@@ -161,6 +165,9 @@ struct ComicListSection: View {
         .task(id: request.key) {
             await rebuildRenderSnapshot(for: request)
         }
+        .onReceive(NotificationCenter.default.publisher(for: .picaxNhentaiTagNamesDidChange)) { _ in
+            tagDisplayVersion &+= 1
+        }
     }
 
     private func makeSnapshotRequest() -> ComicListSnapshotRequest {
@@ -178,7 +185,8 @@ struct ComicListSection: View {
                 appliesReadLaterFilter: appliesReadLaterFilter,
                 hidesReadComicsInLists: hidesReadComicsInLists,
                 hidesReadLaterComicsInLists: hidesReadLaterComicsInLists,
-                hiddenProgressThreshold: hiddenProgressThreshold
+                hiddenProgressThreshold: hiddenProgressThreshold,
+                tagDisplayVersion: tagDisplayVersion
             ),
             comics: comics,
             readingRecordsByID: readingRecordsByID,
@@ -208,6 +216,7 @@ struct ComicListSection: View {
             guard !Task.isCancelled else { return }
             updateRenderedComicCount(oldIdentity: renderSnapshot.contentIdentity, newIdentity: snapshot.contentIdentity)
             renderSnapshot = snapshot
+            service.warmNhentaiTagNameCache(for: snapshot.visibleComics)
         } catch is CancellationError {
             return
         } catch {
@@ -218,7 +227,8 @@ struct ComicListSection: View {
     private func makeDisplayedRows(
         from visibleComics: [ComicListItem],
         count: Int,
-        readingRecordsByID: [String: ReadingHistoryRecord]
+        readingRecordsByID: [String: ReadingHistoryRecord],
+        displayTagsByID: [String: [String]]
     ) -> [ComicListDisplayedRow] {
         let displayCount = min(max(count, 0), visibleComics.count)
         var rows: [ComicListDisplayedRow] = []
@@ -230,7 +240,8 @@ struct ComicListSection: View {
                 ComicListDisplayedRow(
                     item: comic,
                     hasReadingProgress: readingRecord != nil,
-                    readingProgressText: showsListReadingProgress ? readingRecord?.progressText : nil
+                    readingProgressText: showsListReadingProgress ? readingRecord?.progressText : nil,
+                    displayTags: displayTagsByID[comic.readingHistoryID]
                 )
             )
         }
@@ -446,6 +457,7 @@ struct ComicListActionLink: View {
     let service: ComicContentService
     var hasReadingProgress = false
     var readingProgressText: String?
+    var displayTags: [String]?
     var showsFavoriteState = true
     var showsTags = true
     var maxVisibleTags = 5
@@ -465,6 +477,7 @@ struct ComicListActionLink: View {
             ComicListRow(
                 item: item,
                 readingProgressText: readingProgressText,
+                displayTags: displayTags,
                 showsFavoriteState: showsFavoriteState,
                 showsTags: showsTags,
                 maxVisibleTags: maxVisibleTags,
@@ -602,6 +615,7 @@ struct ComicListReaderRequest: Identifiable, Hashable {
 struct ComicListRow: View, Equatable {
     let item: ComicListItem
     var readingProgressText: String?
+    var displayTags: [String]?
     var showsFavoriteState = true
     var showsTags = true
     var maxVisibleTags = 5
@@ -610,6 +624,7 @@ struct ComicListRow: View, Equatable {
     static func == (lhs: ComicListRow, rhs: ComicListRow) -> Bool {
         lhs.item == rhs.item
             && lhs.readingProgressText == rhs.readingProgressText
+            && lhs.displayTags == rhs.displayTags
             && lhs.showsFavoriteState == rhs.showsFavoriteState
             && lhs.showsTags == rhs.showsTags
             && lhs.maxVisibleTags == rhs.maxVisibleTags
@@ -661,8 +676,8 @@ struct ComicListRow: View, Equatable {
                     }
                 }
 
-                if showsTags, !item.tags.isEmpty {
-                    ComicListTagRow(tags: item.tags, limit: visibleTagLimit, accentColor: item.accentColor)
+                if showsTags, !visibleTags.isEmpty {
+                    ComicListTagRow(tags: visibleTags, limit: visibleTagLimit, accentColor: item.accentColor)
                 }
             }
             .frame(maxWidth: .infinity, minHeight: 112, alignment: .topLeading)
@@ -674,6 +689,10 @@ struct ComicListRow: View, Equatable {
 
     private var visibleTagLimit: Int {
         min(max(maxVisibleTags, 1), 10)
+    }
+
+    private var visibleTags: [String] {
+        displayTags ?? item.tags
     }
 }
 
@@ -692,6 +711,7 @@ private struct ComicListSnapshotKey: Hashable, Sendable {
     let hidesReadComicsInLists: Bool
     let hidesReadLaterComicsInLists: Bool
     let hiddenProgressThreshold: Int
+    let tagDisplayVersion: Int
 
     static let empty = ComicListSnapshotKey(
         comicsCount: 0,
@@ -705,7 +725,8 @@ private struct ComicListSnapshotKey: Hashable, Sendable {
         appliesReadLaterFilter: false,
         hidesReadComicsInLists: false,
         hidesReadLaterComicsInLists: false,
-        hiddenProgressThreshold: 0
+        hiddenProgressThreshold: 0,
+        tagDisplayVersion: 0
     )
 
     init(
@@ -718,7 +739,8 @@ private struct ComicListSnapshotKey: Hashable, Sendable {
         appliesReadLaterFilter: Bool,
         hidesReadComicsInLists: Bool,
         hidesReadLaterComicsInLists: Bool,
-        hiddenProgressThreshold: Int
+        hiddenProgressThreshold: Int,
+        tagDisplayVersion: Int
     ) {
         let filtersReadProgress = appliesReadProgressFilter && hidesReadComicsInLists
         let filtersReadLater = appliesReadLaterFilter && hidesReadLaterComicsInLists
@@ -734,6 +756,7 @@ private struct ComicListSnapshotKey: Hashable, Sendable {
         self.hidesReadComicsInLists = filtersReadProgress
         self.hidesReadLaterComicsInLists = filtersReadLater
         self.hiddenProgressThreshold = filtersReadProgress ? hiddenProgressThreshold : 0
+        self.tagDisplayVersion = tagDisplayVersion
     }
 
     private init(
@@ -748,7 +771,8 @@ private struct ComicListSnapshotKey: Hashable, Sendable {
         appliesReadLaterFilter: Bool,
         hidesReadComicsInLists: Bool,
         hidesReadLaterComicsInLists: Bool,
-        hiddenProgressThreshold: Int
+        hiddenProgressThreshold: Int,
+        tagDisplayVersion: Int
     ) {
         self.comicsCount = comicsCount
         self.comicsHash = comicsHash
@@ -762,10 +786,11 @@ private struct ComicListSnapshotKey: Hashable, Sendable {
         self.hidesReadComicsInLists = hidesReadComicsInLists
         self.hidesReadLaterComicsInLists = hidesReadLaterComicsInLists
         self.hiddenProgressThreshold = hiddenProgressThreshold
+        self.tagDisplayVersion = tagDisplayVersion
     }
 
     nonisolated func canRetainDisplayedRows(whileRebuilding requestKey: ComicListSnapshotKey) -> Bool {
-        guard comicsCount > 0, requestKey.comicsCount > comicsCount else { return false }
+        guard comicsCount > 0 else { return false }
         guard appliesBlocking == requestKey.appliesBlocking,
               appliesReadProgressFilter == requestKey.appliesReadProgressFilter,
               appliesReadLaterFilter == requestKey.appliesReadLaterFilter,
@@ -788,7 +813,12 @@ private struct ComicListSnapshotKey: Hashable, Sendable {
             return false
         }
 
-        return requestKey.sourcePrefix.starts(with: sourcePrefix)
+        let keepsAppendedContent = requestKey.comicsCount > comicsCount
+            && requestKey.sourcePrefix.starts(with: sourcePrefix)
+        let keepsSameContent = requestKey.comicsCount == comicsCount
+            && requestKey.comicsHash == comicsHash
+            && requestKey.sourcePrefix == sourcePrefix
+        return keepsAppendedContent || keepsSameContent
     }
 
     private nonisolated static func comicsHash(_ comics: [ComicListItem]) -> Int {
@@ -871,6 +901,30 @@ private struct ComicListSourceItemIdentity: Hashable, Sendable {
         likesCount = item.likesCount
         favoriteDate = item.favoriteDate
     }
+
+    nonisolated static func == (lhs: ComicListSourceItemIdentity, rhs: ComicListSourceItemIdentity) -> Bool {
+        lhs.platform.rawValue == rhs.platform.rawValue
+            && lhs.id == rhs.id
+            && lhs.title == rhs.title
+            && lhs.subtitle == rhs.subtitle
+            && lhs.coverURLString == rhs.coverURLString
+            && lhs.tags == rhs.tags
+            && lhs.pageCount == rhs.pageCount
+            && lhs.likesCount == rhs.likesCount
+            && lhs.favoriteDate == rhs.favoriteDate
+    }
+
+    nonisolated func hash(into hasher: inout Hasher) {
+        hasher.combine(platform.rawValue)
+        hasher.combine(id)
+        hasher.combine(title)
+        hasher.combine(subtitle)
+        hasher.combine(coverURLString)
+        hasher.combine(tags)
+        hasher.combine(pageCount)
+        hasher.combine(likesCount)
+        hasher.combine(favoriteDate)
+    }
 }
 
 private struct ComicListSnapshotRequest: Sendable {
@@ -891,12 +945,14 @@ private struct ComicListRenderSnapshot: Sendable {
     let key: ComicListSnapshotKey
     let visibleComics: [ComicListItem]
     let readingRecordsByID: [String: ReadingHistoryRecord]
+    let displayTagsByID: [String: [String]]
     let contentIdentity: ComicListContentIdentity
 
     static let empty = ComicListRenderSnapshot(
         key: .empty,
         visibleComics: [],
         readingRecordsByID: [:],
+        displayTagsByID: [:],
         contentIdentity: .empty
     )
 
@@ -936,6 +992,7 @@ private struct ComicListRenderSnapshot: Sendable {
             key: request.key,
             visibleComics: visibleComics,
             readingRecordsByID: request.readingRecordsByID,
+            displayTagsByID: ComicListTagDisplayResolver.displayTagsByID(for: visibleComics),
             contentIdentity: makeContentIdentity(for: visibleComics)
         )
     }
@@ -984,9 +1041,100 @@ private struct ComicListDisplayedRow: Identifiable {
     let item: ComicListItem
     let hasReadingProgress: Bool
     let readingProgressText: String?
+    let displayTags: [String]?
 
     var id: String {
         item.readingHistoryID
+    }
+}
+
+private enum ComicListTagDisplayResolver {
+    nonisolated static func displayTagsByID(for comics: [ComicListItem]) -> [String: [String]] {
+        let nhentaiCache = PicaXSQLiteStore.loadNhentaiTagNames(ids: nhentaiTagIDs(in: comics))
+        var result: [String: [String]] = [:]
+
+        for (index, comic) in comics.enumerated() {
+            if index.isMultiple(of: 64), Task.isCancelled {
+                break
+            }
+            let displayTags = displayTags(for: comic, nhentaiCache: nhentaiCache)
+            if displayTags != comic.tags {
+                result[comic.readingHistoryID] = displayTags
+            }
+        }
+        return result
+    }
+
+    private nonisolated static func displayTags(
+        for comic: ComicListItem,
+        nhentaiCache: [Int: StoredNhentaiTagName]
+    ) -> [String] {
+        let tags = comic.tags.compactMap { tag in
+            displayTitle(for: tag, platform: comic.platform, nhentaiCache: nhentaiCache)
+        }
+        guard tags.isEmpty,
+              comic.platform == .nhentai,
+              comic.tags.contains(where: { nhentaiTagID(from: $0) != nil }) else {
+            return tags
+        }
+        return ["正在解析标签"]
+    }
+
+    private nonisolated static func nhentaiTagIDs(in comics: [ComicListItem]) -> [Int] {
+        var ids: [Int] = []
+        for comic in comics where comic.platform == .nhentai {
+            ids.append(contentsOf: comic.tags.compactMap(nhentaiTagID(from:)))
+        }
+        return ids
+    }
+
+    private nonisolated static func displayTitle(
+        for tag: String,
+        platform: ComicPlatform,
+        nhentaiCache: [Int: StoredNhentaiTagName]
+    ) -> String? {
+        switch platform {
+        case .nhentai:
+            if let id = nhentaiTagID(from: tag) {
+                guard let record = nhentaiCache[id] else { return nil }
+                return NhentaiTagSuggestionService.translatedTitle(forTagName: record.name, group: record.group)
+            }
+            if let scopedTag = scopedTag(from: tag) {
+                return NhentaiTagSuggestionService.translatedTitle(
+                    forTagName: scopedTag.value,
+                    group: scopedTag.namespace
+                )
+            }
+            return NhentaiTagSuggestionService.translatedTitle(forTagName: tag)
+        case .eHentai:
+            if let scopedTag = scopedTag(from: tag) {
+                return EhTagTranslationService.translatedTagTitle(
+                    title: scopedTag.value,
+                    query: tag,
+                    namespace: scopedTag.namespace
+                )
+            }
+            return EhTagTranslationService.translatedAnyTagTitle(tag)
+        case .hitomi:
+            return EhTagTranslationService.translatedAnyTagTitle(tag)
+        case .picacg, .jmComic, .htManga:
+            return tag
+        }
+    }
+
+    private nonisolated static func nhentaiTagID(from tag: String) -> Int? {
+        let trimmed = tag.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.lowercased().hasPrefix("tag:") else { return nil }
+        return Int(trimmed.dropFirst("tag:".count))
+    }
+
+    private nonisolated static func scopedTag(from tag: String) -> (namespace: String, value: String)? {
+        let trimmed = tag.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let separatorIndex = trimmed.firstIndex(of: ":") else { return nil }
+        let namespace = String(trimmed[..<separatorIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let value = String(trimmed[trimmed.index(after: separatorIndex)...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !namespace.isEmpty, !value.isEmpty else { return nil }
+        return (namespace, value)
     }
 }
 
