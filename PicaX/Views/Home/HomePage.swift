@@ -136,6 +136,23 @@ struct HomePage: View {
         }
         .picaxInsetGroupedListStyle()
         .background(AppColor.groupedBackground)
+        .picaxSensitiveImageContent(containsVisibleCoverContent)
+    }
+
+    private var containsVisibleCoverContent: Bool {
+        if showsHistorySection, !readingHistory.latest(limit: historyHomeLimit).isEmpty {
+            return true
+        }
+        if showsReadLaterSection, !readLater.latest(limit: readLaterHomeLimit).isEmpty {
+            return true
+        }
+        if showsReadingDurationSection, !readingDuration.latest(limit: readingDurationHomeLimit).isEmpty {
+            return true
+        }
+        if showsDownloadSection, !downloadService.latest(limit: downloadHomeLimit).isEmpty {
+            return true
+        }
+        return false
     }
 
     private var homeSections: [HomeSectionKind] {

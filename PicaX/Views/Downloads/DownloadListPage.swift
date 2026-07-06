@@ -29,6 +29,7 @@ struct DownloadListPage: View {
         Group {
             downloadList
         }
+        .picaxSensitiveImageContent(!displayRecords.isEmpty)
         .navigationTitle("下载")
         .toolbar {
             ToolbarItemGroup(placement: .picaxTopBarTrailing) {
@@ -452,6 +453,7 @@ private struct DownloadQueueSheet: View {
             }
             .picaxInsetGroupedListStyle()
             .background(AppColor.groupedBackground)
+            .picaxSensitiveImageContent(!downloadService.tasks.isEmpty)
             .navigationTitle("下载队列")
             .picaxNavigationBarTitleDisplayModeInline()
             .toolbar {

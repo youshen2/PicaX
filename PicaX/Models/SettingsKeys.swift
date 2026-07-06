@@ -86,6 +86,7 @@ enum AppBehaviorSettingsKey {
     static let checksClipboardForComicLinks = "settings.appBehavior.checksClipboardForComicLinks"
     static let checksClipboardOnlyOnLaunch = "settings.appBehavior.checksClipboardOnlyOnLaunch"
     static let checksUpdatesOnLaunch = "settings.appBehavior.checksUpdatesOnLaunch"
+    static let marksImageContentAsSensitive = "settings.appBehavior.marksImageContentAsSensitive"
 }
 
 enum WatchConnectivitySettingsKey {

@@ -541,6 +541,7 @@ private struct FavoriteDownloadAllSheet: View {
             .background(AppColor.groupedBackground)
             .navigationTitle("下载收藏")
             .picaxNavigationBarTitleDisplayModeInline()
+            .picaxSensitiveImageContent(containsCoverContent)
             .toolbar {
                 ToolbarItem(placement: .picaxTopBarTrailing) {
                     Button {
@@ -569,6 +570,13 @@ private struct FavoriteDownloadAllSheet: View {
                 await loadFavoritesIfNeeded()
             }
         }
+    }
+
+    private var containsCoverContent: Bool {
+        if case .loaded(let items) = loadState {
+            return !items.isEmpty
+        }
+        return false
     }
 
     @ViewBuilder

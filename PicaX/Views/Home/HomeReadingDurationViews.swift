@@ -181,6 +181,7 @@ private struct ReadingDurationListPage: View {
         }
         .picaxInsetGroupedListStyle()
         .background(AppColor.groupedBackground)
+        .picaxSensitiveImageContent(!readingDuration.records.isEmpty)
         .navigationTitle("阅读时长")
     }
 
@@ -240,6 +241,7 @@ struct ReadingDurationDetailPage: View {
         }
         .picaxInsetGroupedListStyle()
         .background(AppColor.groupedBackground)
+        .picaxSensitiveImageContent(record.item.coverURL != nil)
         .navigationTitle("阅读时长")
         .picaxNavigationBarTitleDisplayModeInline()
     }

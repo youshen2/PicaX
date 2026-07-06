@@ -134,6 +134,7 @@ struct ReadLaterListPage: View {
         }
         .picaxInsetGroupedListStyle()
         .background(AppColor.groupedBackground)
+        .picaxSensitiveImageContent(!readLater.records.isEmpty)
         .navigationTitle("稍后再读")
         .navigationDestination(item: $readingListRequest) { request in
             ReadingListReaderPage(request: request, service: service)

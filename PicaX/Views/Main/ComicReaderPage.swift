@@ -152,6 +152,7 @@ struct ComicReaderPage: View {
             }
         }
         .background(Color.black)
+        .picaxSensitiveImageContent(containsChapterImages)
         .ignoresSafeArea(.container)
         .navigationTitle(viewModel.navigationTitle)
         .picaxNavigationBarTitleDisplayModeInline()
@@ -353,6 +354,13 @@ struct ComicReaderPage: View {
 
     private var canMoveToNextBook: Bool {
         listContext?.canMoveNext ?? false
+    }
+
+    private var containsChapterImages: Bool {
+        if case .loaded(let images) = viewModel.state {
+            return !images.isEmpty
+        }
+        return false
     }
 
     private var hasReadingList: Bool {

@@ -283,7 +283,7 @@ private enum SettingsSearchItem: CaseIterable {
         case .appDisplay:
             ["深色", "浅色"]
         case .appBehavior:
-            ["剪贴板", "启动", "更新"]
+            ["剪贴板", "启动", "更新", "敏感", "隐私", "截图", "录屏", "封面"]
         case .watchConnectivity:
             ["Watch", "Apple Watch", "手表", "互联", "同步", "阅读记录", "本地收藏", "稍后再读"]
         case .history:
@@ -329,6 +329,7 @@ private struct AppBehaviorSettingsView: View {
     @AppStorage(AppBehaviorSettingsKey.checksClipboardForComicLinks) private var checksClipboardForComicLinks = false
     @AppStorage(AppBehaviorSettingsKey.checksClipboardOnlyOnLaunch) private var checksClipboardOnlyOnLaunch = false
     @AppStorage(AppBehaviorSettingsKey.checksUpdatesOnLaunch) private var checksUpdatesOnLaunch = true
+    @AppStorage(AppBehaviorSettingsKey.marksImageContentAsSensitive) private var marksImageContentAsSensitive = false
 
     var body: some View {
         List {
@@ -340,6 +341,12 @@ private struct AppBehaviorSettingsView: View {
                 Toggle("启动时检查更新", isOn: $checksUpdatesOnLaunch)
             } footer: {
                 Text("剪贴板检查会提示打开支持链接或 JM 车牌号。启动更新检查只会在发现新版本时提示，检查失败不会打断启动。")
+            }
+
+            Section {
+                Toggle("图片页面标记为敏感内容", isOn: $marksImageContentAsSensitive)
+            } footer: {
+                Text("开启后，包含漫画封面或章节图片的页面会标记为敏感内容，被标记为敏感的内容会在进入后台后自动以占位符的方式和谐；没有这些图片的页面不会标记。")
             }
         }
         .picaxInsetGroupedListStyle()

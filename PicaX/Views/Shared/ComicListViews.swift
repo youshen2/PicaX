@@ -162,6 +162,7 @@ struct ComicListSection: View {
         .transaction { transaction in
             transaction.animation = nil
         }
+        .picaxSensitiveImageContent(!displayedRows.isEmpty)
         .task(id: request.key) {
             await rebuildRenderSnapshot(for: request)
         }
@@ -1234,6 +1235,7 @@ struct ComicCoverView: View {
         }
         .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .clipped()
+        .picaxSensitiveImageContent(url != nil)
     }
 }
 

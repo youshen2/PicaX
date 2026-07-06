@@ -48,6 +48,7 @@ struct ReaderImageView: View {
         }
         .frame(maxWidth: .infinity)
         .background(Color.black)
+        .picaxSensitiveImageContent(image.url != nil)
         .task(id: "\(image.urlString)-\(targetPixelWidth ?? 0)-\(retryID)-\(isLoadAllowed)") {
             guard isLoadAllowed else {
                 loadCachedAspectRatio()

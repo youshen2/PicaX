@@ -80,6 +80,7 @@ struct DownloadedComicDetailPage: View {
         }
         .picaxInsetGroupedListStyle()
         .background(AppColor.groupedBackground)
+        .picaxSensitiveImageContent(localCoverURL != nil)
         .navigationTitle("本地详情")
         .picaxNavigationBarTitleDisplayModeInline()
         .sheet(item: $commentSheet) { context in

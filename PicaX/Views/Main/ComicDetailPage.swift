@@ -238,6 +238,7 @@ private struct ComicDetailContent: View {
                 await onRefresh()
             }
         }
+        .picaxSensitiveImageContent(detail.item.coverURL != nil)
         .navigationDestination(item: $readerTarget) { target in
             ComicReaderPage(
                 detail: detail,
@@ -1531,6 +1532,7 @@ private struct ZoomableCoverPreview: View {
                     }
                     .padding()
             }
+            .picaxSensitiveImageContent(url != nil)
             .toolbar {
                 ToolbarItem(placement: .picaxTopBarTrailing) {
                     Button {

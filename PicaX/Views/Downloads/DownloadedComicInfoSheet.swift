@@ -55,6 +55,7 @@ struct DownloadedComicInfoSheet: View {
             }
             .navigationTitle("已下载")
             .picaxNavigationBarTitleDisplayModeInline()
+            .picaxSensitiveImageContent(localCoverURL != nil)
             .toolbar {
                 ToolbarItem(placement: .picaxTopBarTrailing) {
                     Button {

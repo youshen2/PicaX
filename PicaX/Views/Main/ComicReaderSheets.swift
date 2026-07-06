@@ -290,6 +290,7 @@ struct ReaderChapterPickerSheet: View {
                     }
                 }
         }
+        .picaxSensitiveImageContent(selectedTab == .readingList && listContext?.entries.isEmpty == false)
     }
 
     @ViewBuilder

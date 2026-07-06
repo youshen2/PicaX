@@ -128,6 +128,7 @@ private struct ReadingHistoryListPage: View {
         }
         .picaxInsetGroupedListStyle()
         .background(AppColor.groupedBackground)
+        .picaxSensitiveImageContent(!readingHistory.records.isEmpty)
         .navigationTitle("历史记录")
     }
 }
