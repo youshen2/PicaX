@@ -577,21 +577,40 @@ final class DownloadService: ObservableObject {
             }
         }
 
-        while !Task.isCancelled {
-            let taskIDs = Array(tasks
-                .filter { $0.status.canRun }
-                .prefix(maxConcurrentDownloads)
-                .map(\.id))
-            guard !taskIDs.isEmpty else { return }
+        await withTaskGroup(of: String.self) { group in
+            var activeTaskIDs = Set<String>()
 
-            await withTaskGroup(of: Void.self) { group in
-                for taskID in taskIDs {
+            while activeTaskIDs.count < maxConcurrentDownloads,
+                  let taskID = nextQueuedDownloadTaskID(excluding: activeTaskIDs) {
+                activeTaskIDs.insert(taskID)
+                group.addTask { @MainActor [weak self] in
+                    await self?.runTask(id: taskID)
+                    return taskID
+                }
+            }
+
+            while let completedTaskID = await group.next() {
+                activeTaskIDs.remove(completedTaskID)
+
+                if Task.isCancelled {
+                    group.cancelAll()
+                    continue
+                }
+
+                while activeTaskIDs.count < maxConcurrentDownloads,
+                      let taskID = nextQueuedDownloadTaskID(excluding: activeTaskIDs) {
+                    activeTaskIDs.insert(taskID)
                     group.addTask { @MainActor [weak self] in
                         await self?.runTask(id: taskID)
+                        return taskID
                     }
                 }
             }
         }
+    }
+
+    private func nextQueuedDownloadTaskID(excluding activeTaskIDs: Set<String>) -> String? {
+        tasks.first { $0.status.canRun && !activeTaskIDs.contains($0.id) }?.id
     }
 
     private var maxConcurrentDownloads: Int {
