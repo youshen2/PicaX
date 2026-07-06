@@ -476,10 +476,33 @@ struct StoredNhentaiTagName: Codable, Hashable, Sendable {
     let name: String
     let updatedAt: Date
 
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case group
+        case name
+        case updatedAt
+    }
+
     nonisolated init(id: Int, group: String, name: String, updatedAt: Date = Date()) {
         self.id = id
         self.group = group
         self.name = name
         self.updatedAt = updatedAt
+    }
+
+    nonisolated init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(Int.self, forKey: .id)
+        group = try container.decode(String.self, forKey: .group)
+        name = try container.decode(String.self, forKey: .name)
+        updatedAt = try container.decode(Date.self, forKey: .updatedAt)
+    }
+
+    nonisolated func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(group, forKey: .group)
+        try container.encode(name, forKey: .name)
+        try container.encode(updatedAt, forKey: .updatedAt)
     }
 }

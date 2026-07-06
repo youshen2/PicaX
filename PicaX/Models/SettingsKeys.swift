@@ -163,12 +163,19 @@ enum DownloadSettingsKey {
 }
 
 enum SearchSettingsKey {
-    static let focusesSearchFieldOnOpen = "settings.search.focusesSearchFieldOnOpen"
-    static let enablesSearchSuggestions = "settings.search.enablesSearchSuggestions"
-    static let suggestionSelectionBehavior = "settings.search.suggestionSelectionBehavior"
-    static let defaultTargetMode = "settings.search.defaultTargetMode"
-    static let defaultPlatform = "settings.search.defaultPlatform"
-    static let defaultAggregatePlatforms = "settings.search.defaultAggregatePlatforms"
+    nonisolated static let focusesSearchFieldOnOpen = "settings.search.focusesSearchFieldOnOpen"
+    nonisolated static let enablesSearchSuggestions = "settings.search.enablesSearchSuggestions"
+    nonisolated static let translatesChineseSearchTerms = "settings.search.translatesChineseSearchTerms"
+    nonisolated static let suggestionSelectionBehavior = "settings.search.suggestionSelectionBehavior"
+    nonisolated static let defaultTargetMode = "settings.search.defaultTargetMode"
+    nonisolated static let defaultPlatform = "settings.search.defaultPlatform"
+    nonisolated static let defaultAggregatePlatforms = "settings.search.defaultAggregatePlatforms"
+
+    nonisolated static func translatesChineseSearchTerms(defaults: UserDefaults = .standard) -> Bool {
+        defaults.object(forKey: translatesChineseSearchTerms) == nil
+            ? true
+            : defaults.bool(forKey: translatesChineseSearchTerms)
+    }
 }
 
 enum SearchDefaultTargetMode: String, CaseIterable, Identifiable {

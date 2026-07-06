@@ -275,7 +275,7 @@ private enum SettingsSearchItem: CaseIterable {
         case .blockingKeywords:
             ["屏蔽", "黑名单", "关键词", "标签"]
         case .search:
-            ["默认搜索源", "搜索历史", "聚合搜索", "搜索补全", "标签建议", "填入", "直接搜索"]
+            ["默认搜索源", "搜索历史", "聚合搜索", "搜索补全", "标签建议", "中文", "英文", "翻译", "填入", "直接搜索"]
         case .comicList:
             ["已读隐藏", "稍后再读", "阅读进度", "收藏状态", "标签"]
         case .downloads:
@@ -1437,6 +1437,7 @@ private struct SearchSettingsView: View {
     @EnvironmentObject private var searchHistory: SearchHistoryService
     @AppStorage(SearchSettingsKey.focusesSearchFieldOnOpen) private var focusesSearchFieldOnOpen = false
     @AppStorage(SearchSettingsKey.enablesSearchSuggestions) private var enablesSearchSuggestions = true
+    @AppStorage(SearchSettingsKey.translatesChineseSearchTerms) private var translatesChineseSearchTerms = true
     @AppStorage(SearchSettingsKey.suggestionSelectionBehavior) private var suggestionSelectionBehavior = SearchSuggestionSelectionBehavior.fill.rawValue
     @AppStorage(SearchSettingsKey.defaultTargetMode) private var defaultTargetMode = SearchDefaultTargetMode.platform.rawValue
     @AppStorage(SearchSettingsKey.defaultPlatform) private var defaultSearchPlatformID = ComicPlatform.picacg.rawValue
@@ -1498,6 +1499,12 @@ private struct SearchSettingsView: View {
                 }
             } footer: {
                 Text("开启后，E-Hentai 和 NHentai 搜索会根据本地标签数据提供补全建议；填入模式会在关键词末尾自动加空格。")
+            }
+
+            Section {
+                Toggle("中文标签词自动转英文", isOn: $translatesChineseSearchTerms)
+            } footer: {
+                Text("开启后，搜索时会为 E-Hentai 和 NHentai 把能匹配本地标签字段的中文词转为英文词；搜索框和搜索历史仍保留原文，聚合搜索里的其他平台不受影响。")
             }
 
             Section {

@@ -336,9 +336,9 @@ struct ComicContentService {
             }
             return try await searchPicacg(keyword: tag.query, page: page, account: account)
         case .nhentai:
-            return try await searchNhentai(query: tag.query, page: page)
+            return try await searchNhentai(query: searchKeywordByTranslatingChineseTerms(tag.query, for: .nhentai), page: page)
         case .eHentai:
-            return try await searchEhentai(query: tag.query, page: page)
+            return try await searchEhentai(query: searchKeywordByTranslatingChineseTerms(tag.query, for: .eHentai), page: page)
         case .htManga:
             return try await searchHtManga(tag: tag, page: page)
         case .jmComic:
@@ -363,9 +363,10 @@ struct ComicContentService {
         case .picacg:
             return try await searchPicacg(keyword: trimmed, page: page, account: account, sort: resolvedOptions.sortValue(for: platform))
         case .nhentai:
-            return try await searchNhentai(query: resolvedOptions.keyword(trimmed, for: platform), page: page, sort: resolvedOptions.sortValue(for: platform))
+            let translatedKeyword = searchKeywordByTranslatingChineseTerms(trimmed, for: platform)
+            return try await searchNhentai(query: resolvedOptions.keyword(translatedKeyword, for: platform), page: page, sort: resolvedOptions.sortValue(for: platform))
         case .eHentai:
-            return try await searchEhentai(query: trimmed, page: page)
+            return try await searchEhentai(query: searchKeywordByTranslatingChineseTerms(trimmed, for: platform), page: page)
         case .htManga:
             let tag = ComicTagReference(title: trimmed, query: trimmed, platform: platform, urlString: nil)
             return try await searchHtManga(tag: tag, page: page)
@@ -378,6 +379,18 @@ struct ComicContentService {
         case .hitomi:
             let tag = ComicTagReference(title: trimmed, query: trimmed, platform: platform, urlString: nil)
             return try await searchHitomi(tag: tag, page: page)
+        }
+    }
+
+    private func searchKeywordByTranslatingChineseTerms(_ keyword: String, for platform: ComicPlatform) -> String {
+        guard SearchSettingsKey.translatesChineseSearchTerms() else { return keyword }
+        switch platform {
+        case .nhentai:
+            return NhentaiTagSuggestionService.searchQueryByTranslatingChineseTerms(keyword)
+        case .eHentai:
+            return EhTagTranslationService.searchQueryByTranslatingChineseTerms(keyword)
+        case .picacg, .htManga, .jmComic, .hitomi:
+            return keyword
         }
     }
 

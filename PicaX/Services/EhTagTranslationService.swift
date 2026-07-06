@@ -1,6 +1,6 @@
 import Foundation
 
-struct EhTagSuggestion: Identifiable, Hashable {
+struct EhTagSuggestion: Identifiable, Hashable, Sendable {
     let namespace: String
     let namespaceTitle: String
     let tag: String
@@ -9,7 +9,7 @@ struct EhTagSuggestion: Identifiable, Hashable {
     fileprivate let normalizedLastTagWord: String
     fileprivate let normalizedTranslatedTitle: String
 
-    init(namespace: String, namespaceTitle: String, tag: String, translatedTitle: String) {
+    nonisolated init(namespace: String, namespaceTitle: String, tag: String, translatedTitle: String) {
         let normalizedTag = EhTagTranslationService.normalizedTag(tag)
         self.namespace = namespace
         self.namespaceTitle = namespaceTitle
@@ -33,7 +33,7 @@ struct EhTagSuggestion: Identifiable, Hashable {
 }
 
 enum EhTagTranslationService {
-    private static let fallbackRows = [
+    nonisolated private static let fallbackRows = [
         "language": "语言",
         "artist": "画师",
         "male": "男性",
@@ -48,8 +48,8 @@ enum EhTagTranslationService {
         "uploader": "上传者"
     ]
 
-    private static let translations = loadTranslations()
-    private static let suggestionNamespaces = [
+    nonisolated private static let translations = loadTranslations()
+    nonisolated private static let suggestionNamespaces = [
         "female",
         "male",
         "parody",
@@ -61,7 +61,7 @@ enum EhTagTranslationService {
         "group",
         "cosplayer"
     ]
-    private static let categoryNamespaces = [
+    nonisolated private static let categoryNamespaces = [
         "male",
         "female",
         "parody",
@@ -72,10 +72,13 @@ enum EhTagTranslationService {
         "cosplayer",
         "other"
     ]
-    private static let suggestionIndex = buildSuggestionIndex(namespaces: suggestionNamespaces)
-    private static let suggestionBuckets = Dictionary(grouping: suggestionIndex) {
+    nonisolated private static let suggestionIndex = buildSuggestionIndex(namespaces: suggestionNamespaces)
+    nonisolated private static let suggestionBuckets = Dictionary(grouping: suggestionIndex) {
         $0.normalizedTag.first.map(String.init) ?? ""
     }
+    nonisolated private static let searchNamespaceAliases = buildSearchNamespaceAliases()
+    nonisolated private static let exactTranslatedTagsByNamespace = buildExactTranslatedTagsByNamespace()
+    nonisolated private static let exactTranslatedSuggestionIndex = buildExactTranslatedSuggestionIndex()
 
     nonisolated static func translatedGroupTitle(_ title: String) -> String {
         let namespace = normalizedNamespace(title)
@@ -114,6 +117,12 @@ enum EhTagTranslationService {
     static func categorySuggestions(limitPerNamespace: Int = 20) -> [EhTagSuggestion] {
         categoryNamespaces.flatMap { namespace in
             suggestionIndex.lazy.filter { $0.namespace == namespace }.prefix(limitPerNamespace)
+        }
+    }
+
+    static func searchQueryByTranslatingChineseTerms(_ query: String) -> String {
+        SearchQueryTagTermTranslator.translatedQuery(query) { rawValue, rawNamespace in
+            translatedSearchTerm(rawValue, namespace: rawNamespace)
         }
     }
 
@@ -190,7 +199,7 @@ enum EhTagTranslationService {
         return (nil, normalizedTag(token))
     }
 
-    private static func buildSuggestionIndex(namespaces: [String]) -> [EhTagSuggestion] {
+    private nonisolated static func buildSuggestionIndex(namespaces: [String]) -> [EhTagSuggestion] {
         namespaces.flatMap { namespace in
             let namespaceTitle = translatedGroupTitle(namespace)
             return (translations[namespace] ?? [:])
@@ -205,6 +214,88 @@ enum EhTagTranslationService {
                     )
                 }
         }
+    }
+
+    private nonisolated static func buildSearchNamespaceAliases() -> [String: String] {
+        var aliases: [String: String] = [:]
+        let rowNamespaces = translations["rows"].map { Array($0.keys) } ?? []
+        let namespaces = Set(suggestionNamespaces + categoryNamespaces + Array(fallbackRows.keys) + rowNamespaces)
+        for namespace in namespaces {
+            let normalized = normalizedNamespace(namespace)
+            aliases[normalized] = normalized
+        }
+        for (namespace, title) in fallbackRows {
+            aliases[normalizedTag(title)] = normalizedNamespace(namespace)
+        }
+        for (namespace, title) in translations["rows"] ?? [:] {
+            aliases[normalizedTag(title)] = normalizedNamespace(namespace)
+        }
+        return aliases
+    }
+
+    private nonisolated static func buildExactTranslatedTagsByNamespace() -> [String: [String: String]] {
+        var result: [String: [String: String]] = [:]
+        for namespace in suggestionNamespaces {
+            for (tag, translatedTitle) in translations[namespace] ?? [:] {
+                guard SearchQueryTagTermTranslator.containsTranslatedText(translatedTitle) else { continue }
+                let normalizedTitle = normalizedTag(translatedTitle)
+                guard !normalizedTitle.isEmpty else { continue }
+                if result[namespace]?[normalizedTitle] != nil { continue }
+                result[namespace, default: [:]][normalizedTitle] = tag
+            }
+        }
+        return result
+    }
+
+    private nonisolated static func buildExactTranslatedSuggestionIndex() -> [String: EhTagSuggestion] {
+        var result: [String: EhTagSuggestion] = [:]
+        for suggestion in suggestionIndex {
+            guard SearchQueryTagTermTranslator.containsTranslatedText(suggestion.translatedTitle) else { continue }
+            let normalizedTitle = normalizedTag(suggestion.translatedTitle)
+            guard !normalizedTitle.isEmpty else { continue }
+            if result[normalizedTitle] != nil { continue }
+            result[normalizedTitle] = suggestion
+        }
+        return result
+    }
+
+    private static func translatedSearchTerm(_ rawValue: String, namespace rawNamespace: String?) -> SearchQueryTagTermTranslation? {
+        let value = htmlDecoded(rawValue).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return nil }
+
+        if let namespace = normalizedSearchNamespace(rawNamespace) {
+            let normalizedValue = normalizedTag(value)
+            if SearchQueryTagTermTranslator.containsTranslatedText(value),
+               let tag = exactTranslatedTagsByNamespace[namespace]?[normalizedValue] {
+                return SearchQueryTagTermTranslation(query: "\(namespace):\(SearchQueryTagTermTranslator.quoted(value: tag))")
+            }
+            if !SearchQueryTagTermTranslator.containsTranslatedText(value),
+               let tag = normalizedEnglishTag(value, namespace: namespace) {
+                return SearchQueryTagTermTranslation(query: "\(namespace):\(SearchQueryTagTermTranslator.quoted(value: tag))")
+            }
+            return nil
+        }
+
+        guard SearchQueryTagTermTranslator.containsTranslatedText(value) else { return nil }
+        let normalizedValue = normalizedTag(value)
+        guard let suggestion = exactTranslatedSuggestionIndex[normalizedValue] else { return nil }
+        return SearchQueryTagTermTranslation(query: suggestion.query)
+    }
+
+    private static func normalizedSearchNamespace(_ rawNamespace: String?) -> String? {
+        guard let rawNamespace else { return nil }
+        let normalizedTag = normalizedTag(rawNamespace)
+        if let namespace = searchNamespaceAliases[normalizedTag] {
+            return namespace
+        }
+        let normalizedNamespace = normalizedNamespace(rawNamespace)
+        return searchNamespaceAliases[normalizedNamespace]
+    }
+
+    private static func normalizedEnglishTag(_ value: String, namespace: String) -> String? {
+        let normalized = normalizedTag(value)
+        guard translations[namespace]?[normalized] != nil else { return nil }
+        return normalized
     }
 
     private static func matches(fragment: String, suggestion: EhTagSuggestion) -> Bool {
@@ -224,7 +315,7 @@ enum EhTagTranslationService {
         return suggestionBuckets[String(Character(scalar))] ?? []
     }
 
-    private static func loadTranslations() -> [String: [String: String]] {
+    private nonisolated static func loadTranslations() -> [String: [String: String]] {
         guard let url = Bundle.main.url(forResource: "EhTagTranslations", withExtension: "json"),
               let data = try? Data(contentsOf: url),
               let value = try? JSONDecoder().decode([String: [String: String]].self, from: data) else {
@@ -242,5 +333,107 @@ enum EhTagTranslationService {
             .replacingOccurrences(of: "&gt;", with: ">")
             .replacingOccurrences(of: #"<[^>]+>"#, with: "", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+struct SearchQueryTagTermTranslation: Sendable {
+    let query: String
+}
+
+enum SearchQueryTagTermTranslator {
+    nonisolated static func translatedQuery(
+        _ query: String,
+        resolver: (String, String?) -> SearchQueryTagTermTranslation?
+    ) -> String {
+        let tokens = searchTokens(from: query)
+        guard !tokens.isEmpty else { return query }
+        return tokens.map { token in
+            translatedToken(token, resolver: resolver)
+        }.joined(separator: " ")
+    }
+
+    nonisolated static func quoted(value: String) -> String {
+        value.contains(where: \.isWhitespace) ? "\"\(value)\"" : value
+    }
+
+    nonisolated static func containsTranslatedText(_ value: String) -> Bool {
+        value.unicodeScalars.contains { !$0.isASCII }
+    }
+
+    private nonisolated static func translatedToken(
+        _ token: String,
+        resolver: (String, String?) -> SearchQueryTagTermTranslation?
+    ) -> String {
+        let (prefix, body) = leadingSearchOperator(in: token)
+        guard !body.isEmpty else { return token }
+
+        if let split = namespaceSplit(in: body) {
+            let value = unquoted(split.value)
+            if let translation = resolver(value, split.namespace) {
+                return prefix + translation.query
+            }
+            return token
+        }
+
+        let value = unquoted(body)
+        guard let translation = resolver(value, nil) else { return token }
+        return prefix + translation.query
+    }
+
+    private nonisolated static func searchTokens(from query: String) -> [String] {
+        var tokens: [String] = []
+        var current = ""
+        var isQuoted = false
+
+        for character in query {
+            if character == "\"" {
+                isQuoted.toggle()
+                current.append(character)
+            } else if character.isWhitespace, !isQuoted {
+                if !current.isEmpty {
+                    tokens.append(current)
+                    current.removeAll(keepingCapacity: true)
+                }
+            } else {
+                current.append(character)
+            }
+        }
+
+        if !current.isEmpty {
+            tokens.append(current)
+        }
+        return tokens
+    }
+
+    private nonisolated static func leadingSearchOperator(in token: String) -> (prefix: String, body: String) {
+        guard let first = token.first, first == "-" || first == "+" else {
+            return ("", token)
+        }
+        return (String(first), String(token.dropFirst()))
+    }
+
+    private nonisolated static func namespaceSplit(in token: String) -> (namespace: String, value: String)? {
+        var isQuoted = false
+        for index in token.indices {
+            let character = token[index]
+            if character == "\"" {
+                isQuoted.toggle()
+            } else if character == ":", !isQuoted {
+                let namespace = String(token[..<index]).trimmingCharacters(in: .whitespacesAndNewlines)
+                let value = String(token[token.index(after: index)...]).trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !namespace.isEmpty, !value.isEmpty else { return nil }
+                return (namespace, value)
+            }
+        }
+        return nil
+    }
+
+    private nonisolated static func unquoted(_ value: String) -> String {
+        var result = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if result.count >= 2, result.first == "\"", result.last == "\"" {
+            result.removeFirst()
+            result.removeLast()
+        }
+        return result
     }
 }

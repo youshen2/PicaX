@@ -1,6 +1,6 @@
 import Foundation
 
-struct NhentaiTagSuggestion: Identifiable, Hashable {
+struct NhentaiTagSuggestion: Identifiable, Hashable, Sendable {
     let group: String
     let groupTitle: String
     let tag: String
@@ -9,7 +9,7 @@ struct NhentaiTagSuggestion: Identifiable, Hashable {
     fileprivate let normalizedLastTagWord: String
     fileprivate let normalizedTranslatedTitle: String
 
-    init(group: String, groupTitle: String, tag: String, translatedTitle: String) {
+    nonisolated init(group: String, groupTitle: String, tag: String, translatedTitle: String) {
         let normalizedTag = NhentaiTagSuggestionService.normalizedTag(tag)
         self.group = group
         self.groupTitle = groupTitle
@@ -32,17 +32,20 @@ struct NhentaiTagSuggestion: Identifiable, Hashable {
 }
 
 enum NhentaiTagSuggestionService {
-    private static let groupOrder = ["language", "tag", "character", "parody"]
-    private static let groupTitles = [
+    nonisolated private static let groupOrder = ["language", "tag", "character", "parody"]
+    nonisolated private static let groupTitles = [
         "language": "语言",
         "tag": "标签",
         "character": "角色",
         "parody": "原作"
     ]
-    private static let suggestions = loadSuggestions()
-    private static let suggestionBuckets = Dictionary(grouping: suggestions) {
+    nonisolated private static let suggestions = loadSuggestions()
+    nonisolated private static let suggestionBuckets = Dictionary(grouping: suggestions) {
         $0.normalizedTag.first.map(String.init) ?? ""
     }
+    nonisolated private static let searchGroupAliases = buildSearchGroupAliases()
+    nonisolated private static let exactTranslatedSuggestionsByGroup = buildExactTranslatedSuggestionsByGroup()
+    nonisolated private static let exactTranslatedSuggestionIndex = buildExactTranslatedSuggestionIndex()
 
     static func suggestions(for text: String, limit: Int = 60) -> [NhentaiTagSuggestion] {
         let fragment = normalizedFragment(from: text)
@@ -63,6 +66,12 @@ enum NhentaiTagSuggestionService {
     static func categorySuggestions(limitPerGroup: Int = 50) -> [NhentaiTagSuggestion] {
         groupOrder.flatMap { group in
             suggestions.lazy.filter { $0.group == group }.prefix(limitPerGroup)
+        }
+    }
+
+    static func searchQueryByTranslatingChineseTerms(_ query: String) -> String {
+        SearchQueryTagTermTranslator.translatedQuery(query) { rawValue, rawGroup in
+            translatedSearchTerm(rawValue, group: rawGroup)
         }
     }
 
@@ -100,7 +109,7 @@ enum NhentaiTagSuggestionService {
         return normalizedTag(token)
     }
 
-    private static func loadSuggestions() -> [NhentaiTagSuggestion] {
+    private nonisolated static func loadSuggestions() -> [NhentaiTagSuggestion] {
         guard let url = Bundle.main.url(forResource: "NhentaiTagSuggestions", withExtension: "json"),
               let data = try? Data(contentsOf: url),
               let values = try? JSONDecoder().decode([String: [String]].self, from: data) else {
@@ -112,7 +121,7 @@ enum NhentaiTagSuggestionService {
         }
     }
 
-    private static func buildSuggestions(group: String, tags: [String]) -> [NhentaiTagSuggestion] {
+    private nonisolated static func buildSuggestions(group: String, tags: [String]) -> [NhentaiTagSuggestion] {
         let title = groupTitles[group] ?? group
         return tags.map { tag in
             NhentaiTagSuggestion(
@@ -124,9 +133,79 @@ enum NhentaiTagSuggestionService {
         }
     }
 
-    private static func fallbackSuggestions() -> [NhentaiTagSuggestion] {
+    private nonisolated static func fallbackSuggestions() -> [NhentaiTagSuggestion] {
         buildSuggestions(group: "language", tags: ["chinese", "japanese", "english"]) +
             buildSuggestions(group: "tag", tags: ["big breasts", "full color", "cosplay", "doujinshi", "manga"])
+    }
+
+    private nonisolated static func buildSearchGroupAliases() -> [String: String] {
+        var aliases: [String: String] = [:]
+        for group in groupOrder {
+            aliases[normalizedTag(group)] = group
+        }
+        for (group, title) in groupTitles {
+            aliases[normalizedTag(title)] = group
+        }
+        return aliases
+    }
+
+    private nonisolated static func buildExactTranslatedSuggestionsByGroup() -> [String: [String: NhentaiTagSuggestion]] {
+        var result: [String: [String: NhentaiTagSuggestion]] = [:]
+        for suggestion in suggestions {
+            guard SearchQueryTagTermTranslator.containsTranslatedText(suggestion.translatedTitle) else { continue }
+            let normalizedTitle = normalizedTag(suggestion.translatedTitle)
+            guard !normalizedTitle.isEmpty else { continue }
+            if result[suggestion.group]?[normalizedTitle] != nil { continue }
+            result[suggestion.group, default: [:]][normalizedTitle] = suggestion
+        }
+        return result
+    }
+
+    private nonisolated static func buildExactTranslatedSuggestionIndex() -> [String: NhentaiTagSuggestion] {
+        var result: [String: NhentaiTagSuggestion] = [:]
+        for suggestion in suggestions {
+            guard SearchQueryTagTermTranslator.containsTranslatedText(suggestion.translatedTitle) else { continue }
+            let normalizedTitle = normalizedTag(suggestion.translatedTitle)
+            guard !normalizedTitle.isEmpty else { continue }
+            if result[normalizedTitle] != nil { continue }
+            result[normalizedTitle] = suggestion
+        }
+        return result
+    }
+
+    private static func translatedSearchTerm(_ rawValue: String, group rawGroup: String?) -> SearchQueryTagTermTranslation? {
+        let value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return nil }
+
+        if let group = normalizedSearchGroup(rawGroup) {
+            let normalizedValue = normalizedTag(value)
+            if SearchQueryTagTermTranslator.containsTranslatedText(value),
+               let suggestion = exactTranslatedSuggestionsByGroup[group]?[normalizedValue] {
+                return SearchQueryTagTermTranslation(query: suggestion.query)
+            }
+            if !SearchQueryTagTermTranslator.containsTranslatedText(value),
+               let suggestion = englishSuggestion(value, group: group) {
+                return SearchQueryTagTermTranslation(query: suggestion.query)
+            }
+            return nil
+        }
+
+        guard SearchQueryTagTermTranslator.containsTranslatedText(value) else { return nil }
+        let normalizedValue = normalizedTag(value)
+        guard let suggestion = exactTranslatedSuggestionIndex[normalizedValue] else { return nil }
+        return SearchQueryTagTermTranslation(query: suggestion.query)
+    }
+
+    private static func normalizedSearchGroup(_ rawGroup: String?) -> String? {
+        guard let rawGroup else { return nil }
+        return searchGroupAliases[normalizedTag(rawGroup)]
+    }
+
+    private static func englishSuggestion(_ value: String, group: String) -> NhentaiTagSuggestion? {
+        let normalizedValue = normalizedTag(value)
+        return suggestions.first {
+            $0.group == group && $0.normalizedTag == normalizedValue
+        }
     }
 
     private static func matches(fragment: String, suggestion: NhentaiTagSuggestion) -> Bool {
