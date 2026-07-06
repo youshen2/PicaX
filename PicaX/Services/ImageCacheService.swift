@@ -13,7 +13,7 @@ struct ImageCacheUsage: Equatable {
 
 enum ImageCacheService {
     nonisolated static let defaultMaxDiskSizeMB = 400
-    nonisolated(unsafe) private static let lock = NSLock()
+    nonisolated private static let lock = NSLock()
     nonisolated(unsafe) private static var diskCapacityBytes = defaultMaxDiskSizeMB * 1024 * 1024
     private static let uncachedSession: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
@@ -71,6 +71,20 @@ enum ImageCacheService {
     nonisolated static func data(for url: URL, storesInCache: Bool = true) async throws -> Data {
         if let fileURL = url.picaxLocalFileURL {
             return try await localFileData(for: fileURL)
+        }
+
+        if EhentaiLazyImageResolver.isLazyImageURL(url) {
+            if storesInCache, let cachedData = await cachedImageData(for: url) {
+                return cachedData
+            }
+            let data = try await EhentaiLazyImageResolver.shared.data(for: url)
+            guard isDecodableImageData(data) else {
+                throw URLError(.cannotDecodeContentData)
+            }
+            if storesInCache {
+                await storeImageData(data, for: url)
+            }
+            return data
         }
 
         guard url.picaxSupportsURLCache else {

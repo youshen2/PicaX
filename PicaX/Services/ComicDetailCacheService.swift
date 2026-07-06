@@ -9,7 +9,7 @@ enum ComicDetailCacheService {
     nonisolated static let defaultMaxDiskSizeMB = 50
     private nonisolated static let minimumDiskSizeMB = 5
     private nonisolated static let cacheFormatVersion = 1
-    nonisolated(unsafe) private static let lock = NSLock()
+    nonisolated private static let lock = NSLock()
     nonisolated(unsafe) private static var diskCapacityBytes = defaultMaxDiskSizeMB * 1024 * 1024
 
     @MainActor

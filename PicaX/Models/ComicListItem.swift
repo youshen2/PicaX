@@ -310,7 +310,7 @@ extension URL {
 
     nonisolated var picaxSupportsURLCache: Bool {
         guard let scheme = scheme?.lowercased() else { return false }
-        return scheme == "http" || scheme == "https"
+        return scheme == "http" || scheme == "https" || scheme == "picax-ehentai-image"
     }
 }
 
