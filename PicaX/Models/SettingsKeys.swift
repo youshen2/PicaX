@@ -337,6 +337,7 @@ enum DetailCacheSettingsKey {
 
 enum ReadFilterSettingsKey {
     nonisolated static let hidesReadComicsInLists = "settings.readFilter.hidesReadComicsInLists"
+    nonisolated static let hidesReadLaterComicsInLists = "settings.readFilter.hidesReadLaterComicsInLists"
     nonisolated static let hiddenProgressThreshold = "settings.readFilter.hiddenProgressThreshold"
 }
 

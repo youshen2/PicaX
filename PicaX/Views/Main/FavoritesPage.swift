@@ -219,6 +219,7 @@ private struct FavoritesCollectionPage: View {
                     hasMore: canLoadMoreFavorites,
                     appliesBlocking: false,
                     appliesReadProgressFilter: false,
+                    appliesReadLaterFilter: false,
                     showsReadAll: true,
                     readAllTitle: source.title,
                     readAllComics: filteredComics,

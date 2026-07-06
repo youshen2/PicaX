@@ -4,7 +4,9 @@ import SwiftUI
 struct ComicListSection: View {
     @EnvironmentObject private var readingHistory: ReadingHistoryService
     @EnvironmentObject private var blockingKeywords: BlockingKeywordService
+    @EnvironmentObject private var readLater: ReadLaterService
     @AppStorage(ReadFilterSettingsKey.hidesReadComicsInLists) private var hidesReadComicsInLists = false
+    @AppStorage(ReadFilterSettingsKey.hidesReadLaterComicsInLists) private var hidesReadLaterComicsInLists = false
     @AppStorage(ReadFilterSettingsKey.hiddenProgressThreshold) private var hiddenProgressThreshold = 100
     @AppStorage(ComicListSettingsKey.showsReadingProgress) private var showsListReadingProgress = true
     @AppStorage(ComicListSettingsKey.showsFavoriteState) private var showsListFavoriteState = true
@@ -18,6 +20,7 @@ struct ComicListSection: View {
     var hasMore = false
     var appliesBlocking = true
     var appliesReadProgressFilter = true
+    var appliesReadLaterFilter = true
     var showsReadAll = false
     var readAllTitle = "阅读列表"
     var readAllComics: [ComicListItem]?
@@ -102,7 +105,7 @@ struct ComicListSection: View {
                 }
 
                 if snapshotIsCurrent, totalVisibleCount == 0, !comics.isEmpty {
-                    ContentUnavailableView("已隐藏全部结果", systemImage: "eye.slash", description: Text("当前列表内容命中了屏蔽词或阅读进度过滤，可在设置中调整。"))
+                    ContentUnavailableView("已隐藏全部结果", systemImage: "eye.slash", description: Text("当前列表内容命中了屏蔽词、阅读进度或稍后再读过滤，可在设置中调整。"))
                         .listRowBackground(Color.clear)
                 }
 
@@ -162,23 +165,30 @@ struct ComicListSection: View {
 
     private func makeSnapshotRequest() -> ComicListSnapshotRequest {
         let readingRecordsByID = readingHistory.activeReadingRecordsByID
+        let readLaterIDs = Set(readLater.records.map(\.id))
         let blockingMatcher = blockingKeywords.commonKeywordMatcher
         return ComicListSnapshotRequest(
             key: ComicListSnapshotKey(
                 comics: comics,
                 readingRecordsByID: readingRecordsByID,
+                readLaterIDs: readLaterIDs,
                 blockingMatcher: blockingMatcher,
                 appliesBlocking: appliesBlocking,
                 appliesReadProgressFilter: appliesReadProgressFilter,
+                appliesReadLaterFilter: appliesReadLaterFilter,
                 hidesReadComicsInLists: hidesReadComicsInLists,
+                hidesReadLaterComicsInLists: hidesReadLaterComicsInLists,
                 hiddenProgressThreshold: hiddenProgressThreshold
             ),
             comics: comics,
             readingRecordsByID: readingRecordsByID,
+            readLaterIDs: readLaterIDs,
             blockingMatcher: blockingMatcher,
             appliesBlocking: appliesBlocking,
             appliesReadProgressFilter: appliesReadProgressFilter,
+            appliesReadLaterFilter: appliesReadLaterFilter,
             hidesReadComicsInLists: hidesReadComicsInLists,
+            hidesReadLaterComicsInLists: hidesReadLaterComicsInLists,
             hiddenProgressThreshold: hiddenProgressThreshold
         )
     }
@@ -672,10 +682,13 @@ private struct ComicListSnapshotKey: Hashable, Sendable {
     let comicsHash: Int
     let sourcePrefix: [ComicListSourceItemIdentity]
     let readingRecordsHash: Int
+    let readLaterIDsHash: Int
     let blockingFingerprint: Int
     let appliesBlocking: Bool
     let appliesReadProgressFilter: Bool
+    let appliesReadLaterFilter: Bool
     let hidesReadComicsInLists: Bool
+    let hidesReadLaterComicsInLists: Bool
     let hiddenProgressThreshold: Int
 
     static let empty = ComicListSnapshotKey(
@@ -683,31 +696,42 @@ private struct ComicListSnapshotKey: Hashable, Sendable {
         comicsHash: 0,
         sourcePrefix: [],
         readingRecordsHash: 0,
+        readLaterIDsHash: 0,
         blockingFingerprint: 0,
         appliesBlocking: false,
         appliesReadProgressFilter: false,
+        appliesReadLaterFilter: false,
         hidesReadComicsInLists: false,
+        hidesReadLaterComicsInLists: false,
         hiddenProgressThreshold: 0
     )
 
     init(
         comics: [ComicListItem],
         readingRecordsByID: [String: ReadingHistoryRecord],
+        readLaterIDs: Set<String>,
         blockingMatcher: BlockingKeywordMatcher,
         appliesBlocking: Bool,
         appliesReadProgressFilter: Bool,
+        appliesReadLaterFilter: Bool,
         hidesReadComicsInLists: Bool,
+        hidesReadLaterComicsInLists: Bool,
         hiddenProgressThreshold: Int
     ) {
+        let filtersReadProgress = appliesReadProgressFilter && hidesReadComicsInLists
+        let filtersReadLater = appliesReadLaterFilter && hidesReadLaterComicsInLists
         comicsCount = comics.count
         comicsHash = Self.comicsHash(comics)
         sourcePrefix = Self.sourcePrefix(for: comics)
         readingRecordsHash = Self.readingRecordsHash(readingRecordsByID)
+        readLaterIDsHash = filtersReadLater ? Self.readLaterIDsHash(readLaterIDs) : 0
         blockingFingerprint = appliesBlocking ? blockingMatcher.fingerprint : 0
         self.appliesBlocking = appliesBlocking
         self.appliesReadProgressFilter = appliesReadProgressFilter
-        self.hidesReadComicsInLists = hidesReadComicsInLists
-        self.hiddenProgressThreshold = hiddenProgressThreshold
+        self.appliesReadLaterFilter = appliesReadLaterFilter
+        self.hidesReadComicsInLists = filtersReadProgress
+        self.hidesReadLaterComicsInLists = filtersReadLater
+        self.hiddenProgressThreshold = filtersReadProgress ? hiddenProgressThreshold : 0
     }
 
     private init(
@@ -715,20 +739,26 @@ private struct ComicListSnapshotKey: Hashable, Sendable {
         comicsHash: Int,
         sourcePrefix: [ComicListSourceItemIdentity],
         readingRecordsHash: Int,
+        readLaterIDsHash: Int,
         blockingFingerprint: Int,
         appliesBlocking: Bool,
         appliesReadProgressFilter: Bool,
+        appliesReadLaterFilter: Bool,
         hidesReadComicsInLists: Bool,
+        hidesReadLaterComicsInLists: Bool,
         hiddenProgressThreshold: Int
     ) {
         self.comicsCount = comicsCount
         self.comicsHash = comicsHash
         self.sourcePrefix = sourcePrefix
         self.readingRecordsHash = readingRecordsHash
+        self.readLaterIDsHash = readLaterIDsHash
         self.blockingFingerprint = blockingFingerprint
         self.appliesBlocking = appliesBlocking
         self.appliesReadProgressFilter = appliesReadProgressFilter
+        self.appliesReadLaterFilter = appliesReadLaterFilter
         self.hidesReadComicsInLists = hidesReadComicsInLists
+        self.hidesReadLaterComicsInLists = hidesReadLaterComicsInLists
         self.hiddenProgressThreshold = hiddenProgressThreshold
     }
 
@@ -736,7 +766,9 @@ private struct ComicListSnapshotKey: Hashable, Sendable {
         guard comicsCount > 0, requestKey.comicsCount > comicsCount else { return false }
         guard appliesBlocking == requestKey.appliesBlocking,
               appliesReadProgressFilter == requestKey.appliesReadProgressFilter,
+              appliesReadLaterFilter == requestKey.appliesReadLaterFilter,
               hidesReadComicsInLists == requestKey.hidesReadComicsInLists,
+              hidesReadLaterComicsInLists == requestKey.hidesReadLaterComicsInLists,
               hiddenProgressThreshold == requestKey.hiddenProgressThreshold,
               blockingFingerprint == requestKey.blockingFingerprint else {
             return false
@@ -745,6 +777,12 @@ private struct ComicListSnapshotKey: Hashable, Sendable {
         if appliesReadProgressFilter,
            hidesReadComicsInLists,
            readingRecordsHash != requestKey.readingRecordsHash {
+            return false
+        }
+
+        if appliesReadLaterFilter,
+           hidesReadLaterComicsInLists,
+           readLaterIDsHash != requestKey.readLaterIDsHash {
             return false
         }
 
@@ -798,6 +836,15 @@ private struct ComicListSnapshotKey: Hashable, Sendable {
         }
         return hasher.finalize()
     }
+
+    private nonisolated static func readLaterIDsHash(_ ids: Set<String>) -> Int {
+        var hasher = Hasher()
+        hasher.combine(ids.count)
+        for id in ids.sorted() {
+            hasher.combine(id)
+        }
+        return hasher.finalize()
+    }
 }
 
 private struct ComicListSourceItemIdentity: Hashable, Sendable {
@@ -828,10 +875,13 @@ private struct ComicListSnapshotRequest: Sendable {
     let key: ComicListSnapshotKey
     let comics: [ComicListItem]
     let readingRecordsByID: [String: ReadingHistoryRecord]
+    let readLaterIDs: Set<String>
     let blockingMatcher: BlockingKeywordMatcher
     let appliesBlocking: Bool
     let appliesReadProgressFilter: Bool
+    let appliesReadLaterFilter: Bool
     let hidesReadComicsInLists: Bool
+    let hidesReadLaterComicsInLists: Bool
     let hiddenProgressThreshold: Int
 }
 
@@ -870,6 +920,11 @@ private struct ComicListRenderSnapshot: Sendable {
                     hidesReadComicsInLists: request.hidesReadComicsInLists,
                     hiddenProgressThreshold: request.hiddenProgressThreshold
                ) {
+                continue
+            }
+            if request.appliesReadLaterFilter,
+               request.hidesReadLaterComicsInLists,
+               request.readLaterIDs.contains(comic.readingHistoryID) {
                 continue
             }
             visibleComics.append(comic)

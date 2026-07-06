@@ -277,7 +277,7 @@ private enum SettingsSearchItem: CaseIterable {
         case .search:
             ["默认搜索源", "搜索历史", "聚合搜索", "搜索补全", "标签建议", "填入", "直接搜索"]
         case .comicList:
-            ["已读隐藏", "阅读进度", "收藏状态", "标签"]
+            ["已读隐藏", "稍后再读", "阅读进度", "收藏状态", "标签"]
         case .downloads:
             ["下载评论", "同时下载", "限速", "队列", "ZIP", "导出", "文件名"]
         case .appDisplay:
@@ -1566,6 +1566,7 @@ private struct ComicListSettingsView: View {
     @AppStorage(ComicListSettingsKey.maxVisibleTags) private var maxVisibleTags = 5
     @AppStorage(ComicListSettingsKey.showsPopularity) private var showsPopularity = true
     @AppStorage(ReadFilterSettingsKey.hidesReadComicsInLists) private var hidesReadComicsInLists = false
+    @AppStorage(ReadFilterSettingsKey.hidesReadLaterComicsInLists) private var hidesReadLaterComicsInLists = false
     @AppStorage(ReadFilterSettingsKey.hiddenProgressThreshold) private var hiddenProgressThreshold = 100
 
     var body: some View {
@@ -1592,7 +1593,7 @@ private struct ComicListSettingsView: View {
                 if hidesReadComicsInLists {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
-                            Text("隐藏阈值")
+                            Text("已读隐藏阈值")
                             Spacer()
                             Text("\(hiddenProgressThreshold)%")
                                 .foregroundStyle(.secondary)
@@ -1601,10 +1602,12 @@ private struct ComicListSettingsView: View {
                         Slider(value: hiddenProgressThresholdBinding, in: 0...100, step: 5)
                     }
                 }
+
+                Toggle("隐藏稍后再读内容", isOn: $hidesReadLaterComicsInLists)
             } header: {
-                Text("已读隐藏")
+                Text("列表隐藏")
             } footer: {
-                Text("开启后，普通漫画列表会隐藏阅读进度达到阈值的漫画；收藏夹、历史记录和已下载页面不受影响。")
+                Text("已读隐藏阈值只对“隐藏已读内容”生效。开启后，普通漫画列表会隐藏符合条件的漫画；收藏夹、历史记录、已下载页面和稍后再读不受影响。")
             }
         }
         .picaxInsetGroupedListStyle()
