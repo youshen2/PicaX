@@ -295,6 +295,42 @@ private struct DownloadedImagePageResult: Sendable {
     let byteCount: Int
 }
 
+private struct DownloadChapterTitleBlocker: Sendable {
+    private let keywords: [String]
+
+    init(rawKeywords: String?) {
+        var seen = Set<String>()
+        var values: [String] = []
+        for keyword in rawKeywords?.components(separatedBy: .newlines) ?? [] {
+            let trimmed = keyword.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            let comparisonKeyword = Self.comparisonValue(trimmed)
+            guard seen.insert(comparisonKeyword).inserted else { continue }
+            values.append(comparisonKeyword)
+        }
+        keywords = values
+    }
+
+    var isEmpty: Bool {
+        keywords.isEmpty
+    }
+
+    func allows(_ chapter: ComicChapter) -> Bool {
+        blockedKeyword(for: chapter) == nil
+    }
+
+    func blockedKeyword(for chapter: ComicChapter) -> String? {
+        guard !keywords.isEmpty else { return nil }
+        let title = Self.comparisonValue(chapter.title)
+        guard !title.isEmpty else { return nil }
+        return keywords.first { title.contains($0) }
+    }
+
+    private static func comparisonValue(_ value: String) -> String {
+        value.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+    }
+}
+
 #if os(iOS)
 @MainActor
 private final class DownloadBackgroundExecutionController {
@@ -489,7 +525,8 @@ final class DownloadService: ObservableObject {
         let validIndexes = chapterIndexes
             .filter { detail.chapters.indices.contains($0) }
             .filter { !downloaded.contains($0) }
-        let uniqueIndexes = Array(Set(validIndexes)).sorted()
+        let filteredIndexes = filteredChapterIndexes(validIndexes, chapters: detail.chapters)
+        let uniqueIndexes = Array(Set(filteredIndexes)).sorted()
         guard !uniqueIndexes.isEmpty else {
             return downloaded.count >= detail.chapters.count ? .alreadyDownloaded : .emptySelection
         }
@@ -734,6 +771,18 @@ final class DownloadService: ObservableObject {
         return min(max(storedValue, 1), 20)
     }
 
+    private var downloadChapterTitleBlocker: DownloadChapterTitleBlocker {
+        DownloadChapterTitleBlocker(rawKeywords: defaults.string(forKey: DownloadSettingsKey.chapterTitleBlockingKeywords))
+    }
+
+    private func filteredChapterIndexes<S: Sequence>(_ indexes: S, chapters: [ComicChapter]) -> [Int] where S.Element == Int {
+        let blocker = downloadChapterTitleBlocker
+        return indexes.filter { index in
+            guard chapters.indices.contains(index) else { return false }
+            return blocker.allows(chapters[index])
+        }
+    }
+
     private func runTask(id: String) async {
         guard let task = tasks.first(where: { $0.id == id }) else { return }
         guard task.status.canRun else { return }
@@ -748,7 +797,21 @@ final class DownloadService: ObservableObject {
             let account = accountProvider?(task.item.platform)
             guard let preparedTask = try await prepareTaskForDownload(id: id, account: account) else { return }
             let metadata = await loadMetadata(for: preparedTask, account: account)
-            for chapterIndex in preparedTask.chapterIndexes {
+            let runnableChapterIndexes = filteredChapterIndexes(preparedTask.chapterIndexes, chapters: preparedTask.chapters)
+            guard !runnableChapterIndexes.isEmpty else {
+                tasks.removeAll { $0.id == id }
+                saveTasks()
+                return
+            }
+            if runnableChapterIndexes != preparedTask.chapterIndexes {
+                updateTask(id) { value in
+                    value.chapterIndexes = runnableChapterIndexes
+                    value.completedChapterIndexes.formIntersection(runnableChapterIndexes)
+                }
+                saveTasks()
+            }
+
+            for chapterIndex in runnableChapterIndexes {
                 try Task.checkCancellation()
                 try checkTaskCanContinue(id)
                 guard preparedTask.chapters.indices.contains(chapterIndex) else { continue }
@@ -824,7 +887,10 @@ final class DownloadService: ObservableObject {
         try checkTaskCanContinue(id)
 
         let downloaded = downloadedChapterIndexes(for: detail.item)
-        let indexes = Array(detail.chapters.indices.filter { !downloaded.contains($0) })
+        let indexes = filteredChapterIndexes(
+            detail.chapters.indices.filter { !downloaded.contains($0) },
+            chapters: detail.chapters
+        )
         guard !indexes.isEmpty else {
             tasks.removeAll { $0.id == id }
             saveTasks()

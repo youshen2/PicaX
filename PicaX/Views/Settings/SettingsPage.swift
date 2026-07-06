@@ -279,7 +279,7 @@ private enum SettingsSearchItem: CaseIterable {
         case .comicList:
             ["已读隐藏", "稍后再读", "阅读进度", "收藏状态", "标签"]
         case .downloads:
-            ["下载评论", "同时下载", "限速", "队列", "ZIP", "导出", "文件名"]
+            ["下载评论", "同时下载", "限速", "队列", "ZIP", "导出", "文件名", "章节屏蔽", "章节名"]
         case .appDisplay:
             ["深色", "浅色"]
         case .appBehavior:
@@ -606,6 +606,7 @@ private struct DownloadSettingsView: View {
     @AppStorage(DownloadSettingsKey.imageRetryCount) private var imageRetryCount = 2
     @AppStorage(DownloadSettingsKey.concurrentDownloadCount) private var concurrentDownloadCount = 1
     @AppStorage(DownloadSettingsKey.concurrentImageDownloadCount) private var concurrentImageDownloadCount = 3
+    @AppStorage(DownloadSettingsKey.chapterTitleBlockingKeywords) private var chapterTitleBlockingKeywords = ""
     @AppStorage(DownloadSettingsKey.speedLimitEnabled) private var speedLimitEnabled = false
     @AppStorage(DownloadSettingsKey.speedLimitKBPerSecond) private var speedLimitKBPerSecond = 1024
     @AppStorage(DownloadSettingsKey.readsImagesFromCache) private var readsImagesFromCache = true
@@ -687,6 +688,30 @@ private struct DownloadSettingsView: View {
                 Text("任务")
             } footer: {
                 Text("同时任务数控制队列里可并行下载的漫画数量；图片线程数控制单个章节内可同时下载的图片数量。")
+            }
+
+            Section {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("章节名屏蔽词")
+                        .font(.subheadline)
+
+                    TextField("每行一个关键词", text: $chapterTitleBlockingKeywords, axis: .vertical)
+                        .lineLimit(3...8)
+                        .picaxDisablesTextAutocapitalization()
+                        .autocorrectionDisabled()
+                }
+
+                if !chapterTitleBlockingKeywords.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Button {
+                        chapterTitleBlockingKeywords = ""
+                    } label: {
+                        Label("清空章节名屏蔽词", systemImage: "trash")
+                    }
+                }
+            } header: {
+                Text("章节过滤")
+            } footer: {
+                Text("批量下载或选章下载时，章节名包含任一关键词的章节不会加入下载。")
             }
 
             Section {
