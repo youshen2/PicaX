@@ -3,6 +3,9 @@ import CoreGraphics
 import Foundation
 import ImageIO
 import zlib
+#if os(iOS)
+import UIKit
+#endif
 
 struct DownloadedChapterRecord: Identifiable, Equatable, Codable {
     let index: Int
@@ -287,6 +290,46 @@ private enum DownloadTaskControlError: Error {
     case stopped
 }
 
+#if os(iOS)
+@MainActor
+private final class DownloadBackgroundExecutionController {
+    private let expirationHandler: () -> Void
+    private var taskID: UIBackgroundTaskIdentifier = .invalid
+
+    init(expirationHandler: @escaping () -> Void) {
+        self.expirationHandler = expirationHandler
+    }
+
+    func update(keepsRunning: Bool) {
+        keepsRunning ? beginIfNeeded() : end()
+    }
+
+    func end() {
+        guard taskID != .invalid else { return }
+        let finishedTaskID = taskID
+        taskID = .invalid
+        UIApplication.shared.endBackgroundTask(finishedTaskID)
+    }
+
+    private func beginIfNeeded() {
+        guard taskID == .invalid else { return }
+        taskID = UIApplication.shared.beginBackgroundTask(withName: "PicaX Downloads") { [weak self] in
+            Task { @MainActor in
+                self?.expire()
+            }
+        }
+        if taskID == .invalid {
+            expirationHandler()
+        }
+    }
+
+    private func expire() {
+        end()
+        expirationHandler()
+    }
+}
+#endif
+
 @MainActor
 final class DownloadService: ObservableObject {
     @Published private(set) var records: [DownloadRecord] = []
@@ -299,6 +342,12 @@ final class DownloadService: ObservableObject {
     private let decoder = JSONDecoder()
     private var workerTask: Task<Void, Never>?
     private var accountProvider: ((ComicPlatform) -> PlatformAccount?)?
+    #if os(iOS)
+    private lazy var backgroundExecution = DownloadBackgroundExecutionController { [weak self] in
+        self?.handleBackgroundExecutionExpired()
+    }
+    private var backgroundExecutionExpired = false
+    #endif
     #if os(iOS)
     private lazy var progressPresentationService = DownloadProgressPresentationService(defaults: defaults)
     #endif
@@ -356,6 +405,22 @@ final class DownloadService: ObservableObject {
         self.accountProvider = accountProvider
         startIfNeeded()
         refreshProgressPresentation()
+        refreshBackgroundExecution()
+    }
+
+    func applicationDidEnterBackground() {
+        #if os(iOS)
+        backgroundExecutionExpired = false
+        refreshBackgroundExecution()
+        #endif
+    }
+
+    func applicationDidBecomeActive() {
+        #if os(iOS)
+        backgroundExecutionExpired = false
+        backgroundExecution.end()
+        #endif
+        startIfNeeded()
     }
 
     func latest(limit: Int) -> [DownloadRecord] {
@@ -562,6 +627,11 @@ final class DownloadService: ObservableObject {
     }
 
     private func startIfNeeded() {
+        #if os(iOS)
+        if backgroundExecutionExpired, UIApplication.shared.applicationState != .active {
+            return
+        }
+        #endif
         guard workerTask == nil else { return }
         guard tasks.contains(where: { $0.status.canRun }) else { return }
         workerTask = Task { [weak self] in
@@ -612,6 +682,32 @@ final class DownloadService: ObservableObject {
     private func nextQueuedDownloadTaskID(excluding activeTaskIDs: Set<String>) -> String? {
         tasks.first { $0.status.canRun && !activeTaskIDs.contains($0.id) }?.id
     }
+
+    private func refreshBackgroundExecution() {
+        #if os(iOS)
+        guard UIApplication.shared.applicationState != .active,
+              !backgroundExecutionExpired else {
+            backgroundExecution.end()
+            return
+        }
+        backgroundExecution.update(keepsRunning: tasks.contains(where: { $0.status == .queued || $0.status == .downloading }))
+        #endif
+    }
+
+    #if os(iOS)
+    private func handleBackgroundExecutionExpired() {
+        backgroundExecutionExpired = true
+        workerTask?.cancel()
+        workerTask = nil
+        for index in tasks.indices where tasks[index].status == .downloading {
+            tasks[index].status = .queued
+            tasks[index].currentChapterIndex = nil
+            tasks[index].currentPageIndex = 0
+            tasks[index].currentPageCount = 0
+        }
+        saveTasks()
+    }
+    #endif
 
     private var maxConcurrentDownloads: Int {
         let storedValue = defaults.object(forKey: DownloadSettingsKey.concurrentDownloadCount) == nil
@@ -949,6 +1045,7 @@ final class DownloadService: ObservableObject {
         guard let data = try? encoder.encode(persistedTasks) else { return }
         defaults.set(data, forKey: DownloadSettingsKey.tasks)
         refreshProgressPresentation()
+        refreshBackgroundExecution()
     }
 
     private static func loadTasks(defaults: UserDefaults, decoder: JSONDecoder) -> [ComicDownloadTask] {

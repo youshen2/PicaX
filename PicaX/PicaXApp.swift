@@ -9,6 +9,7 @@ import SwiftUI
 
 @main
 struct PicaXApp: App {
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var appSettings = AppSettings()
     @StateObject private var accountService = AccountService()
     @StateObject private var platformAccountService = PlatformAccountService()
@@ -45,6 +46,18 @@ struct PicaXApp: App {
                     ComicDetailCacheService.configure()
                     downloadService.configure { platform in
                         platformAccountService.account(for: platform)
+                    }
+                }
+                .onChange(of: scenePhase) { _, newValue in
+                    switch newValue {
+                    case .active:
+                        downloadService.applicationDidBecomeActive()
+                    case .background:
+                        downloadService.applicationDidEnterBackground()
+                    case .inactive:
+                        break
+                    @unknown default:
+                        break
                     }
                 }
 

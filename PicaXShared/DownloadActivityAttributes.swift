@@ -1,4 +1,4 @@
-#if canImport(ActivityKit)
+#if os(iOS) && canImport(ActivityKit)
 import ActivityKit
 import Foundation
 
