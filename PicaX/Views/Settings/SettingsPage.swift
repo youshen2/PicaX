@@ -605,6 +605,7 @@ private struct DownloadSettingsView: View {
     @EnvironmentObject private var downloadService: DownloadService
     @AppStorage(DownloadSettingsKey.imageRetryCount) private var imageRetryCount = 2
     @AppStorage(DownloadSettingsKey.concurrentDownloadCount) private var concurrentDownloadCount = 1
+    @AppStorage(DownloadSettingsKey.concurrentImageDownloadCount) private var concurrentImageDownloadCount = 3
     @AppStorage(DownloadSettingsKey.speedLimitEnabled) private var speedLimitEnabled = false
     @AppStorage(DownloadSettingsKey.speedLimitKBPerSecond) private var speedLimitKBPerSecond = 1024
     @AppStorage(DownloadSettingsKey.readsImagesFromCache) private var readsImagesFromCache = true
@@ -679,12 +680,13 @@ private struct DownloadSettingsView: View {
             }
 
             Section {
-                IntegerSettingsInputRow(title: "同时下载数", value: $concurrentDownloadCount, lowerBound: 1, upperBound: 6)
+                IntegerSettingsInputRow(title: "同时任务数", value: $concurrentDownloadCount, lowerBound: 1, upperBound: 20)
+                IntegerSettingsInputRow(title: "图片线程数", value: $concurrentImageDownloadCount, lowerBound: 1, upperBound: 20)
                 IntegerSettingsInputRow(title: "图片重试", value: $imageRetryCount, unit: "次", lowerBound: 0, upperBound: 8)
             } header: {
                 Text("任务")
             } footer: {
-                Text("同时下载数会保存为下载队列的并发配置。")
+                Text("同时任务数控制队列里可并行下载的漫画数量；图片线程数控制单个章节内可同时下载的图片数量。")
             }
 
             Section {

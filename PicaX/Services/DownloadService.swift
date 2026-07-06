@@ -290,6 +290,11 @@ private enum DownloadTaskControlError: Error {
     case stopped
 }
 
+private struct DownloadedImagePageResult: Sendable {
+    let pageIndex: Int
+    let byteCount: Int
+}
+
 #if os(iOS)
 @MainActor
 private final class DownloadBackgroundExecutionController {
@@ -368,6 +373,9 @@ final class DownloadService: ObservableObject {
         }
         if defaults.object(forKey: DownloadSettingsKey.concurrentDownloadCount) == nil {
             defaults.set(1, forKey: DownloadSettingsKey.concurrentDownloadCount)
+        }
+        if defaults.object(forKey: DownloadSettingsKey.concurrentImageDownloadCount) == nil {
+            defaults.set(3, forKey: DownloadSettingsKey.concurrentImageDownloadCount)
         }
         if defaults.object(forKey: DownloadSettingsKey.speedLimitEnabled) == nil {
             defaults.set(false, forKey: DownloadSettingsKey.speedLimitEnabled)
@@ -716,7 +724,14 @@ final class DownloadService: ObservableObject {
         let storedValue = defaults.object(forKey: DownloadSettingsKey.concurrentDownloadCount) == nil
             ? 1
             : defaults.integer(forKey: DownloadSettingsKey.concurrentDownloadCount)
-        return min(max(storedValue, 1), 6)
+        return min(max(storedValue, 1), 20)
+    }
+
+    private var maxConcurrentImageDownloads: Int {
+        let storedValue = defaults.object(forKey: DownloadSettingsKey.concurrentImageDownloadCount) == nil
+            ? 3
+            : defaults.integer(forKey: DownloadSettingsKey.concurrentImageDownloadCount)
+        return min(max(storedValue, 1), 20)
     }
 
     private func runTask(id: String) async {
@@ -910,23 +925,43 @@ final class DownloadService: ObservableObject {
     ) async throws -> DownloadedChapterRecord {
         let directoryURL = try chapterDirectory(for: item, chapter: chapter, index: chapterIndex)
         var totalBytes: Int64 = 0
+        let imageConcurrency = min(maxConcurrentImageDownloads, max(images.count, 1))
+        var nextPageIndex = 0
+        var completedPageCount = 0
 
-        for (pageIndex, image) in images.enumerated() {
-            try Task.checkCancellation()
-            try checkTaskCanContinue(taskID)
-            let startedAt = Date()
-            let data = try await loadImageDataWithRetry(urlString: image.urlString)
-            try checkTaskCanContinue(taskID)
-            let pageURL = directoryURL.appendingPathComponent(fileName(for: image.urlString, pageIndex: pageIndex))
-            try await Self.write(data, to: pageURL)
-            totalBytes += Int64(data.count)
-            updateTask(taskID) { value in
-                value.currentPageIndex = pageIndex + 1
-                value.currentPageCount = images.count
-                value.downloadedBytes += Int64(data.count)
+        try await withThrowingTaskGroup(of: DownloadedImagePageResult.self) { group in
+            func enqueueNextPage() {
+                guard nextPageIndex < images.count else { return }
+                let pageIndex = nextPageIndex
+                let urlString = images[pageIndex].urlString
+                nextPageIndex += 1
+
+                group.addTask { @MainActor [weak self] in
+                    guard let self else { throw CancellationError() }
+                    return try await self.downloadChapterImage(
+                        urlString: urlString,
+                        pageIndex: pageIndex,
+                        directoryURL: directoryURL,
+                        taskID: taskID
+                    )
+                }
             }
-            saveTasks()
-            try await throttleIfNeeded(downloadedBytes: data.count, startedAt: startedAt)
+
+            for _ in 0..<imageConcurrency {
+                enqueueNextPage()
+            }
+
+            while let result = try await group.next() {
+                totalBytes += Int64(result.byteCount)
+                completedPageCount += 1
+                updateTask(taskID) { value in
+                    value.currentPageIndex = completedPageCount
+                    value.currentPageCount = images.count
+                    value.downloadedBytes += Int64(result.byteCount)
+                }
+                saveTasks()
+                enqueueNextPage()
+            }
         }
 
         return DownloadedChapterRecord(
@@ -937,6 +972,24 @@ final class DownloadService: ObservableObject {
             comments: comments,
             downloadedAt: Date()
         )
+    }
+
+    private func downloadChapterImage(
+        urlString: String,
+        pageIndex: Int,
+        directoryURL: URL,
+        taskID: String
+    ) async throws -> DownloadedImagePageResult {
+        try Task.checkCancellation()
+        try checkTaskCanContinue(taskID)
+        let startedAt = Date()
+        let data = try await loadImageDataWithRetry(urlString: urlString)
+        try Task.checkCancellation()
+        try checkTaskCanContinue(taskID)
+        let pageURL = directoryURL.appendingPathComponent(fileName(for: urlString, pageIndex: pageIndex))
+        try await Self.write(data, to: pageURL)
+        try await throttleIfNeeded(downloadedBytes: data.count, startedAt: startedAt)
+        return DownloadedImagePageResult(pageIndex: pageIndex, byteCount: data.count)
     }
 
     private func checkTaskCanContinue(_ id: String) throws {

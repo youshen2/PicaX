@@ -149,6 +149,7 @@ enum DownloadSettingsKey {
     static let homeLimit = "settings.download.homeLimit"
     static let imageRetryCount = "settings.download.imageRetryCount"
     static let concurrentDownloadCount = "settings.download.concurrentDownloadCount"
+    static let concurrentImageDownloadCount = "settings.download.concurrentImageDownloadCount"
     static let speedLimitEnabled = "settings.download.speedLimitEnabled"
     static let speedLimitKBPerSecond = "settings.download.speedLimitKBPerSecond"
     static let readsImagesFromCache = "settings.download.readsImagesFromCache"

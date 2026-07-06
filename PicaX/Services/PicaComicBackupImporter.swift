@@ -114,7 +114,7 @@ enum PicaComicBackupImporter {
             result[ImageCacheSettingsKey.maxDiskSizeMB] = BackupDefaultValue.from(value)
         }
         if let value = intSetting(settings, at: 79) {
-            result[DownloadSettingsKey.concurrentDownloadCount] = BackupDefaultValue.from(min(max(value, 1), 6))
+            result[DownloadSettingsKey.concurrentDownloadCount] = BackupDefaultValue.from(min(max(value, 1), 20))
         }
         if let value = boolSetting(settings, at: 102) {
             result[DownloadSettingsKey.downloadsCommentsByDefault] = BackupDefaultValue.from(value)
