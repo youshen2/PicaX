@@ -198,13 +198,16 @@ struct ComicDetailPage: View {
 private struct ComicDetailContent: View {
     @EnvironmentObject private var platformAccounts: PlatformAccountService
     @EnvironmentObject private var readingHistory: ReadingHistoryService
+    @EnvironmentObject private var downloadService: DownloadService
     @AppStorage(DetailSettingsKey.chapterSortOrder) private var chapterSortOrder = ComicDetailChapterSortOrder.ascending.rawValue
     @AppStorage(DetailSettingsKey.showsChaptersAsSection) private var showsChaptersAsSection = false
     @AppStorage(DetailSettingsKey.contentOrder) private var contentOrderRaw = ComicDetailContentSectionKind.defaultRawValue
+    @AppStorage(DownloadSettingsKey.recordsDownloadedReadingHistory) private var recordsDownloadedReadingHistory = true
     let detail: ComicDetailInfo
     let service: ComicContentService
     @State private var commentSheet: CommentSheetContext?
     @State private var readerTarget: ComicReaderTarget?
+    @State private var localReaderRequest: DownloadedComicReaderRequest?
     @State private var selectedTag: ComicTagReference?
     @State private var relatedDetailRequest: ComicListDetailRequest?
     @State private var relatedReaderRequest: ComicListReaderRequest?
@@ -214,8 +217,14 @@ private struct ComicDetailContent: View {
         Group {
             List {
                 Section {
-                    ComicDetailHeader(detail: detail, showsChapterButton: !showsChaptersAsSection) { target in
+                    ComicDetailHeader(
+                        detail: detail,
+                        showsChapterButton: !showsChaptersAsSection,
+                        canOpenLocalReader: downloadedRecord?.chapters.isEmpty == false
+                    ) { target in
                         readerTarget = target
+                    } onOpenLocalReader: {
+                        openDownloadedReader()
                     }
                         .padding(.vertical, 4)
                 }
@@ -235,6 +244,28 @@ private struct ComicDetailContent: View {
                 initialChapterIndex: target.chapterIndex,
                 ignoresHistoryProgress: target.ignoresProgress,
                 service: service
+            )
+        }
+        .navigationDestination(item: $localReaderRequest) { request in
+            ComicReaderPage(
+                detail: request.detail,
+                initialChapterIndex: request.initialChapterIndex,
+                initialPageIndex: request.initialPageIndex,
+                ignoresHistoryProgress: request.ignoresHistoryProgress,
+                recordsReadingHistory: request.recordsReadingHistory,
+                service: service,
+                localChapterImageProvider: { _, chapterIndex in
+                    guard request.localChapterIndexes.indices.contains(chapterIndex) else { return [] }
+                    return await downloadService.localChapterImages(for: request.record, chapterIndex: request.localChapterIndexes[chapterIndex])
+                },
+                localChapterCommentsProvider: { _, chapterIndex in
+                    guard request.localChapterIndexes.indices.contains(chapterIndex) else { return [] }
+                    return await downloadService.localChapterComments(for: request.record, chapterIndex: request.localChapterIndexes[chapterIndex])
+                },
+                historyChapterIndexResolver: { chapterIndex in
+                    guard request.localChapterIndexes.indices.contains(chapterIndex) else { return chapterIndex }
+                    return request.localChapterIndexes[chapterIndex]
+                }
             )
         }
         .navigationDestination(item: $selectedTag) { tag in
@@ -265,6 +296,55 @@ private struct ComicDetailContent: View {
 
     private func hasReadingProgress(for item: ComicListItem) -> Bool {
         readingHistory.hasReadingProgress(for: item)
+    }
+
+    private var downloadedRecord: DownloadRecord? {
+        downloadService.record(for: detail.item)
+    }
+
+    private func openDownloadedReader() {
+        guard let record = downloadedRecord else { return }
+        let downloadedChapters = record.chapters.sorted { $0.index < $1.index }
+        guard !downloadedChapters.isEmpty else { return }
+
+        let localChapterIndexes = downloadedChapters.map(\.index)
+        let progress = readingHistory.record(for: record.item)?.progress
+        let initialChapterIndex: Int
+        let initialPageIndex: Int
+        if let progress,
+           (progress.status == .reading || progress.status == .finished),
+           let compactIndex = localChapterIndexes.firstIndex(of: progress.chapterIndex) {
+            initialChapterIndex = compactIndex
+            initialPageIndex = progress.pageIndex
+        } else {
+            initialChapterIndex = 0
+            initialPageIndex = 0
+        }
+
+        localReaderRequest = DownloadedComicReaderRequest(
+            record: record,
+            detail: localDetail(for: record, downloadedChapters: downloadedChapters),
+            localChapterIndexes: localChapterIndexes,
+            initialChapterIndex: initialChapterIndex,
+            initialPageIndex: initialPageIndex,
+            ignoresHistoryProgress: true,
+            recordsReadingHistory: recordsDownloadedReadingHistory
+        )
+    }
+
+    private func localDetail(for record: DownloadRecord, downloadedChapters: [DownloadedChapterRecord]) -> ComicDetailInfo {
+        let sourceDetail = record.detail ?? detail
+        var localDetail = ComicDetailInfo(
+            item: sourceDetail.item,
+            description: sourceDetail.description,
+            tagGroups: sourceDetail.tagGroups,
+            chapters: downloadedChapters.map(\.chapter),
+            related: sourceDetail.related,
+            updatedText: sourceDetail.updatedText
+        )
+        localDetail.isLiked = sourceDetail.isLiked
+        localDetail.uploader = sourceDetail.uploader
+        return localDetail
     }
 
     private var sortedChapterDisplayItems: [ComicChapterDisplayItem] {
@@ -475,7 +555,9 @@ private struct ComicDetailHeader: View {
     @AppStorage(DetailSettingsKey.usesCoverAccent) private var usesCoverAccent = true
     let detail: ComicDetailInfo
     let showsChapterButton: Bool
+    let canOpenLocalReader: Bool
     let onOpenReader: (ComicReaderTarget) -> Void
+    let onOpenLocalReader: () -> Void
     @State private var showsCoverPreview = false
     @State private var showsChapters = false
     @State private var coverColor: Color?
@@ -553,6 +635,20 @@ private struct ComicDetailHeader: View {
                     .background(readButtonColor(accentColor), in: Capsule())
                     .glassProminentIfAvailable(tint: readButtonColor(accentColor))
                     .disabled(detail.chapters.isEmpty)
+
+                    if canOpenLocalReader {
+                        Button(action: onOpenLocalReader) {
+                            Image(systemName: "internaldrive")
+                                .font(.headline)
+                                .frame(width: 44, height: 40)
+                                .contentShape(Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(accentColor)
+                        .background(accentColor.opacity(0.16), in: Circle())
+                        .accessibilityLabel("从本地阅读")
+                        .help("从本地阅读")
+                    }
 
                     if showsChapterButton {
                         Button {
