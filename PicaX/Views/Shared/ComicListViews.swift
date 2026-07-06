@@ -1567,19 +1567,16 @@ struct ComicSearchPage: View {
             searchClearGeneration += 1
             let generation = searchClearGeneration
 
-            guard isSearchFocused else {
-                restoreQueryClearedBySearchCancel(generation: generation)
-                return
-            }
-
             Task { @MainActor in
-                await Task.yield()
+                try? await Task.sleep(nanoseconds: 180_000_000)
                 guard searchClearGeneration == generation else { return }
 
-                if isSearchFocused || !query.isEmpty {
+                if !query.isEmpty {
                     searchCancelRestorationCandidate = nil
-                } else {
+                } else if !isSearchFocused {
                     restoreQueryClearedBySearchCancel(generation: generation)
+                } else {
+                    searchCancelRestorationCandidate = nil
                 }
             }
         } else if !newValue.isEmpty {
