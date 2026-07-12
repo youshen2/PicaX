@@ -32,7 +32,7 @@ struct WatchSearchPage: View {
         }
         .navigationTitle("搜索")
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItem(placement: .primaryAction) {
                 Button {
                     Task { await performSearch(force: true) }
                 } label: {

@@ -42,7 +42,7 @@ struct WatchFavoritesPage: View {
         }
         .navigationTitle("收藏夹")
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItem(placement: .primaryAction) {
                 Button {
                     accountSyncStore.requestRefresh()
                 } label: {
@@ -99,7 +99,7 @@ private struct WatchFavoriteFoldersPage: View {
         }
         .navigationTitle(account.title)
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItem(placement: .primaryAction) {
                 Button {
                     Task { await viewModel.load(account: account, force: true) }
                 } label: {

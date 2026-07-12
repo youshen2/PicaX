@@ -288,7 +288,7 @@ struct ReaderProgressOverlay: View {
 
     private var capsuleBody: some View {
         HStack(spacing: 8) {
-            Image(systemName: "book.pages")
+            Image(systemName: "book")
                 .font(.callout.weight(.semibold))
                 .foregroundStyle(.black.opacity(0.78))
 

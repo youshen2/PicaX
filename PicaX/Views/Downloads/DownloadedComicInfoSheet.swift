@@ -12,7 +12,7 @@ struct DownloadedComicInfoSheet: View {
     let openSearch: (DownloadedComicSearchRequest) -> Void
 
     var body: some View {
-        NavigationStack {
+        PicaxNavigationContainer {
             VStack(spacing: 0) {
                 List {
                     Section {

@@ -59,15 +59,22 @@ struct ReaderContinuousScrollSnapshot {
 final class ReaderContinuousScrollBridge {
     #if os(iOS)
     private weak var scrollView: UIScrollView?
+    private var pendingScroll: (y: CGFloat, animated: Bool)?
 
     func attach(scrollView: UIScrollView?) {
         self.scrollView = scrollView
+        guard scrollView != nil, let pendingScroll else { return }
+        self.pendingScroll = nil
+        _ = self.scroll(toY: pendingScroll.y, animated: pendingScroll.animated)
     }
     #endif
 
     func scroll(toY y: CGFloat, animated: Bool) -> Bool {
         #if os(iOS)
-        guard let scrollView else { return false }
+        guard let scrollView else {
+            pendingScroll = (y, animated)
+            return false
+        }
         let minY = -scrollView.adjustedContentInset.top
         let maxY = max(
             scrollView.contentSize.height - scrollView.bounds.height + scrollView.adjustedContentInset.bottom,
@@ -376,10 +383,38 @@ final class ReaderContinuousScrollTracker {
 
 extension View {
     @ViewBuilder
-    func readerContinuousScrollBridge(_ bridge: ReaderContinuousScrollBridge) -> some View {
+    func readerContinuousScrollBridge(
+        _ bridge: ReaderContinuousScrollBridge,
+        onMetricsChange: ((ReaderScrollMetrics) -> Void)? = nil
+    ) -> some View {
         #if os(iOS)
         background {
-            ReaderContinuousScrollBridgeResolver(bridge: bridge)
+            ReaderScrollViewResolver(
+                bridge: bridge,
+                onMetricsChange: onMetricsChange,
+                offsetAxis: nil,
+                onOffsetChange: nil
+            )
+                .frame(width: 0, height: 0)
+        }
+        #else
+        self
+        #endif
+    }
+
+    @ViewBuilder
+    func readerScrollOffsetObserver(
+        axis: Axis,
+        onChange: @escaping (_ oldValue: CGFloat, _ newValue: CGFloat) -> Void
+    ) -> some View {
+        #if os(iOS)
+        background {
+            ReaderScrollViewResolver(
+                bridge: nil,
+                onMetricsChange: nil,
+                offsetAxis: axis,
+                onOffsetChange: onChange
+            )
                 .frame(width: 0, height: 0)
         }
         #else
@@ -389,29 +424,57 @@ extension View {
 }
 
 #if os(iOS)
-private struct ReaderContinuousScrollBridgeResolver: UIViewRepresentable {
-    let bridge: ReaderContinuousScrollBridge
+private struct ReaderScrollViewResolver: UIViewRepresentable {
+    let bridge: ReaderContinuousScrollBridge?
+    let onMetricsChange: ((ReaderScrollMetrics) -> Void)?
+    let offsetAxis: Axis?
+    let onOffsetChange: ((_ oldValue: CGFloat, _ newValue: CGFloat) -> Void)?
 
-    func makeUIView(context: Context) -> ReaderContinuousScrollBridgeResolverView {
-        let view = ReaderContinuousScrollBridgeResolverView()
-        view.updateBridge(bridge)
+    func makeUIView(context: Context) -> ReaderScrollViewResolverView {
+        let view = ReaderScrollViewResolverView()
+        view.update(
+            bridge: bridge,
+            onMetricsChange: onMetricsChange,
+            offsetAxis: offsetAxis,
+            onOffsetChange: onOffsetChange
+        )
         return view
     }
 
-    func updateUIView(_ uiView: ReaderContinuousScrollBridgeResolverView, context: Context) {
-        uiView.updateBridge(bridge)
+    func updateUIView(_ uiView: ReaderScrollViewResolverView, context: Context) {
+        uiView.update(
+            bridge: bridge,
+            onMetricsChange: onMetricsChange,
+            offsetAxis: offsetAxis,
+            onOffsetChange: onOffsetChange
+        )
     }
 
-    static func dismantleUIView(_ uiView: ReaderContinuousScrollBridgeResolverView, coordinator: ()) {
-        uiView.updateBridge(nil)
+    static func dismantleUIView(_ uiView: ReaderScrollViewResolverView, coordinator: ()) {
+        uiView.update(bridge: nil, onMetricsChange: nil, offsetAxis: nil, onOffsetChange: nil)
     }
 }
 
-private final class ReaderContinuousScrollBridgeResolverView: UIView {
+private final class ReaderScrollViewResolverView: UIView {
     private weak var bridge: ReaderContinuousScrollBridge?
+    private weak var observedScrollView: UIScrollView?
+    private var observations: [NSKeyValueObservation] = []
+    private var onMetricsChange: ((ReaderScrollMetrics) -> Void)?
+    private var offsetAxis: Axis?
+    private var onOffsetChange: ((_ oldValue: CGFloat, _ newValue: CGFloat) -> Void)?
+    private var lastMetrics: ReaderScrollMetrics?
+    private var lastOffset: CGFloat?
 
-    func updateBridge(_ bridge: ReaderContinuousScrollBridge?) {
+    func update(
+        bridge: ReaderContinuousScrollBridge?,
+        onMetricsChange: ((ReaderScrollMetrics) -> Void)?,
+        offsetAxis: Axis?,
+        onOffsetChange: ((_ oldValue: CGFloat, _ newValue: CGFloat) -> Void)?
+    ) {
         self.bridge = bridge
+        self.onMetricsChange = onMetricsChange
+        self.offsetAxis = offsetAxis
+        self.onOffsetChange = onOffsetChange
         resolveScrollView()
     }
 
@@ -428,8 +491,55 @@ private final class ReaderContinuousScrollBridgeResolverView: UIView {
     private func resolveScrollView() {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            bridge?.attach(scrollView: nearestScrollView())
+            attach(to: nearestScrollView())
         }
+    }
+
+    private func attach(to scrollView: UIScrollView?) {
+        if observedScrollView === scrollView {
+            reportScrollState()
+            return
+        }
+
+        observations.removeAll()
+        observedScrollView = scrollView
+        lastMetrics = nil
+        lastOffset = nil
+        bridge?.attach(scrollView: scrollView)
+
+        guard let scrollView else { return }
+        observations = [
+            scrollView.observe(\.contentOffset, options: [.initial, .new]) { [weak self] _, _ in
+                self?.reportScrollState()
+            },
+            scrollView.observe(\.contentSize, options: [.initial, .new]) { [weak self] _, _ in
+                self?.reportScrollState()
+            },
+            scrollView.observe(\.bounds, options: [.initial, .new]) { [weak self] _, _ in
+                self?.reportScrollState()
+            }
+        ]
+    }
+
+    private func reportScrollState() {
+        guard let scrollView = observedScrollView else { return }
+
+        let metrics = ReaderScrollMetrics(
+            offsetY: scrollView.contentOffset.y,
+            contentHeight: scrollView.contentSize.height,
+            visibleHeight: scrollView.bounds.height
+        )
+        if metrics != lastMetrics {
+            lastMetrics = metrics
+            onMetricsChange?(metrics)
+        }
+
+        guard let offsetAxis, let onOffsetChange else { return }
+        let offset = offsetAxis == .horizontal ? scrollView.contentOffset.x : scrollView.contentOffset.y
+        if let lastOffset, abs(lastOffset - offset) > 0.25 {
+            onOffsetChange(lastOffset, offset)
+        }
+        lastOffset = offset
     }
 
     private func nearestScrollView() -> UIScrollView? {

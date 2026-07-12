@@ -96,7 +96,7 @@ struct WatchComicListPage: View {
         }
         .navigationTitle(source.title)
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItem(placement: .primaryAction) {
                 Button {
                     Task { await load(force: true) }
                 } label: {

@@ -61,7 +61,7 @@ struct WatchHomePage: View {
         }
         .navigationTitle("主页")
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItem(placement: .primaryAction) {
                 NavigationLink {
                     WatchSettingsView()
                 } label: {

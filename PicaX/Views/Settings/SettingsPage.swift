@@ -54,7 +54,7 @@ struct SettingsPage: View {
                         }
                     }
                     if shows(.reader) {
-                        SettingsNavigationLink(item: .reader, systemImage: "book.pages") {
+                        SettingsNavigationLink(item: .reader, systemImage: "book") {
                             ReaderSettingsView()
                         }
                     }
@@ -593,7 +593,7 @@ private struct HomeSettingsView: View {
             sectionOrder = HomeSectionKind.normalizedOrder(from: sectionOrderRaw)
             saveSectionOrder()
         }
-        .onChange(of: sectionOrderRaw) { _, newValue in
+        .onChange(of: sectionOrderRaw) { newValue in
             sectionOrder = HomeSectionKind.normalizedOrder(from: newValue)
         }
     }
@@ -657,7 +657,11 @@ private struct DownloadSettingsView: View {
                     )
                 }
 
-                Toggle("灵动岛下载进度", isOn: $showsProgressLiveActivity)
+                if #available(iOS 16.1, *) {
+                    Toggle("灵动岛下载进度", isOn: $showsProgressLiveActivity)
+                } else {
+                    LabeledContent("灵动岛下载进度", value: "需要 iOS 16.1")
+                }
             } header: {
                 Text("进度显示")
             } footer: {
@@ -702,10 +706,17 @@ private struct DownloadSettingsView: View {
                     Text("章节名屏蔽词")
                         .font(.subheadline)
 
-                    TextField("每行一个关键词", text: $chapterTitleBlockingKeywords, axis: .vertical)
-                        .lineLimit(3...8)
-                        .picaxDisablesTextAutocapitalization()
-                        .autocorrectionDisabled()
+                    if #available(iOS 16.0, macOS 13.0, *) {
+                        TextField("每行一个关键词", text: $chapterTitleBlockingKeywords, axis: .vertical)
+                            .lineLimit(3...8)
+                            .picaxDisablesTextAutocapitalization()
+                            .autocorrectionDisabled()
+                    } else {
+                        TextEditor(text: $chapterTitleBlockingKeywords)
+                            .frame(minHeight: 72, maxHeight: 180)
+                            .picaxDisablesTextAutocapitalization()
+                            .autocorrectionDisabled()
+                    }
                 }
 
                 if !chapterTitleBlockingKeywords.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -737,13 +748,13 @@ private struct DownloadSettingsView: View {
         .navigationTitle("下载")
         .picaxHidesTabBar()
         #if os(iOS)
-        .onChange(of: showsProgressNotifications) { _, _ in
+        .onChange(of: showsProgressNotifications) { _ in
             downloadService.refreshProgressPresentation()
         }
-        .onChange(of: showsProgressLiveActivity) { _, _ in
+        .onChange(of: showsProgressLiveActivity) { _ in
             downloadService.refreshProgressPresentation()
         }
-        .onChange(of: progressNotificationUpdateIntervalSeconds) { _, _ in
+        .onChange(of: progressNotificationUpdateIntervalSeconds) { _ in
             downloadService.refreshProgressPresentation()
         }
         #endif
@@ -855,19 +866,19 @@ private struct StorageManagementView: View {
                 await refreshStorageUsage()
             }
         }
-        .onChange(of: maxDiskSizeMB) { _, _ in
+        .onChange(of: maxDiskSizeMB) { _ in
             ImageCacheService.configure()
             Task {
                 await refreshStorageUsage()
             }
         }
-        .onChange(of: detailCacheEnabled) { _, _ in
+        .onChange(of: detailCacheEnabled) { _ in
             ComicDetailCacheService.configure()
             Task {
                 await refreshStorageUsage()
             }
         }
-        .onChange(of: maxDetailCacheDiskSizeMB) { _, _ in
+        .onChange(of: maxDetailCacheDiskSizeMB) { _ in
             ComicDetailCacheService.configure()
             Task {
                 await refreshStorageUsage()
@@ -1340,7 +1351,7 @@ private struct BackupImportPreviewSheet: View {
     }
 
     var body: some View {
-        NavigationStack {
+        PicaxNavigationContainer {
             List {
                 Section {
                     LabeledContent("来源", value: preview.title)
@@ -1417,7 +1428,7 @@ private struct BackupImportPreviewSheet: View {
                 }
             }
         }
-        .presentationDetents([.medium, .large])
+        .picaxPresentationDetents([.medium, .large], showsDragIndicator: false)
     }
 
     private func importContentBinding(for content: BackupContentKind) -> Binding<Bool> {
@@ -1456,7 +1467,7 @@ private struct ExploreSettingsView: View {
                 }
 
                 Toggle("记住选中平台", isOn: $rememberSelectedPlatform)
-                    .onChange(of: rememberSelectedPlatform) { _, newValue in
+                    .onChange(of: rememberSelectedPlatform) { newValue in
                         if !newValue {
                             lastSelectedPlatformID = defaultPlatformID
                         }
@@ -1565,7 +1576,7 @@ private struct SearchSettingsView: View {
         .picaxInsetGroupedListStyle()
         .navigationTitle("搜索")
         .picaxHidesTabBar()
-        .onChange(of: maxSearchHistoryRecords) { _, _ in
+        .onChange(of: maxSearchHistoryRecords) { _ in
             searchHistory.trimToCurrentLimit()
         }
         .alert("清空搜索历史？", isPresented: $showsClearSearchHistoryConfirmation) {
@@ -1724,7 +1735,7 @@ private struct ComicDetailSettingsView: View {
             contentOrder = ComicDetailContentSectionKind.normalizedOrder(from: contentOrderRaw)
             saveContentOrder()
         }
-        .onChange(of: contentOrderRaw) { _, newValue in
+        .onChange(of: contentOrderRaw) { newValue in
             contentOrder = ComicDetailContentSectionKind.normalizedOrder(from: newValue)
         }
     }
@@ -1822,7 +1833,7 @@ private struct BlockingKeywordAddSheet: View {
     @State private var feedback: BlockingKeywordFeedback?
 
     var body: some View {
-        NavigationStack {
+        PicaxNavigationContainer {
             Form {
                 Section {
                     TextField("屏蔽关键词", text: $keyword)
@@ -1935,8 +1946,8 @@ private struct ReaderSettingsView: View {
                     systemStatusStyle: selectedSystemStatusStyle,
                     systemStatusPosition: selectedSystemStatusPosition,
                     systemStatusBottomInset: systemStatusBottomInset,
-                    usesProgressGlassBackground: usesProgressGlassBackground,
-                    usesSystemStatusGlassBackground: usesSystemStatusGlassBackground
+                    usesProgressGlassBackground: effectiveUsesProgressGlassBackground,
+                    usesSystemStatusGlassBackground: effectiveUsesSystemStatusGlassBackground
                 )
                 .listRowInsets(EdgeInsets(top: 10, leading: 16, bottom: 10, trailing: 16))
             }
@@ -2098,7 +2109,7 @@ private struct ReaderSettingsView: View {
                         }
                     }
 
-                    if selectedSystemStatusStyle != .text {
+                    if supportsLiquidGlassBackground, selectedSystemStatusStyle != .text {
                         Toggle("液体玻璃背景", isOn: $usesSystemStatusGlassBackground)
                     }
 
@@ -2132,7 +2143,9 @@ private struct ReaderSettingsView: View {
 
                 Toggle("点击进度选择页码", isOn: $progressTapSelectionEnabled)
 
-                Toggle("液体玻璃背景", isOn: $usesProgressGlassBackground)
+                if supportsLiquidGlassBackground {
+                    Toggle("液体玻璃背景", isOn: $usesProgressGlassBackground)
+                }
 
                 VStack(alignment: .leading, spacing: 8) {
                     Text("底部距离 \(Int(progressBottomInset))")
@@ -2208,6 +2221,22 @@ private struct ReaderSettingsView: View {
 
     private var selectedSystemStatusPosition: ReaderOverlayPosition {
         ReaderOverlayPosition(rawValue: systemStatusPosition) ?? .bottomLeading
+    }
+
+    private var effectiveUsesProgressGlassBackground: Bool {
+        supportsLiquidGlassBackground && usesProgressGlassBackground
+    }
+
+    private var effectiveUsesSystemStatusGlassBackground: Bool {
+        supportsLiquidGlassBackground && usesSystemStatusGlassBackground
+    }
+
+    private var supportsLiquidGlassBackground: Bool {
+        if #available(iOS 26, macOS 26, visionOS 26, *) {
+            return true
+        } else {
+            return false
+        }
     }
 
     private var tapPagingEdgePercentBinding: Binding<Double> {
@@ -2384,7 +2413,7 @@ private struct NetworkSettingsView: View {
 
                     TextField("端口", text: $proxyPortText)
                         .picaxKeyboardType(.numberPad)
-                        .onChange(of: proxyPortText) { _, newValue in
+                        .onChange(of: proxyPortText) { newValue in
                             updateProxyPort(from: newValue)
                         }
 
@@ -2416,12 +2445,12 @@ private struct NetworkSettingsView: View {
                 proxyPortText = "\(proxyPort)"
             }
         }
-        .onChange(of: useProxy) { _, newValue in
+        .onChange(of: useProxy) { newValue in
             if newValue, proxyPortText.isEmpty {
                 proxyPortText = "\(proxyPort)"
             }
         }
-        .onChange(of: proxyPort) { _, newValue in
+        .onChange(of: proxyPort) { newValue in
             proxyPort = min(max(newValue, 1), 65535)
             let text = "\(proxyPort)"
             if proxyPortText != text {
@@ -2496,7 +2525,7 @@ private struct HistorySettingsView: View {
         .picaxInsetGroupedListStyle()
         .navigationTitle("历史记录")
         .picaxHidesTabBar()
-        .onChange(of: maxRecords) { _, _ in
+        .onChange(of: maxRecords) { _ in
             readingHistory.trimToCurrentLimit()
         }
         .alert("清空历史记录？", isPresented: $showsClearConfirmation) {
@@ -2554,7 +2583,7 @@ private struct ReadingDurationSettingsView: View {
         .picaxInsetGroupedListStyle()
         .navigationTitle("阅读时长")
         .picaxHidesTabBar()
-        .onChange(of: maxReadingDurationRecords) { _, _ in
+        .onChange(of: maxReadingDurationRecords) { _ in
             readingDuration.trimToCurrentLimit()
         }
         .alert("清空阅读时长？", isPresented: $showsClearDurationConfirmation) {
@@ -2842,7 +2871,7 @@ private struct IntegerSettingsInputRow: View {
                         .picaxKeyboardType(.numberPad)
                         .focused($isFocused)
                         .frame(width: 92)
-                        .onChange(of: text) { _, newValue in
+                        .onChange(of: text) { newValue in
                             updateValue(from: newValue)
                         }
 
@@ -2864,11 +2893,11 @@ private struct IntegerSettingsInputRow: View {
         .onAppear {
             text = "\(value)"
         }
-        .onChange(of: value) { _, newValue in
+        .onChange(of: value) { newValue in
             guard !isFocused else { return }
             text = "\(bounded(newValue))"
         }
-        .onChange(of: isFocused) { _, focused in
+        .onChange(of: isFocused) { focused in
             if !focused {
                 let nextValue = bounded(value)
                 if nextValue != value {

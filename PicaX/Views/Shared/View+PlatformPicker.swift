@@ -6,7 +6,11 @@ extension View {
         #if os(macOS)
         pickerStyle(.menu)
         #else
-        pickerStyle(.navigationLink)
+        if #available(iOS 16.0, *) {
+            pickerStyle(.navigationLink)
+        } else {
+            pickerStyle(.menu)
+        }
         #endif
     }
 }

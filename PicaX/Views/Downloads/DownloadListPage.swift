@@ -50,8 +50,7 @@ struct DownloadListPage: View {
         }
         .sheet(isPresented: $showsQueueSheet) {
             DownloadQueueSheet()
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
+                .picaxPresentationDetents([.medium, .large])
         }
         .sheet(isPresented: $showsFilterSheet) {
             DownloadAdvancedFilterSheet(
@@ -60,8 +59,7 @@ struct DownloadListPage: View {
                 sortOption: $sortOption,
                 sortDirection: $sortDirection
             )
-            .presentationDetents([.medium, .large])
-            .presentationDragIndicator(.visible)
+            .picaxPresentationDetents([.medium, .large])
         }
         .fileExporter(
             isPresented: $showsArchiveExporter,
@@ -98,10 +96,9 @@ struct DownloadListPage: View {
                 selectedRecord = nil
                 searchRequest = request
             }
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
+                .picaxPresentationDetents([.medium, .large])
         }
-        .navigationDestination(item: $readerRequest) { request in
+        .picaxNavigationDestination(item: $readerRequest) { request in
             ComicReaderPage(
                 detail: request.detail,
                 initialChapterIndex: request.initialChapterIndex,
@@ -123,28 +120,28 @@ struct DownloadListPage: View {
                 }
             )
         }
-        .navigationDestination(item: $readingListRequest) { request in
+        .picaxNavigationDestination(item: $readingListRequest) { request in
             ReadingListReaderPage(request: request, service: service)
         }
-        .navigationDestination(item: $searchRequest) { request in
+        .picaxNavigationDestination(item: $searchRequest) { request in
             ComicSearchPage(initialQuery: request.tag.query, platform: request.tag.platform, service: service)
         }
         .task {
             refreshDisplayRecords()
         }
-        .onChange(of: downloadService.records) { _, _ in
+        .onChange(of: downloadService.records) { _ in
             refreshDisplayRecords()
         }
-        .onChange(of: selectedPlatform) { _, _ in
+        .onChange(of: selectedPlatform) { _ in
             refreshDisplayRecords()
         }
-        .onChange(of: completionFilter) { _, _ in
+        .onChange(of: completionFilter) { _ in
             refreshDisplayRecords()
         }
-        .onChange(of: sortOption) { _, _ in
+        .onChange(of: sortOption) { _ in
             refreshDisplayRecords()
         }
-        .onChange(of: sortDirection) { _, _ in
+        .onChange(of: sortDirection) { _ in
             refreshDisplayRecords()
         }
     }
@@ -396,7 +393,7 @@ private struct DownloadQueueSheet: View {
     @State private var showsClearQueueConfirmation = false
 
     var body: some View {
-        NavigationStack {
+        PicaxNavigationContainer {
             List {
                 if downloadService.tasks.isEmpty {
                     ContentUnavailableView("暂无下载任务", systemImage: "tray", description: Text("新任务会从漫画详情页加入"))
@@ -495,7 +492,7 @@ private struct DownloadAdvancedFilterSheet: View {
     @Binding var sortDirection: DownloadSortDirection
 
     var body: some View {
-        NavigationStack {
+        PicaxNavigationContainer {
             List {
                 Section("平台") {
                     Picker("平台", selection: $selectedPlatform) {

@@ -85,8 +85,7 @@ struct DownloadedComicDetailPage: View {
         .picaxNavigationBarTitleDisplayModeInline()
         .sheet(item: $commentSheet) { context in
             DownloadedLocalCommentsSheet(item: context.item, comments: context.comments)
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
+                .picaxPresentationDetents([.medium, .large])
         }
     }
 
@@ -221,7 +220,7 @@ private struct DownloadedLocalCommentsSheet: View {
     let comments: [ComicComment]
 
     var body: some View {
-        NavigationStack {
+        PicaxNavigationContainer {
             Group {
                 if comments.isEmpty {
                     ContentUnavailableView("未下载评论", systemImage: "text.bubble", description: Text("下载漫画时开启评论区选项后会保存在这里。"))

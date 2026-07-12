@@ -8,7 +8,7 @@ struct MainTabView: View {
     var body: some View {
         TabView(selection: $selectedTab) {
             ForEach(AppTab.allCases) { tab in
-                NavigationStack {
+                PicaxNavigationContainer {
                     tabContent(for: tab)
                         .navigationTitle(tab.title)
                         .toolbar {

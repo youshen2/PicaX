@@ -35,14 +35,14 @@ struct HomeToolsSection: View {
             Button {
                 openExternalURL("https://soutubot.moe/")
             } label: {
-                ToolRow(title: "图片搜索 [搜图bot酱]", subtitle: "打开搜图 bot 酱网页", systemImage: "photo.badge.magnifyingglass")
+                ToolRow(title: "图片搜索 [搜图bot酱]", subtitle: "打开搜图 bot 酱网页", systemImage: "photo")
             }
             .buttonStyle(.plain)
 
             Button {
                 openExternalURL("https://saucenao.com/")
             } label: {
-                ToolRow(title: "图片搜索 [SauceNAO]", subtitle: "打开 SauceNAO 网页", systemImage: "camera.metering.matrix")
+                ToolRow(title: "图片搜索 [SauceNAO]", subtitle: "打开 SauceNAO 网页", systemImage: "camera")
             }
             .buttonStyle(.plain)
 

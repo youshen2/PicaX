@@ -9,7 +9,7 @@ struct AuthenticationView: View {
     @State private var message: String?
 
     var body: some View {
-        NavigationStack {
+        PicaxNavigationContainer {
             ScrollView {
                 VStack(spacing: 28) {
                     AuthHeaderView(mode: mode)

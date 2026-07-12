@@ -240,13 +240,13 @@ private struct FavoritesCollectionPage: View {
         .picaxNavigationBarTitleDisplayModeInline()
         .picaxHidesTabBar()
         .searchable(text: $searchText, placement: .picaxNavigationSearch, prompt: "搜索当前收藏夹")
-        .onChange(of: searchText) { _, _ in
+        .onChange(of: searchText) { _ in
             queueFilteredComicsRefresh(resetVisibleCount: true)
             if !normalizedSearchText.isEmpty {
                 downloadSheetContext = nil
             }
         }
-        .navigationDestination(item: $readingListRequest) { request in
+        .picaxNavigationDestination(item: $readingListRequest) { request in
             ReadingListReaderPage(request: request, service: service)
         }
         .toolbar {
@@ -282,8 +282,7 @@ private struct FavoritesCollectionPage: View {
                 context: context,
                 loadTargets: loadCompleteFavoritesForDownload
             )
-            .presentationDetents([.medium, .large])
-            .presentationDragIndicator(.visible)
+            .picaxPresentationDetents([.medium, .large])
         }
         .task {
             await load()
@@ -524,7 +523,7 @@ private struct FavoriteDownloadAllSheet: View {
     @State private var feedback: FavoriteDownloadAllFeedback?
 
     var body: some View {
-        NavigationStack {
+        PicaxNavigationContainer {
             List {
                 contentSections
 

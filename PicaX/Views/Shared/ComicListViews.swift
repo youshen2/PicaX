@@ -41,10 +41,10 @@ struct ComicListSection: View {
         Group {
             comicList
         }
-        .navigationDestination(item: $detailRequest) { request in
+        .picaxNavigationDestination(item: $detailRequest) { request in
             ComicDetailPage(item: request.item, service: service)
         }
-        .navigationDestination(item: $readerRequest) { request in
+        .picaxNavigationDestination(item: $readerRequest) { request in
             ComicReaderPage(
                 detail: request.detail,
                 initialChapterIndex: 0,
@@ -52,7 +52,7 @@ struct ComicListSection: View {
                 service: service
             )
         }
-        .navigationDestination(item: $readingListRequest) { request in
+        .picaxNavigationDestination(item: $readingListRequest) { request in
             ReadingListReaderPage(request: request, service: service)
         }
     }
@@ -537,8 +537,7 @@ struct ComicListActionLink: View {
                 service: service,
                 account: platformAccounts.account(for: context.item.platform)
             )
-            .presentationDetents([.medium, .large])
-            .presentationDragIndicator(.visible)
+            .picaxPresentationDetents([.medium, .large])
         }
         .alert("打开失败", isPresented: readerErrorBinding) {
             Button("好", role: .cancel) {}
@@ -1462,14 +1461,14 @@ struct ComicSearchPage: View {
             placement: .picaxNavigationSearch,
             prompt: "搜索漫画、作者、标签"
         )
-        .searchSuggestions {
+        .picaxSearchSuggestions {
             tagSuggestions
         }
-        .searchFocused($isSearchFocused)
-        .onChange(of: query) { oldValue, newValue in
+        .picaxSearchFocused($isSearchFocused)
+        .picaxOnChange(of: query) { oldValue, newValue in
             handleSearchQueryChange(oldValue: oldValue, newValue: newValue)
         }
-        .onChange(of: isSearchFocused) { _, newValue in
+        .onChange(of: isSearchFocused) { newValue in
             handleSearchFocusChange(isFocused: newValue)
         }
         .onSubmit(of: .search) {
@@ -1479,7 +1478,7 @@ struct ComicSearchPage: View {
             }
             Task { await search(force: true) }
         }
-        .onChange(of: selectedSearchTarget) { _, _ in
+        .onChange(of: selectedSearchTarget) { _ in
             guard viewModel.hasSearched else { return }
             Task { await search(force: true) }
         }
@@ -1876,7 +1875,7 @@ private struct ComicSearchAdvancedOptionsSheet: View {
     let onApply: () -> Void
 
     var body: some View {
-        NavigationStack {
+        PicaxNavigationContainer {
             Form {
                 if configurablePlatforms.isEmpty {
                     ContentUnavailableView("暂无高级选项", systemImage: "slider.horizontal.3", description: Text("\(target.title) 当前没有可用的搜索筛选项"))

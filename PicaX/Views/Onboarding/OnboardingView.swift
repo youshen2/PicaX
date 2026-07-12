@@ -271,7 +271,7 @@ private struct TermsSheet: View {
     @State private var isShowingEmailUnavailable = false
 
     var body: some View {
-        NavigationStack {
+        PicaxNavigationContainer {
             ZStack {
                 AppColor.systemBackground
                     .ignoresSafeArea()
@@ -325,8 +325,7 @@ private struct TermsSheet: View {
         } message: {
             Text("这是一个离线软件，我们做不到发送邮件。")
         }
-        .presentationDetents([.large])
-        .presentationDragIndicator(.visible)
+        .picaxPresentationDetents([.large])
     }
 }
 

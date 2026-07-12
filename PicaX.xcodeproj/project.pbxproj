@@ -9,7 +9,6 @@
 /* Begin PBXBuildFile section */
 		6D9FF2502FEEB001008AA850 /* CryptoSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 6D9FF2522FEEB001008AA850 /* CryptoSwift */; };
 		6D9FF26A2FEEB200008AA850 /* PicaX Watch App.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 6D9FF2622FEEB200008AA850 /* PicaX Watch App.app */; platformFilter = ios; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
-		6D9FF2A02FEEE001008AA850 /* Zoomable in Frameworks */ = {isa = PBXBuildFile; productRef = 6D9FF2A22FEEE001008AA850 /* Zoomable */; };
 		6D9FF2B02FEEF001008AA850 /* CryptoSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 6D9FF2522FEEB001008AA850 /* CryptoSwift */; };
 		6D9FF3022FF01000008AA850 /* PicaXDownloadActivityWidgets.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 6D9FF3052FF01000008AA850 /* PicaXDownloadActivityWidgets.appex */; platformFilter = ios; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		6D9FF3202FF02000008AA850 /* libwebp in Frameworks */ = {isa = PBXBuildFile; productRef = 6D9FF3222FF02000008AA850 /* libwebp */; };
@@ -92,7 +91,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				6D9FF2502FEEB001008AA850 /* CryptoSwift in Frameworks */,
-				6D9FF2A02FEEE001008AA850 /* Zoomable in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -163,7 +161,6 @@
 			name = PicaX;
 			packageProductDependencies = (
 				6D9FF2522FEEB001008AA850 /* CryptoSwift */,
-				6D9FF2A22FEEE001008AA850 /* Zoomable */,
 			);
 			productName = PicaX;
 			productReference = 6D9FF2332FEEA844008AA850 /* PicaX.app */;
@@ -249,7 +246,6 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				6D9FF2512FEEB001008AA850 /* XCRemoteSwiftPackageReference "CryptoSwift" */,
-				6D9FF2A12FEEE001008AA850 /* XCRemoteSwiftPackageReference "Zoomable" */,
 				6D9FF3212FF02000008AA850 /* XCRemoteSwiftPackageReference "libwebp-Xcode" */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -493,7 +489,7 @@
 				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphonesimulator*]" = UIStatusBarStyleDefault;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
@@ -544,7 +540,7 @@
 				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphonesimulator*]" = UIStatusBarStyleDefault;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
@@ -601,7 +597,7 @@
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 4;
-				WATCHOS_DEPLOYMENT_TARGET = 26.0;
+				WATCHOS_DEPLOYMENT_TARGET = 9.0;
 			};
 			name = Debug;
 		};
@@ -636,7 +632,7 @@
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 4;
-				WATCHOS_DEPLOYMENT_TARGET = 26.0;
+				WATCHOS_DEPLOYMENT_TARGET = 9.0;
 			};
 			name = Release;
 		};
@@ -650,7 +646,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "BuildSupport/PicaXDownloadActivityWidgets-Info.plist";
-				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.1;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -682,7 +678,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "BuildSupport/PicaXDownloadActivityWidgets-Info.plist";
-				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.1;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -754,14 +750,6 @@
 				minimumVersion = 1.8.0;
 			};
 		};
-		6D9FF2A12FEEE001008AA850 /* XCRemoteSwiftPackageReference "Zoomable" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/ryohey/Zoomable.git";
-			requirement = {
-				branch = main;
-				kind = branch;
-			};
-		};
 		6D9FF3212FF02000008AA850 /* XCRemoteSwiftPackageReference "libwebp-Xcode" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/SDWebImage/libwebp-Xcode.git";
@@ -777,11 +765,6 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 6D9FF2512FEEB001008AA850 /* XCRemoteSwiftPackageReference "CryptoSwift" */;
 			productName = CryptoSwift;
-		};
-		6D9FF2A22FEEE001008AA850 /* Zoomable */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 6D9FF2A12FEEE001008AA850 /* XCRemoteSwiftPackageReference "Zoomable" */;
-			productName = Zoomable;
 		};
 		6D9FF3222FF02000008AA850 /* libwebp */ = {
 			isa = XCSwiftPackageProductDependency;

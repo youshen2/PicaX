@@ -39,19 +39,19 @@ struct ExplorePage: View {
             selectedPlatform = initialPlatform
             didInitializePlatform = true
         }
-        .onChange(of: selectedPlatform) { _, newValue in
+        .onChange(of: selectedPlatform) { newValue in
             if rememberSelectedPlatform {
                 lastSelectedPlatformID = newValue.rawValue
             }
         }
-        .onChange(of: rememberSelectedPlatform) { _, newValue in
+        .onChange(of: rememberSelectedPlatform) { newValue in
             if newValue {
                 lastSelectedPlatformID = selectedPlatform.rawValue
             } else {
                 selectedPlatform = defaultPlatform
             }
         }
-        .onChange(of: defaultPlatformID) { _, _ in
+        .onChange(of: defaultPlatformID) { _ in
             if !rememberSelectedPlatform {
                 selectedPlatform = defaultPlatform
             }

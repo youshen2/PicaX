@@ -31,7 +31,7 @@ struct LazyLocalForEach<Item: Identifiable, Content: View>: View where Item.ID: 
                     loadMoreIfNeeded(appearing: item, visibleItems: visibleItems)
                 }
         }
-        .onChange(of: items.map(\.id)) { oldIDs, newIDs in
+        .picaxOnChange(of: items.map(\.id)) { oldIDs, newIDs in
             updateVisibleCount(oldIDs: oldIDs, newIDs: newIDs)
         }
     }

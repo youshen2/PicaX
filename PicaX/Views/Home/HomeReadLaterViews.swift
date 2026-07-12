@@ -136,33 +136,34 @@ struct ReadLaterListPage: View {
         .background(AppColor.groupedBackground)
         .picaxSensitiveImageContent(!readLater.records.isEmpty)
         .navigationTitle("稍后再读")
-        .navigationDestination(item: $readingListRequest) { request in
+        .picaxNavigationDestination(item: $readingListRequest) { request in
             ReadingListReaderPage(request: request, service: service)
         }
         .toolbar {
-            if !readLater.records.isEmpty {
-                ToolbarItemGroup(placement: .picaxTopBarTrailing) {
-                    Button {
-                        readAll()
-                    } label: {
-                        Image(systemName: "play.circle")
-                    }
-                    .accessibilityLabel("阅读全部稍后再读")
-
-                    Button {
-                        downloadAll()
-                    } label: {
-                        Image(systemName: "arrow.down.circle")
-                    }
-                    .accessibilityLabel("下载全部稍后再读")
-
-                    Button(role: .destructive) {
-                        showsClearConfirmation = true
-                    } label: {
-                        Image(systemName: "trash")
-                    }
-                    .accessibilityLabel("清空稍后再读")
+            ToolbarItemGroup(placement: .picaxTopBarTrailing) {
+                Button {
+                    readAll()
+                } label: {
+                    Image(systemName: "play.circle")
                 }
+                .accessibilityLabel("阅读全部稍后再读")
+                .disabled(readLater.records.isEmpty)
+
+                Button {
+                    downloadAll()
+                } label: {
+                    Image(systemName: "arrow.down.circle")
+                }
+                .accessibilityLabel("下载全部稍后再读")
+                .disabled(readLater.records.isEmpty)
+
+                Button(role: .destructive) {
+                    showsClearConfirmation = true
+                } label: {
+                    Image(systemName: "trash")
+                }
+                .accessibilityLabel("清空稍后再读")
+                .disabled(readLater.records.isEmpty)
             }
         }
         .alert("清空稍后再读？", isPresented: $showsClearConfirmation) {

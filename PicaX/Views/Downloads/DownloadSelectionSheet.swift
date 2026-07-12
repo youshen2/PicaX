@@ -12,7 +12,7 @@ struct DownloadSelectionSheet: View {
     @State private var didApplyDefaultOptions = false
 
     var body: some View {
-        NavigationStack {
+        PicaxNavigationContainer {
             List {
                 if detail.chapters.isEmpty {
                     ContentUnavailableView("暂无可下载章节", systemImage: "tray")

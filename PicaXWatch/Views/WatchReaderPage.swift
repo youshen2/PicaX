@@ -89,7 +89,7 @@ struct WatchReaderPage: View {
         .navigationTitle(currentChapter.title)
         .toolbar {
             if !hidesReaderUI {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .primaryAction) {
                     Button {
                         presentsReaderMenu = true
                     } label: {
@@ -528,7 +528,7 @@ struct WatchReaderImageView: View {
         .task(id: loadToken) {
             await loadImage()
         }
-        .onChange(of: image.urlString) { _, _ in
+        .onChange(of: image.urlString) { _ in
             loadToken = UUID()
         }
     }

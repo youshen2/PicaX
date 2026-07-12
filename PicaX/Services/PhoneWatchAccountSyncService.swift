@@ -38,6 +38,8 @@ final class PhoneWatchAccountSyncService: NSObject, ObservableObject {
     private func sendLatestSnapshot() {
         guard WCSession.isSupported() else { return }
         let session = WCSession.default
+        guard canSendSnapshot(to: session) else { return }
+
         let message = WatchAccountSyncEnvelope.message(for: latestSnapshot)
 
         do {
@@ -53,6 +55,15 @@ final class PhoneWatchAccountSyncService: NSObject, ObservableObject {
                 }
             }
         }
+    }
+
+    private func canSendSnapshot(to session: WCSession) -> Bool {
+        guard session.activationState == .activated,
+              session.isPaired,
+              session.isWatchAppInstalled else {
+            return false
+        }
+        return true
     }
 }
 

@@ -56,7 +56,7 @@ struct ReaderImageView: View {
             }
             await loadImage()
         }
-        .onChange(of: image.urlString) { _, _ in
+        .onChange(of: image.urlString) { _ in
             resetLocalImageState()
         }
     }
@@ -274,6 +274,11 @@ final class ReaderContinuousZoomUIView<Content: View>: UIView, UIScrollViewDeleg
         hostingController = UIHostingController(rootView: rootView)
         super.init(frame: .zero)
         setup()
+    }
+
+    @inline(never)
+    deinit {
+        scrollView.delegate = nil
     }
 
     required init?(coder: NSCoder) {

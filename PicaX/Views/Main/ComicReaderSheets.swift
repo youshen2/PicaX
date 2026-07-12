@@ -267,16 +267,15 @@ struct ReaderChapterPickerSheet: View {
     }
 
     var body: some View {
-        NavigationStack {
+        PicaxNavigationContainer {
             content
                 .navigationTitle(selectedTab.title(hasReadingList: listContext != nil))
                 .toolbar {
                     #if os(iOS)
-                    if selectedTab == .readingList, let listContext {
-                        ToolbarItem(placement: .picaxTopBarLeading) {
-                            EditButton()
-                                .disabled(listContext.entries.isEmpty)
-                        }
+                    ToolbarItem(placement: .picaxTopBarLeading) {
+                        EditButton()
+                            .opacity(selectedTab == .readingList && listContext != nil ? 1 : 0)
+                            .disabled(selectedTab != .readingList || listContext?.entries.isEmpty != false)
                     }
                     #endif
 

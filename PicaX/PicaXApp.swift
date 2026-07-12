@@ -48,7 +48,7 @@ struct PicaXApp: App {
                         platformAccountService.account(for: platform)
                     }
                 }
-                .onChange(of: scenePhase) { _, newValue in
+                .onChange(of: scenePhase) { newValue in
                     switch newValue {
                     case .active:
                         downloadService.applicationDidBecomeActive()
@@ -64,7 +64,7 @@ struct PicaXApp: App {
         #if os(iOS)
         baseContent
             .onAppear(perform: syncAccountsToWatch)
-            .onChange(of: platformAccountService.accounts) { _, _ in
+            .onChange(of: platformAccountService.accounts) { _ in
                 syncAccountsToWatch()
             }
             .onReceive(NotificationCenter.default.publisher(for: .picaxLocalFavoritesDidChange)) { _ in

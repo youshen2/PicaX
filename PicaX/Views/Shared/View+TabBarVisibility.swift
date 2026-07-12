@@ -1,5 +1,9 @@
 import SwiftUI
 
+#if os(iOS)
+import UIKit
+#endif
+
 private let picaxTabBarVisibilityAnimation = Animation.easeInOut(duration: 0.3)
 
 private struct PicaxTabBarVisibilityActionKey: EnvironmentKey {
@@ -29,9 +33,15 @@ extension View {
         setHidden: @escaping (UUID, Bool) -> Void
     ) -> some View {
         #if os(iOS)
-        toolbar(isVisible ? .visible : .hidden, for: .tabBar)
-            .animation(picaxTabBarVisibilityAnimation, value: isVisible)
-            .environment(\.picaxSetTabBarHidden, setHidden)
+        if #available(iOS 16.0, *) {
+            toolbar(isVisible ? .visible : .hidden, for: .tabBar)
+                .animation(picaxTabBarVisibilityAnimation, value: isVisible)
+                .environment(\.picaxSetTabBarHidden, setHidden)
+        } else {
+            background(PicaxLegacyTabBarVisibilityBridge(isVisible: isVisible))
+                .animation(picaxTabBarVisibilityAnimation, value: isVisible)
+                .environment(\.picaxSetTabBarHidden, setHidden)
+        }
         #else
         self
         #endif
@@ -48,6 +58,43 @@ extension View {
 }
 
 #if os(iOS)
+private struct PicaxLegacyTabBarVisibilityBridge: UIViewControllerRepresentable {
+    let isVisible: Bool
+
+    func makeUIViewController(context: Context) -> Controller {
+        Controller(isVisible: isVisible)
+    }
+
+    func updateUIViewController(_ controller: Controller, context: Context) {
+        controller.isVisible = isVisible
+        controller.updateTabBarVisibility()
+    }
+
+    final class Controller: UIViewController {
+        var isVisible: Bool
+
+        init(isVisible: Bool) {
+            self.isVisible = isVisible
+            super.init(nibName: nil, bundle: nil)
+            view.isHidden = true
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) {
+            fatalError("init(coder:) has not been implemented")
+        }
+
+        override func viewDidAppear(_ animated: Bool) {
+            super.viewDidAppear(animated)
+            updateTabBarVisibility()
+        }
+
+        func updateTabBarVisibility() {
+            tabBarController?.tabBar.isHidden = !isVisible
+        }
+    }
+}
+
 private struct PicaxTabBarVisibilityModifier: ViewModifier {
     @Environment(\.picaxSetTabBarHidden) private var setTabBarHidden
     @State private var requestID = UUID()
@@ -61,7 +108,7 @@ private struct PicaxTabBarVisibilityModifier: ViewModifier {
             .onDisappear {
                 setTabBarHidden(requestID, false)
             }
-            .onChange(of: hidden) { _, newValue in
+            .onChange(of: hidden) { newValue in
                 setTabBarHidden(requestID, newValue)
             }
     }

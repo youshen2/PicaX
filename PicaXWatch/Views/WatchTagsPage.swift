@@ -42,7 +42,7 @@ struct WatchTagsPage: View {
             await load()
         }
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItem(placement: .primaryAction) {
                 Button {
                     Task { await load(force: true) }
                 } label: {

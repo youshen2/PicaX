@@ -32,4 +32,12 @@ enum AppColor {
         Color(.tertiarySystemGroupedBackground)
         #endif
     }
+
+    static var separator: Color {
+        #if os(macOS)
+        Color(nsColor: .separatorColor)
+        #else
+        Color(.separator)
+        #endif
+    }
 }

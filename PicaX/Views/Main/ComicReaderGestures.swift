@@ -49,31 +49,52 @@ struct ReaderInteractionGestureModifier: ViewModifier {
     @State private var tapSuppressionUntil = Date.distantPast
 
     func body(content: Content) -> some View {
-        let content = content
+        let baseContent = content
             .contentShape(Rectangle())
-            .simultaneousGesture(tapMovementSuppressionGesture)
 
+        #if os(iOS)
+        if #available(iOS 17.0, *) {
+            gestureContent(baseContent.simultaneousGesture(tapMovementSuppressionGesture))
+        } else {
+            gestureContent(baseContent)
+        }
+        #else
+        gestureContent(baseContent.simultaneousGesture(tapMovementSuppressionGesture))
+        #endif
+    }
+
+    @ViewBuilder
+    private func gestureContent<GestureContent: View>(_ content: GestureContent) -> some View {
         switch mode {
         case .single:
             if doubleTapZoomEnabled {
-                content
-                    .simultaneousGesture(singleTapGesture)
+                singleTapContent(content)
                     .simultaneousGesture(doubleTapCancellationGesture)
             } else {
-                content
-                    .simultaneousGesture(singleTapGesture)
+                singleTapContent(content)
             }
         case .double:
             if doubleTapZoomEnabled {
-                content
-                    .simultaneousGesture(singleTapGesture)
+                singleTapContent(content)
                     .simultaneousGesture(doubleTapCancellationGesture)
             } else {
-                content
-                    .simultaneousGesture(singleTapGesture)
+                singleTapContent(content)
                     .simultaneousGesture(TapGesture(count: 2).onEnded { _ in toggleUI() })
             }
         }
+    }
+
+    @ViewBuilder
+    private func singleTapContent<GestureContent: View>(_ content: GestureContent) -> some View {
+        #if os(iOS)
+        if #available(iOS 16.0, *) {
+            content.simultaneousGesture(singleTapGesture)
+        } else {
+            content.simultaneousGesture(legacySingleTapGesture)
+        }
+        #else
+        content.simultaneousGesture(singleTapGesture)
+        #endif
     }
 
     private var tapMovementSuppressionGesture: some Gesture {
@@ -90,9 +111,22 @@ struct ReaderInteractionGestureModifier: ViewModifier {
             }
     }
 
+    @available(iOS 16.0, macOS 13.0, *)
     private var singleTapGesture: some Gesture {
         SpatialTapGesture(count: 1, coordinateSpace: .local)
             .onEnded { value in
+                if doubleTapZoomEnabled {
+                    scheduleDelayedTap(at: value.location)
+                } else {
+                    handleTap(at: value.location)
+                }
+            }
+    }
+
+    private var legacySingleTapGesture: some Gesture {
+        DragGesture(minimumDistance: 0, coordinateSpace: .local)
+            .onEnded { value in
+                guard !shouldSuppressTap(for: value.translation) else { return }
                 if doubleTapZoomEnabled {
                     scheduleDelayedTap(at: value.location)
                 } else {

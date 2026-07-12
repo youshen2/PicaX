@@ -18,11 +18,11 @@ final class DownloadProgressPresentationService {
     private var lastNotificationDate = Date.distantPast
     private var pendingNotificationSnapshot: DownloadProgressPresentationSnapshot?
     private var scheduledNotificationTask: Task<Void, Never>?
+    private var lastActivitySnapshot: DownloadProgressPresentationSnapshot?
 
     #if canImport(ActivityKit)
     @available(iOS 16.1, *)
     private typealias DownloadActivity = Activity<PicaXDownloadActivityAttributes>
-    private var lastActivityState: PicaXDownloadActivityAttributes.ContentState?
     #endif
 
     init(
@@ -70,7 +70,7 @@ final class DownloadProgressPresentationService {
         } else if scheduledNotificationTask == nil {
             let delay = max(updateInterval - elapsed, 0.2)
             scheduledNotificationTask = Task { [weak self] in
-                try? await Task.sleep(for: .seconds(delay))
+                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
                 self?.presentPendingNotification()
             }
         }
@@ -160,21 +160,33 @@ final class DownloadProgressPresentationService {
                 activeTaskCount: snapshot.activeTaskCount,
                 queuedTaskCount: snapshot.queuedTaskCount
             )
-            lastActivityState = state
+            lastActivitySnapshot = snapshot
 
             if let activity = DownloadActivity.activities.first {
-                await activity.update(ActivityContent(state: state, staleDate: nil))
+                if #available(iOS 16.2, *) {
+                    await activity.update(ActivityContent(state: state, staleDate: nil))
+                } else {
+                    await activity.update(using: state)
+                }
                 return
             }
 
             guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
 
             let attributes = PicaXDownloadActivityAttributes(activityID: Self.activityID)
-            _ = try? DownloadActivity.request(
-                attributes: attributes,
-                content: ActivityContent(state: state, staleDate: nil),
-                pushType: nil
-            )
+            if #available(iOS 16.2, *) {
+                _ = try? DownloadActivity.request(
+                    attributes: attributes,
+                    content: ActivityContent(state: state, staleDate: nil),
+                    pushType: nil
+                )
+            } else {
+                _ = try? DownloadActivity.request(
+                    attributes: attributes,
+                    contentState: state,
+                    pushType: nil
+                )
+            }
         }
         #endif
     }
@@ -191,21 +203,37 @@ final class DownloadProgressPresentationService {
     #if canImport(ActivityKit)
     @available(iOS 16.1, *)
     private func endLiveActivityIfAvailable() async {
-        let fallbackState = PicaXDownloadActivityAttributes.ContentState(
-            title: "下载已结束",
-            detail: "没有正在进行的下载任务",
-            progress: 1,
-            completedUnitCount: 1,
-            totalUnitCount: 1,
-            activeTaskCount: 0,
-            queuedTaskCount: 0
-        )
-        let content = ActivityContent(state: lastActivityState ?? fallbackState, staleDate: nil)
-
-        for activity in DownloadActivity.activities {
-            await activity.end(content, dismissalPolicy: .immediate)
+        let state: PicaXDownloadActivityAttributes.ContentState
+        if let snapshot = lastActivitySnapshot {
+            state = PicaXDownloadActivityAttributes.ContentState(
+                title: snapshot.title,
+                detail: snapshot.statusText,
+                progress: snapshot.progress,
+                completedUnitCount: snapshot.completedUnitCount,
+                totalUnitCount: snapshot.totalUnitCount,
+                activeTaskCount: snapshot.activeTaskCount,
+                queuedTaskCount: snapshot.queuedTaskCount
+            )
+        } else {
+            state = PicaXDownloadActivityAttributes.ContentState(
+                title: "下载已结束",
+                detail: "没有正在进行的下载任务",
+                progress: 1,
+                completedUnitCount: 1,
+                totalUnitCount: 1,
+                activeTaskCount: 0,
+                queuedTaskCount: 0
+            )
         }
-        lastActivityState = nil
+        for activity in DownloadActivity.activities {
+            if #available(iOS 16.2, *) {
+                let content = ActivityContent(state: state, staleDate: nil)
+                await activity.end(content, dismissalPolicy: .immediate)
+            } else {
+                await activity.end(using: state, dismissalPolicy: .immediate)
+            }
+        }
+        lastActivitySnapshot = nil
     }
     #endif
 }

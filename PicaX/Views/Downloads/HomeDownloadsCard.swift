@@ -67,8 +67,7 @@ struct HomeDownloadsCard: View {
                 selectedRecord = nil
                 openSearch(request)
             }
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
+                .picaxPresentationDetents([.medium, .large])
         }
     }
 }

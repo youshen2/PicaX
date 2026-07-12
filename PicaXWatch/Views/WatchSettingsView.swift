@@ -132,7 +132,7 @@ struct WatchSearchSettingsPage: View {
             }
         }
         .navigationTitle("搜索")
-        .onChange(of: maxSearchHistoryRecords) { _, _ in
+        .onChange(of: maxSearchHistoryRecords) { _ in
             WatchSearchHistoryStore().trimToSettingsLimit()
         }
     }
@@ -753,10 +753,10 @@ struct WatchCacheSettingsPage: View {
             WatchImageCacheService.configure()
             WatchComicDetailCacheService.configure()
         }
-        .onChange(of: maxDiskSizeMB) { _, _ in
+        .onChange(of: maxDiskSizeMB) { _ in
             WatchImageCacheService.configure()
         }
-        .onChange(of: maxDetailDiskSizeMB) { _, _ in
+        .onChange(of: maxDetailDiskSizeMB) { _ in
             WatchComicDetailCacheService.configure()
         }
     }

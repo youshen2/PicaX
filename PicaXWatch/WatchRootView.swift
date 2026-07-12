@@ -9,7 +9,18 @@ struct WatchRootView: View {
                 WatchDiscoveryPage()
                 WatchTagsPage()
             }
-            .tabViewStyle(.verticalPage)
+            .watchRootTabStyle()
+        }
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func watchRootTabStyle() -> some View {
+        if #available(watchOS 10.0, *) {
+            tabViewStyle(.verticalPage)
+        } else {
+            tabViewStyle(.page)
         }
     }
 }

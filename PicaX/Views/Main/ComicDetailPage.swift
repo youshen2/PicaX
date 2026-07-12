@@ -58,13 +58,11 @@ struct ComicDetailPage: View {
                 service: service,
                 account: platformAccounts.account(for: context.item.platform)
             )
-            .presentationDetents([.medium, .large])
-            .presentationDragIndicator(.visible)
+            .picaxPresentationDetents([.medium, .large])
         }
         .sheet(item: $downloadContext) { context in
             DownloadSelectionSheet(detail: context.detail)
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
+                .picaxPresentationDetents([.medium, .large])
         }
         .toolbar {
             ToolbarItemGroup(placement: .picaxTopBarTrailing) {
@@ -239,7 +237,7 @@ private struct ComicDetailContent: View {
             }
         }
         .picaxSensitiveImageContent(detail.item.coverURL != nil)
-        .navigationDestination(item: $readerTarget) { target in
+        .picaxNavigationDestination(item: $readerTarget) { target in
             ComicReaderPage(
                 detail: detail,
                 initialChapterIndex: target.chapterIndex,
@@ -247,7 +245,7 @@ private struct ComicDetailContent: View {
                 service: service
             )
         }
-        .navigationDestination(item: $localReaderRequest) { request in
+        .picaxNavigationDestination(item: $localReaderRequest) { request in
             ComicReaderPage(
                 detail: request.detail,
                 initialChapterIndex: request.initialChapterIndex,
@@ -269,13 +267,13 @@ private struct ComicDetailContent: View {
                 }
             )
         }
-        .navigationDestination(item: $selectedTag) { tag in
+        .picaxNavigationDestination(item: $selectedTag) { tag in
             ComicTagComicsPage(tag: tag, service: service)
         }
-        .navigationDestination(item: $relatedDetailRequest) { request in
+        .picaxNavigationDestination(item: $relatedDetailRequest) { request in
             ComicDetailPage(item: request.item, service: service)
         }
-        .navigationDestination(item: $relatedReaderRequest) { request in
+        .picaxNavigationDestination(item: $relatedReaderRequest) { request in
             ComicReaderPage(
                 detail: request.detail,
                 initialChapterIndex: 0,
@@ -289,8 +287,7 @@ private struct ComicDetailContent: View {
                 service: service,
                 account: platformAccounts.account(for: context.item.platform)
             )
-            .presentationDetents([.medium, .large])
-            .presentationDragIndicator(.visible)
+            .picaxPresentationDetents([.medium, .large])
             .interactiveDismissDisabled()
         }
     }
@@ -694,8 +691,7 @@ private struct ComicDetailHeader: View {
                 showsChapters = false
                 onOpenReader(ComicReaderTarget(chapterIndex: index, ignoresProgress: true))
             }
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
+                .picaxPresentationDetents([.medium, .large])
         }
         .task(id: "\(detail.item.coverURLString)-\(usesCoverAccent)") {
             guard usesCoverAccent else {
@@ -811,7 +807,7 @@ private struct ChapterListSheet: View {
     var onSelect: ((Int) -> Void)?
 
     var body: some View {
-        NavigationStack {
+        PicaxNavigationContainer {
             List {
                 Section {
                     ForEach(sortedChapterDisplayItems) { item in
@@ -1068,7 +1064,7 @@ private struct ComicCommentsSheet: View {
     }
 
     var body: some View {
-        NavigationStack {
+        PicaxNavigationContainer {
             Group {
                 switch viewModel.state {
                 case .idle, .loading:
@@ -1125,8 +1121,7 @@ private struct ComicCommentsSheet: View {
             }
             .sheet(item: $composeContext) { _ in
                 CommentComposeSheet(viewModel: viewModel)
-                    .presentationDetents([.medium])
-                    .presentationDragIndicator(.visible)
+                    .picaxPresentationDetents([.medium])
                     .interactiveDismissDisabled(viewModel.isPosting)
             }
         }
@@ -1143,12 +1138,10 @@ private struct CommentComposeSheet: View {
     @ObservedObject var viewModel: ComicCommentsViewModel
 
     var body: some View {
-        NavigationStack {
+        PicaxNavigationContainer {
             List {
                 Section {
-                    TextField("写评论", text: $viewModel.draft, axis: .vertical)
-                        .lineLimit(4...10)
-                        .disabled(viewModel.isPosting)
+                    commentEditor
                 }
             }
             .picaxInsetGroupedListStyle()
@@ -1191,6 +1184,19 @@ private struct CommentComposeSheet: View {
             }
         }
     }
+
+    @ViewBuilder
+    private var commentEditor: some View {
+        if #available(iOS 16.0, macOS 13.0, *) {
+            TextField("写评论", text: $viewModel.draft, axis: .vertical)
+                .lineLimit(4...10)
+                .disabled(viewModel.isPosting)
+        } else {
+            TextEditor(text: $viewModel.draft)
+                .frame(minHeight: 96, maxHeight: 220)
+                .disabled(viewModel.isPosting)
+        }
+    }
 }
 
 struct FavoriteSelectionSheet: View {
@@ -1212,7 +1218,7 @@ struct FavoriteSelectionSheet: View {
     }
 
     var body: some View {
-        NavigationStack {
+        PicaxNavigationContainer {
             favoriteList
             .picaxInsetGroupedListStyle()
             .navigationTitle("选择收藏夹")
@@ -1520,7 +1526,7 @@ private struct ZoomableCoverPreview: View {
     @State private var lastOffset: CGSize = .zero
 
     var body: some View {
-        NavigationStack {
+        PicaxNavigationContainer {
             ZStack {
                 Color.black.ignoresSafeArea()
                 CachedRemoteImageView(url: url, accentColor: accentColor, contentMode: .fit)

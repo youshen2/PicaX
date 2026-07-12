@@ -73,7 +73,6 @@ struct ComicReaderPage: View {
     @State private var presentedChapterSheetTab: ReaderChapterSheetTab?
     @State private var hidesReaderUI = false
     @State private var pagedPageIndex = 0
-    @State private var continuousScrollPosition = ScrollPosition()
     @State private var continuousScrollBridge = ReaderContinuousScrollBridge()
     @State private var continuousScrollTracker = ReaderContinuousScrollTracker()
     @State private var continuousScrollRestoreTask: Task<Void, Never>?
@@ -291,7 +290,7 @@ struct ComicReaderPage: View {
                 .accessibilityLabel("更多")
             }
         }
-        .navigationDestination(item: $detailRequest) { request in
+        .picaxNavigationDestination(item: $detailRequest) { request in
             ComicDetailPage(item: request.item, service: service)
         }
         .sheet(item: $presentedChapterSheetTab) { tab in
@@ -307,15 +306,13 @@ struct ComicReaderPage: View {
                 presentedChapterSheetTab = nil
                 requestChapterLoad(at: index)
             }
-            .presentationDetents([.medium, .large])
-            .presentationDragIndicator(.visible)
+            .picaxPresentationDetents([.medium, .large])
         }
         .sheet(item: $progressSelectionContext) { context in
             ReaderProgressSelectionDialog(context: context) { pageIndex in
                 requestProgressJump(to: pageIndex, chapterIndex: context.chapterIndex)
             }
-            .presentationDetents([.height(280), .medium])
-            .presentationDragIndicator(.visible)
+            .picaxPresentationDetents([.height(280), .medium])
         }
         .task {
             migrateReaderVisibilityDefaultsIfNeeded()
@@ -332,7 +329,7 @@ struct ComicReaderPage: View {
             isAutoPagingTurnInFlight = false
             autoPagingCommentActionChapterIndex = nil
         }
-        .onChange(of: scenePhase) { _, newValue in
+        .onChange(of: scenePhase) { newValue in
             switch newValue {
             case .active:
                 startReadingDurationSessionIfNeeded()
@@ -343,7 +340,7 @@ struct ComicReaderPage: View {
                 break
             }
         }
-        .onChange(of: viewModel.currentChapterIndex) { _, _ in
+        .onChange(of: viewModel.currentChapterIndex) { _ in
             autoPagingCommentActionChapterIndex = nil
         }
     }
@@ -434,7 +431,7 @@ struct ComicReaderPage: View {
                         style: readerProgressStyle,
                         showsPageLabel: showsPageLabel,
                         backgroundOpacity: progressBackgroundOpacity,
-                        usesGlassBackground: usesProgressGlassBackground
+                        usesGlassBackground: effectiveUsesProgressGlassBackground
                     )
                     .contentShape(Capsule(style: .continuous))
                     .onTapGesture {
@@ -452,13 +449,29 @@ struct ComicReaderPage: View {
                     ReaderSystemStatusOverlay(
                         style: readerSystemStatus,
                         backgroundOpacity: progressBackgroundOpacity,
-                        usesGlassBackground: usesSystemStatusGlassBackground
+                        usesGlassBackground: effectiveUsesSystemStatusGlassBackground
                     )
                     .padding(readerSystemStatusInsets)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: readerSystemStatusPosition.alignment)
                     .allowsHitTesting(false)
                 }
             }
+        }
+    }
+
+    private var effectiveUsesProgressGlassBackground: Bool {
+        supportsLiquidGlassBackground && usesProgressGlassBackground
+    }
+
+    private var effectiveUsesSystemStatusGlassBackground: Bool {
+        supportsLiquidGlassBackground && usesSystemStatusGlassBackground
+    }
+
+    private var supportsLiquidGlassBackground: Bool {
+        if #available(iOS 26, macOS 26, visionOS 26, *) {
+            return true
+        } else {
+            return false
         }
     }
 
@@ -567,31 +580,7 @@ struct ComicReaderPage: View {
                 }
                 .background(Color.black)
                 .ignoresSafeArea(.container)
-                .scrollPosition($continuousScrollPosition)
-                .readerContinuousScrollBridge(continuousScrollBridge)
-                .onChange(of: continuousScrollPosition) { _, newValue in
-                    if let point = newValue.point {
-                        continuousScrollTracker.updateScrollY(point.y)
-                    }
-                    updateContinuousLoadableImages(
-                        images: images,
-                        displayWidth: geometry.size.width,
-                        fallbackViewportHeight: geometry.size.height
-                    )
-                    syncContinuousVisiblePage(
-                        images: images,
-                        displayWidth: geometry.size.width,
-                        fallbackViewportHeight: geometry.size.height,
-                        targetPixelWidth: targetPixelWidth
-                    )
-                }
-                .onScrollGeometryChange(for: ReaderScrollMetrics.self) { geometry in
-                    ReaderScrollMetrics(
-                        offsetY: geometry.contentOffset.y,
-                        contentHeight: geometry.contentSize.height,
-                        visibleHeight: geometry.visibleRect.height
-                    )
-                } action: { _, metrics in
+                .readerContinuousScrollBridge(continuousScrollBridge) { metrics in
                     continuousScrollTracker.updateMetrics(metrics)
                     updateContinuousLoadableImages(
                         images: images,
@@ -640,14 +629,14 @@ struct ComicReaderPage: View {
                     updateReadingPage(viewModel.currentPageIndex, totalPages: images.count, targetPixelWidth: targetPixelWidth, force: true)
                     scrollToInitialPage(proxy: proxy)
                 }
-                .onChange(of: viewModel.currentChapterIndex) { _, _ in
+                .onChange(of: viewModel.currentChapterIndex) { _ in
                     resetContinuousImageState()
                     continuousScrollTracker.reset()
                     scrollContinuous(toY: 0, animated: false)
                     focusContinuousLoadableImage(viewModel.currentPageIndex, images: images)
                     scrollToInitialPage(proxy: proxy)
                 }
-                .onChange(of: progressJumpRequest) { _, request in
+                .onChange(of: progressJumpRequest) { request in
                     handleProgressJumpRequest(
                         request,
                         images: images,
@@ -713,16 +702,16 @@ struct ComicReaderPage: View {
                         let pageIndex = syncPagedSelection(images: images, targetPixelWidth: targetPixelWidth)
                         scrollToHorizontalPagedSelection(pageIndex, proxy: proxy)
                     }
-                    .onChange(of: viewModel.currentChapterIndex) { _, _ in
+                    .onChange(of: viewModel.currentChapterIndex) { _ in
                         let pageIndex = syncPagedSelection(images: images, targetPixelWidth: targetPixelWidth)
                         scrollToHorizontalPagedSelection(pageIndex, proxy: proxy)
                     }
-                    .onChange(of: pagedPageIndex) { _, newValue in
+                    .onChange(of: pagedPageIndex) { newValue in
                         if images.indices.contains(newValue) {
                             updateReadingPage(newValue, totalPages: images.count, targetPixelWidth: targetPixelWidth)
                         }
                     }
-                    .onChange(of: progressJumpRequest) { _, request in
+                    .onChange(of: progressJumpRequest) { request in
                         handleProgressJumpRequest(
                             request,
                             images: images,
@@ -785,9 +774,7 @@ struct ComicReaderPage: View {
 
         scroll
             .modifier(ReaderPagingScrollModifier())
-            .onScrollGeometryChange(for: CGFloat.self) { geometry in
-                geometry.contentOffset.x
-            } action: { oldValue, newValue in
+            .readerScrollOffsetObserver(axis: .horizontal) { oldValue, newValue in
                 syncPagedScrollOffset(
                     oldValue: oldValue,
                     newValue: newValue,
@@ -842,16 +829,16 @@ struct ComicReaderPage: View {
                         let pageIndex = syncPagedSelection(images: images, targetPixelWidth: targetPixelWidth)
                         scrollToPagedSelection(pageIndex, proxy: proxy)
                     }
-                    .onChange(of: viewModel.currentChapterIndex) { _, _ in
+                    .onChange(of: viewModel.currentChapterIndex) { _ in
                         let pageIndex = syncPagedSelection(images: images, targetPixelWidth: targetPixelWidth)
                         scrollToPagedSelection(pageIndex, proxy: proxy)
                     }
-                    .onChange(of: pagedPageIndex) { _, newValue in
+                    .onChange(of: pagedPageIndex) { newValue in
                         if images.indices.contains(newValue) {
                             updateReadingPage(newValue, totalPages: images.count, targetPixelWidth: targetPixelWidth)
                         }
                     }
-	                    .onChange(of: progressJumpRequest) { _, request in
+	                    .onChange(of: progressJumpRequest) { request in
 	                        handleProgressJumpRequest(
 	                            request,
 	                            images: images,
@@ -915,9 +902,7 @@ struct ComicReaderPage: View {
 
         scroll
             .modifier(ReaderPagingScrollModifier())
-            .onScrollGeometryChange(for: CGFloat.self) { geometry in
-                geometry.contentOffset.y
-            } action: { oldValue, newValue in
+            .readerScrollOffsetObserver(axis: .vertical) { oldValue, newValue in
                 syncPagedScrollOffset(
                     oldValue: oldValue,
                     newValue: newValue,
@@ -977,18 +962,7 @@ struct ComicReaderPage: View {
 
     private func scrollContinuous(toY y: CGFloat, animated: Bool) {
         let targetY = max(y, 0)
-        _ = animated && continuousScrollBridge.scroll(toY: targetY, animated: true)
-
-        let update = {
-            continuousScrollPosition.scrollTo(y: targetY)
-        }
-        if animated {
-            withAnimation(readerPageTurnAnimation, update)
-        } else {
-            var transaction = Transaction()
-            transaction.disablesAnimations = true
-            withTransaction(transaction, update)
-        }
+        _ = continuousScrollBridge.scroll(toY: targetY, animated: animated)
         continuousScrollTracker.updateScrollY(targetY)
     }
 
@@ -1213,7 +1187,7 @@ struct ComicReaderPage: View {
         proxy: ScrollViewProxy
     ) async {
         guard viewportHeight.isFinite, viewportHeight > 0 else { return }
-        let currentY = continuousScrollTracker.effectiveScrollY(fallback: continuousScrollPosition.point?.y)
+        let currentY = continuousScrollTracker.effectiveScrollY(fallback: nil)
         let maxY = continuousScrollTracker.maxScrollY(fallbackViewportHeight: viewportHeight)
         let distance = max(viewportHeight * CGFloat(boundedTapPagingDistancePercent) / 100, 1)
 
@@ -1699,7 +1673,7 @@ struct ComicReaderPage: View {
         let candidatePage: Int
         switch readerReadingMode {
         case .topToBottomContinuous:
-            continuousScrollTracker.effectiveScrollY(fallback: continuousScrollPosition.point?.y)
+            continuousScrollTracker.effectiveScrollY(fallback: nil)
             candidatePage = viewModel.currentPageIndex
         case .topToBottom, .leftToRight, .rightToLeft:
             candidatePage = pagedPageIndex

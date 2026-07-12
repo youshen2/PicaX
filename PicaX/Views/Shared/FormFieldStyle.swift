@@ -8,7 +8,7 @@ private struct FormFieldStyle: ViewModifier {
             .background(.background, in: RoundedRectangle(cornerRadius: 8))
             .overlay {
                 RoundedRectangle(cornerRadius: 8)
-                    .stroke(.separator.opacity(0.45), lineWidth: 1)
+                    .stroke(AppColor.separator.opacity(0.45), lineWidth: 1)
             }
     }
 }

@@ -42,7 +42,7 @@ struct HomePage: View {
         Group {
             homeList
         }
-        .navigationDestination(item: $downloadedReaderRequest) { request in
+        .picaxNavigationDestination(item: $downloadedReaderRequest) { request in
             ComicReaderPage(
                 detail: request.detail,
                 initialChapterIndex: request.initialChapterIndex,
@@ -64,14 +64,14 @@ struct HomePage: View {
                 }
             )
         }
-        .navigationDestination(item: $downloadedSearchRequest) { request in
+        .picaxNavigationDestination(item: $downloadedSearchRequest) { request in
             ComicSearchPage(initialQuery: request.tag.query, platform: request.tag.platform, service: contentService)
         }
-        .navigationDestination(item: $toolDetailRequest) { request in
+        .picaxNavigationDestination(item: $toolDetailRequest) { request in
             ComicDetailPage(item: request.item, service: contentService)
                 .picaxHidesTabBar()
         }
-        .navigationDestination(item: $selectedReadingDurationRecordID) { recordID in
+        .picaxNavigationDestination(item: $selectedReadingDurationRecordID) { recordID in
             if let record = readingDuration.records.first(where: { $0.id == recordID }) {
                 ReadingDurationDetailPage(record: record, service: contentService)
                     .picaxHidesTabBar()
@@ -121,7 +121,7 @@ struct HomePage: View {
         .onAppear {
             checkClipboardOnAppearIfNeeded()
         }
-        .onChange(of: scenePhase) { _, newValue in
+        .onChange(of: scenePhase) { newValue in
             if newValue == .active, !checksClipboardOnlyOnLaunch {
                 checkClipboardIfNeeded()
             }
