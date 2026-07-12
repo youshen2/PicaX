@@ -1049,12 +1049,19 @@ final class DownloadService: ObservableObject {
         try Task.checkCancellation()
         try checkTaskCanContinue(taskID)
         let startedAt = Date()
-        let data = try await loadImageDataWithRetry(urlString: urlString)
+        let downloadedData = try await loadImageDataWithRetry(urlString: urlString)
         try Task.checkCancellation()
         try checkTaskCanContinue(taskID)
+        let data: Data
+        if tasks.first(where: { $0.id == taskID })?.item.platform == .jmComic,
+           let imageURL = URL.picaxResolved(from: urlString) {
+            data = try JmImageScrambler.decodedDataForStorage(data: downloadedData, url: imageURL)
+        } else {
+            data = downloadedData
+        }
         let pageURL = directoryURL.appendingPathComponent(fileName(for: urlString, pageIndex: pageIndex))
         try await Self.write(data, to: pageURL)
-        try await throttleIfNeeded(downloadedBytes: data.count, startedAt: startedAt)
+        try await throttleIfNeeded(downloadedBytes: downloadedData.count, startedAt: startedAt)
         return DownloadedImagePageResult(pageIndex: pageIndex, byteCount: data.count)
     }
 

@@ -965,6 +965,23 @@ enum ReaderImageDecoder {
 enum JmImageScrambler {
     private nonisolated static let scrambleID = 220_980
 
+    enum DecodingError: LocalizedError {
+        case invalidImage
+        case cannotReorder
+        case cannotEncode
+
+        var errorDescription: String? {
+            switch self {
+            case .invalidImage:
+                "JMComic 图片数据无效，无法在下载时解密。"
+            case .cannotReorder:
+                "JMComic 图片分块重组失败。"
+            case .cannotEncode:
+                "JMComic 图片解密后无法保存。"
+            }
+        }
+    }
+
     nonisolated static func decodedImage(data: Data, url: URL, targetPixelWidth: Int?) -> PicaXPlatformImage? {
         guard let info = imageInfo(from: url),
               let segmentCount = segmentCount(epsID: info.epsID, pictureName: info.pictureName),
@@ -978,6 +995,37 @@ enum JmImageScrambler {
         }
         let finalImage = scaledImageIfNeeded(cgImage: rendered, targetPixelWidth: targetPixelWidth) ?? rendered
         return PicaXPlatformImage.picaxImage(cgImage: finalImage)
+    }
+
+    nonisolated static func decodedDataForStorage(data: Data, url: URL) throws -> Data {
+        guard let info = imageInfo(from: url),
+              let segmentCount = segmentCount(epsID: info.epsID, pictureName: info.pictureName),
+              segmentCount > 1 else {
+            return data
+        }
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let cgImage = CGImageSourceCreateImageAtIndex(source, 0, [
+                kCGImageSourceShouldCache: true,
+                kCGImageSourceShouldCacheImmediately: true
+              ] as CFDictionary) else {
+            throw DecodingError.invalidImage
+        }
+        guard let rendered = reorderedImage(cgImage: cgImage, segmentCount: segmentCount) else {
+            throw DecodingError.cannotReorder
+        }
+
+        let output = NSMutableData()
+        let sourceType = CGImageSourceGetType(source) ?? "public.jpeg" as CFString
+        guard let destination = CGImageDestinationCreateWithData(output, sourceType, 1, nil) else {
+            throw DecodingError.cannotEncode
+        }
+        CGImageDestinationAddImage(destination, rendered, [
+            kCGImageDestinationLossyCompressionQuality: 0.95
+        ] as CFDictionary)
+        guard CGImageDestinationFinalize(destination) else {
+            throw DecodingError.cannotEncode
+        }
+        return output as Data
     }
 
     private nonisolated static func imageInfo(from url: URL) -> (epsID: Int, pictureName: String)? {
