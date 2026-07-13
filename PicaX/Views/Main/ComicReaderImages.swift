@@ -965,6 +965,11 @@ enum ReaderImageDecoder {
 enum JmImageScrambler {
     private nonisolated static let scrambleID = 220_980
 
+    struct DecodedStorageImage: Sendable {
+        let data: Data
+        let fileExtension: String?
+    }
+
     enum DecodingError: LocalizedError {
         case invalidImage
         case cannotReorder
@@ -997,11 +1002,11 @@ enum JmImageScrambler {
         return PicaXPlatformImage.picaxImage(cgImage: finalImage)
     }
 
-    nonisolated static func decodedDataForStorage(data: Data, url: URL) throws -> Data {
+    nonisolated static func decodedDataForStorage(data: Data, url: URL) throws -> DecodedStorageImage {
         guard let info = imageInfo(from: url),
               let segmentCount = segmentCount(epsID: info.epsID, pictureName: info.pictureName),
               segmentCount > 1 else {
-            return data
+            return DecodedStorageImage(data: data, fileExtension: nil)
         }
         guard let source = CGImageSourceCreateWithData(data as CFData, nil),
               let cgImage = CGImageSourceCreateImageAtIndex(source, 0, [
@@ -1015,8 +1020,12 @@ enum JmImageScrambler {
         }
 
         let output = NSMutableData()
-        let sourceType = CGImageSourceGetType(source) ?? "public.jpeg" as CFString
-        guard let destination = CGImageDestinationCreateWithData(output, sourceType, 1, nil) else {
+        guard let destination = CGImageDestinationCreateWithData(
+            output,
+            "public.jpeg" as CFString,
+            1,
+            nil
+        ) else {
             throw DecodingError.cannotEncode
         }
         CGImageDestinationAddImage(destination, rendered, [
@@ -1025,7 +1034,7 @@ enum JmImageScrambler {
         guard CGImageDestinationFinalize(destination) else {
             throw DecodingError.cannotEncode
         }
-        return output as Data
+        return DecodedStorageImage(data: output as Data, fileExtension: "jpg")
     }
 
     private nonisolated static func imageInfo(from url: URL) -> (epsID: Int, pictureName: String)? {

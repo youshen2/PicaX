@@ -562,6 +562,18 @@ struct ComicReaderPage: View {
                                 .padding(.top, index == images.startIndex ? CGFloat(firstImageTopPadding) : 0)
                                 .padding(.bottom, index == images.index(before: images.endIndex) ? CGFloat(lastImageBottomPadding) : 0)
                                 .id(readerPageID(index))
+                                .background {
+                                    GeometryReader { pageGeometry in
+                                        Color.clear.preference(
+                                            key: ReaderVisiblePageFramesPreferenceKey.self,
+                                            value: [
+                                                index: pageGeometry.frame(
+                                                    in: .named(continuousReaderCoordinateSpace)
+                                                )
+                                            ]
+                                        )
+                                    }
+                                }
                         }
                         if shouldShowChapterCommentsAtEnd,
                            let chapter = currentChapter {
@@ -582,6 +594,7 @@ struct ComicReaderPage: View {
                     }
                     .padding(.vertical, 10)
                 }
+                .coordinateSpace(name: continuousReaderCoordinateSpace)
                 .background(Color.black)
                 .ignoresSafeArea(.container)
                 .readerContinuousScrollBridge(continuousScrollBridge) { metrics in
@@ -623,6 +636,14 @@ struct ComicReaderPage: View {
                     handleContinuousAutoPageTick(
                         images: images,
                         viewportHeight: geometry.size.height,
+                        targetPixelWidth: targetPixelWidth
+                    )
+                }
+                .onPreferenceChange(ReaderVisiblePageFramesPreferenceKey.self) { pageFrames in
+                    syncContinuousVisiblePage(
+                        pageFrames: pageFrames,
+                        viewportHeight: geometry.size.height,
+                        images: images,
                         targetPixelWidth: targetPixelWidth
                     )
                 }
@@ -990,6 +1011,10 @@ struct ComicReaderPage: View {
 
     private var continuousZoomResetID: String {
         "\(detail.item.platform.rawValue)-\(detail.item.id)-\(viewModel.currentChapterIndex)"
+    }
+
+    private var continuousReaderCoordinateSpace: String {
+        "reader-continuous-\(detail.item.platform.rawValue)-\(detail.item.id)-\(viewModel.currentChapterIndex)"
     }
 
     private func readerCommentsPageID() -> String {
@@ -1361,6 +1386,45 @@ struct ComicReaderPage: View {
               ) else {
             return
         }
+        updateReadingPage(pageIndex, totalPages: images.count, targetPixelWidth: targetPixelWidth)
+    }
+
+    private func syncContinuousVisiblePage(
+        pageFrames: [Int: CGRect],
+        viewportHeight: CGFloat,
+        images: [ComicChapterImage],
+        targetPixelWidth: Int?
+    ) {
+        guard readerReadingMode == .topToBottomContinuous,
+              viewportHeight.isFinite,
+              viewportHeight > 0,
+              !images.isEmpty else {
+            return
+        }
+
+        let viewport = CGRect(x: 0, y: 0, width: .greatestFiniteMagnitude, height: viewportHeight)
+        let viewportCenterY = viewportHeight / 2
+        let pageIndex = pageFrames
+            .filter { images.indices.contains($0.key) }
+            .compactMap { index, frame -> (index: Int, visibleHeight: CGFloat, centerDistance: CGFloat)? in
+                guard frame.minY.isFinite, frame.maxY.isFinite else { return nil }
+                let visibleHeight = frame.intersection(viewport).height
+                guard visibleHeight > 1 else { return nil }
+                return (
+                    index: index,
+                    visibleHeight: visibleHeight,
+                    centerDistance: abs(frame.midY - viewportCenterY)
+                )
+            }
+            .max { lhs, rhs in
+                if abs(lhs.visibleHeight - rhs.visibleHeight) > 1 {
+                    return lhs.visibleHeight < rhs.visibleHeight
+                }
+                return lhs.centerDistance > rhs.centerDistance
+            }?
+            .index
+
+        guard let pageIndex else { return }
         updateReadingPage(pageIndex, totalPages: images.count, targetPixelWidth: targetPixelWidth)
     }
 

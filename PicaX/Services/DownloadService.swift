@@ -1052,17 +1052,23 @@ final class DownloadService: ObservableObject {
         let downloadedData = try await loadImageDataWithRetry(urlString: urlString)
         try Task.checkCancellation()
         try checkTaskCanContinue(taskID)
-        let data: Data
+        let storageImage: JmImageScrambler.DecodedStorageImage
         if tasks.first(where: { $0.id == taskID })?.item.platform == .jmComic,
            let imageURL = URL.picaxResolved(from: urlString) {
-            data = try JmImageScrambler.decodedDataForStorage(data: downloadedData, url: imageURL)
+            storageImage = try JmImageScrambler.decodedDataForStorage(data: downloadedData, url: imageURL)
         } else {
-            data = downloadedData
+            storageImage = JmImageScrambler.DecodedStorageImage(data: downloadedData, fileExtension: nil)
         }
-        let pageURL = directoryURL.appendingPathComponent(fileName(for: urlString, pageIndex: pageIndex))
-        try await Self.write(data, to: pageURL)
+        let pageURL = directoryURL.appendingPathComponent(
+            fileName(
+                for: urlString,
+                pageIndex: pageIndex,
+                preferredExtension: storageImage.fileExtension
+            )
+        )
+        try await Self.write(storageImage.data, to: pageURL)
         try await throttleIfNeeded(downloadedBytes: downloadedData.count, startedAt: startedAt)
-        return DownloadedImagePageResult(pageIndex: pageIndex, byteCount: data.count)
+        return DownloadedImagePageResult(pageIndex: pageIndex, byteCount: storageImage.data.count)
     }
 
     private func checkTaskCanContinue(_ id: String) throws {
@@ -1284,8 +1290,12 @@ final class DownloadService: ObservableObject {
         "\(item.platform.rawValue)/\(safeFileName("\(item.id)-\(item.title)"))"
     }
 
-    private func fileName(for urlString: String, pageIndex: Int) -> String {
-        let ext = URL.picaxResolved(from: urlString)?.pathExtension
+    private func fileName(
+        for urlString: String,
+        pageIndex: Int,
+        preferredExtension: String? = nil
+    ) -> String {
+        let ext = preferredExtension ?? URL.picaxResolved(from: urlString)?.pathExtension
         let normalizedExt = ext?.isEmpty == false ? ext! : "jpg"
         return String(format: "%04d.%@", pageIndex + 1, normalizedExt)
     }
