@@ -12,6 +12,7 @@ import AppKit
 struct ComicReaderPage: View {
     @EnvironmentObject private var platformAccounts: PlatformAccountService
     @EnvironmentObject private var readingHistory: ReadingHistoryService
+    @EnvironmentObject private var followUpdates: FollowUpdatesService
     @EnvironmentObject private var readingDuration: ReadingDurationService
     @Environment(\.displayScale) private var displayScale
     @Environment(\.colorScheme) private var colorScheme
@@ -315,6 +316,9 @@ struct ComicReaderPage: View {
             .picaxPresentationDetents([.height(280), .medium])
         }
         .task {
+            if recordsReadingHistory {
+                followUpdates.markAsRead(item: detail.item)
+            }
             migrateReaderVisibilityDefaultsIfNeeded()
             startReadingDurationSessionIfNeeded()
             showInitialToastIfNeeded()

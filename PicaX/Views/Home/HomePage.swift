@@ -11,6 +11,7 @@ struct HomePage: View {
     @EnvironmentObject private var readLater: ReadLaterService
     @EnvironmentObject private var readingDuration: ReadingDurationService
     @EnvironmentObject private var downloadService: DownloadService
+    @EnvironmentObject private var followUpdates: FollowUpdatesService
     @Environment(\.scenePhase) private var scenePhase
 
     @AppStorage(ReadingHistoryService.Key.homeLimit) private var historyHomeLimit = 10
@@ -37,6 +38,7 @@ struct HomePage: View {
     @State private var hasCheckedClipboardOnLaunch = false
     @State private var lastCheckedClipboardValue = ""
     @State private var selectedReadingDurationRecordID: String?
+    @State private var isFollowUpdatesExpanded = false
 
     var body: some View {
         Group {
@@ -140,6 +142,9 @@ struct HomePage: View {
     }
 
     private var containsVisibleCoverContent: Bool {
+        if followUpdates.isEnabled, isFollowUpdatesExpanded, !followUpdates.updatedRecords.isEmpty {
+            return true
+        }
         if showsHistorySection, !readingHistory.latest(limit: historyHomeLimit).isEmpty {
             return true
         }
@@ -191,6 +196,55 @@ struct HomePage: View {
             } else {
                 Section("稍后再读") {
                     HomeReadLaterEntryLink(service: contentService)
+                }
+            }
+
+        case .followUpdates:
+            Section("追更") {
+                NavigationLink {
+                    FollowUpdatesPage(service: contentService)
+                        .picaxHidesTabBar()
+                } label: {
+                    HStack {
+                        ToolRow(
+                            title: "追更",
+                            subtitle: followUpdates.isEnabled ? "自动检查：\(followUpdates.checkFrequency.title)" : "启用后检查本地收藏的更新",
+                            systemImage: "sparkles"
+                        )
+                        if followUpdates.updatedCount > 0 {
+                            Text("\(followUpdates.updatedCount)")
+                                .font(.caption.bold())
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(Color.accentColor, in: Capsule())
+                        }
+                    }
+                }
+                if followUpdates.isEnabled {
+                    DisclosureGroup(isExpanded: $isFollowUpdatesExpanded) {
+                        if followUpdates.updatedRecords.isEmpty {
+                            Label("当前没有更新", systemImage: "checkmark.circle")
+                                .foregroundStyle(.secondary)
+                        } else {
+                            ForEach(followUpdates.updatedRecords.prefix(10)) { record in
+                                NavigationLink {
+                                    ComicDetailPage(item: record.item, service: contentService)
+                                        .picaxHidesTabBar()
+                                } label: {
+                                    HomeFollowUpdateRow(record: record)
+                                }
+                            }
+                            if followUpdates.updatedRecords.count > 10 {
+                                NavigationLink("查看全部 \(followUpdates.updatedRecords.count) 项更新") {
+                                    FollowUpdatesPage(service: contentService)
+                                        .picaxHidesTabBar()
+                                }
+                            }
+                        }
+                    } label: {
+                        Label("有更新的漫画（\(followUpdates.updatedCount)）", systemImage: "rectangle.expand.vertical")
+                    }
                 }
             }
 
@@ -362,6 +416,29 @@ struct HomePage: View {
             return
         }
         clipboardCandidate = HomeClipboardCandidate(rawValue: value, item: item)
+    }
+}
+
+private struct HomeFollowUpdateRow: View {
+    let record: FollowUpdateRecord
+
+    var body: some View {
+        HStack(spacing: 12) {
+            ComicCoverView(url: record.item.coverURL, accentColor: record.item.accentColor, width: 44, height: 60)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(record.item.title)
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(2)
+                HStack(spacing: 8) {
+                    if record.hasNewUpdate {
+                        Label("漫画更新", systemImage: "sparkles")
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 2)
     }
 }
 

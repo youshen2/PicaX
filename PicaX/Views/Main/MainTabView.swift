@@ -84,5 +84,6 @@ struct MainTabView_Previews: PreviewProvider {
             .environmentObject(DownloadService(defaults: .preview))
             .environmentObject(BlockingKeywordService(defaults: .preview))
             .environmentObject(SearchHistoryService(defaults: .preview))
+            .environmentObject(FollowUpdatesService(defaults: .preview))
     }
 }

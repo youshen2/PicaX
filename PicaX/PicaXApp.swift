@@ -19,6 +19,7 @@ struct PicaXApp: App {
     @StateObject private var downloadService = DownloadService()
     @StateObject private var blockingKeywordService = BlockingKeywordService()
     @StateObject private var searchHistoryService = SearchHistoryService()
+    @StateObject private var followUpdatesService = FollowUpdatesService()
     #if os(iOS)
     @StateObject private var phoneWatchAccountSyncService = PhoneWatchAccountSyncService()
     #endif
@@ -41,17 +42,23 @@ struct PicaXApp: App {
                 .environmentObject(downloadService)
                 .environmentObject(blockingKeywordService)
                 .environmentObject(searchHistoryService)
+                .environmentObject(followUpdatesService)
                 .task {
                     ImageCacheService.configure()
                     ComicDetailCacheService.configure()
                     downloadService.configure { platform in
                         platformAccountService.account(for: platform)
                     }
+                    followUpdatesService.configure { platform in
+                        platformAccountService.account(for: platform)
+                    }
+                    followUpdatesService.checkAutomaticallyIfNeeded()
                 }
                 .onChange(of: scenePhase) { newValue in
                     switch newValue {
                     case .active:
                         downloadService.applicationDidBecomeActive()
+                        followUpdatesService.checkAutomaticallyIfNeeded()
                     case .background:
                         downloadService.applicationDidEnterBackground()
                     case .inactive:
@@ -59,6 +66,9 @@ struct PicaXApp: App {
                     @unknown default:
                         break
                     }
+                }
+                .onReceive(NotificationCenter.default.publisher(for: .picaxLocalFavoritesDidChange)) { _ in
+                    followUpdatesService.reload()
                 }
 
         #if os(iOS)

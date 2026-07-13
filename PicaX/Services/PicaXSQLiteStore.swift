@@ -139,6 +139,15 @@ final class PicaXSQLiteDatabase: @unchecked Sendable {
         execute("CREATE INDEX IF NOT EXISTS idx_local_favorites_folder_sort ON local_favorites(folder_id, sort_date DESC)")
 
         execute("""
+        CREATE TABLE IF NOT EXISTS follow_updates (
+            id TEXT PRIMARY KEY NOT NULL,
+            sort_date REAL NOT NULL,
+            value BLOB NOT NULL
+        )
+        """)
+        execute("CREATE INDEX IF NOT EXISTS idx_follow_updates_sort ON follow_updates(sort_date DESC)")
+
+        execute("""
         CREATE TABLE IF NOT EXISTS download_records (
             id TEXT PRIMARY KEY NOT NULL,
             sort_date REAL NOT NULL,
@@ -334,7 +343,7 @@ enum PicaXSQLiteStore {
         }
     }
 
-    static func upsertLocalFavorite(_ favorite: StoredLocalFavorite, folderID: String) {
+    static func upsertLocalFavorite(_ favorite: StoredLocalFavorite, folderID: String, notify: Bool = true) {
         guard let data = encoded(favorite) else { return }
         db.execute(
             """
@@ -348,7 +357,20 @@ enum PicaXSQLiteStore {
                 .data(data)
             ]
         )
-        NotificationCenter.default.post(name: .picaxLocalFavoritesDidChange, object: nil)
+        if notify {
+            NotificationCenter.default.post(name: .picaxLocalFavoritesDidChange, object: nil)
+        }
+    }
+
+    static func loadFollowUpdateRecords() -> [FollowUpdateRecord] {
+        loadValues("SELECT value FROM follow_updates ORDER BY sort_date DESC")
+    }
+
+    static func replaceFollowUpdateRecords(_ records: [FollowUpdateRecord]) {
+        replace(table: "follow_updates", values: records) { record in
+            (record.id, record.lastCheckDate ?? .distantPast)
+        }
+        NotificationCenter.default.post(name: .picaxFollowUpdatesDidChange, object: nil)
     }
 
     static func loadDownloadRecords() -> [DownloadRecord] {

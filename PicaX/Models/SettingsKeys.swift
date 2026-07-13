@@ -13,6 +13,7 @@ enum HomeSettingsKey {
 enum HomeSectionKind: String, CaseIterable, Identifiable {
     case history
     case readLater
+    case followUpdates
     case readingDuration
     case downloads
     case comicSources
@@ -26,6 +27,8 @@ enum HomeSectionKind: String, CaseIterable, Identifiable {
             "历史记录"
         case .readLater:
             "稍后再读"
+        case .followUpdates:
+            "追更"
         case .readingDuration:
             "阅读时长"
         case .downloads:
@@ -43,6 +46,8 @@ enum HomeSectionKind: String, CaseIterable, Identifiable {
             "clock.arrow.circlepath"
         case .readLater:
             "bookmark"
+        case .followUpdates:
+            "sparkles"
         case .readingDuration:
             "timer"
         case .downloads:
@@ -54,7 +59,7 @@ enum HomeSectionKind: String, CaseIterable, Identifiable {
         }
     }
 
-    static let defaultOrder: [HomeSectionKind] = [.history, .readLater, .readingDuration, .downloads, .comicSources, .tools]
+    static let defaultOrder: [HomeSectionKind] = [.history, .readLater, .followUpdates, .readingDuration, .downloads, .comicSources, .tools]
 
     static var defaultRawValue: String {
         rawValue(for: defaultOrder)
