@@ -230,7 +230,7 @@ private enum SettingsSearchItem: CaseIterable {
         case .explore:
             "默认平台与平台选择记忆"
         case .search:
-            "搜索源、历史与键盘行为"
+            "搜索源、标签翻译、历史与键盘行为"
         case .comicList:
             "显示内容与已读隐藏"
         case .detail:
@@ -275,7 +275,7 @@ private enum SettingsSearchItem: CaseIterable {
         case .blockingKeywords:
             ["屏蔽", "黑名单", "关键词", "标签"]
         case .search:
-            ["默认搜索源", "搜索历史", "聚合搜索", "搜索补全", "标签建议", "中文", "英文", "翻译", "填入", "直接搜索"]
+            ["默认搜索源", "搜索历史", "聚合搜索", "搜索补全", "标签建议", "标签数据库", "E-Hentai", "下载更新", "中文", "英文", "翻译", "填入", "直接搜索"]
         case .comicList:
             ["已读隐藏", "稍后再读", "阅读进度", "收藏状态", "标签"]
         case .downloads:
@@ -1482,6 +1482,7 @@ private struct ExploreSettingsView: View {
 
 private struct SearchSettingsView: View {
     @EnvironmentObject private var searchHistory: SearchHistoryService
+    @StateObject private var ehTagTranslationUpdates = EhTagTranslationUpdateService()
     @AppStorage(SearchSettingsKey.focusesSearchFieldOnOpen) private var focusesSearchFieldOnOpen = false
     @AppStorage(SearchSettingsKey.enablesSearchSuggestions) private var enablesSearchSuggestions = true
     @AppStorage(SearchSettingsKey.translatesChineseSearchTerms) private var translatesChineseSearchTerms = true
@@ -1492,6 +1493,7 @@ private struct SearchSettingsView: View {
     @AppStorage(SearchHistorySettingsKey.isEnabled) private var savesSearchHistory = true
     @AppStorage(SearchHistorySettingsKey.maxRecords) private var maxSearchHistoryRecords = 50
     @State private var showsClearSearchHistoryConfirmation = false
+    @State private var showsRestoreEhTagsConfirmation = false
 
     var body: some View {
         List {
@@ -1555,6 +1557,48 @@ private struct SearchSettingsView: View {
             }
 
             Section {
+                LabeledContent("当前数据", value: ehTagTranslationUpdates.info.usesDownloadedDatabase ? "已下载" : "内置")
+                LabeledContent("数据库版本", value: ehTagTranslationUpdates.info.version ?? "内置版本")
+
+                if let updatedAt = ehTagTranslationUpdates.info.updatedAt {
+                    LabeledContent("更新时间", value: updatedAt.formatted(date: .abbreviated, time: .shortened))
+                }
+
+                Button {
+                    Task { await ehTagTranslationUpdates.update() }
+                } label: {
+                    if ehTagTranslationUpdates.isUpdating {
+                        HStack(spacing: 10) {
+                            ProgressView()
+                            Text("正在下载标签翻译库")
+                        }
+                    } else {
+                        Label("下载更新", systemImage: "arrow.down.circle")
+                    }
+                }
+                .disabled(ehTagTranslationUpdates.isUpdating)
+
+                if ehTagTranslationUpdates.info.usesDownloadedDatabase {
+                    Button(role: .destructive) {
+                        showsRestoreEhTagsConfirmation = true
+                    } label: {
+                        Label("恢复内置版本", systemImage: "arrow.uturn.backward.circle")
+                    }
+                    .disabled(ehTagTranslationUpdates.isUpdating)
+                }
+
+                if let statusMessage = ehTagTranslationUpdates.statusMessage {
+                    Text(statusMessage)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            } header: {
+                Text("E-Hentai 标签翻译库")
+            } footer: {
+                Text("从 EhTagTranslation/Database 下载公开标签对应并保存在本机；下载或校验失败时继续使用当前数据，内置版本始终可恢复。")
+            }
+
+            Section {
                 Toggle("保存搜索历史", isOn: $savesSearchHistory)
 
                 if savesSearchHistory {
@@ -1586,6 +1630,14 @@ private struct SearchSettingsView: View {
             Button("取消", role: .cancel) {}
         } message: {
             Text("此操作只会删除本地保存的搜索历史，不会影响收藏、阅读历史或下载。")
+        }
+        .confirmationDialog("恢复内置标签翻译库？", isPresented: $showsRestoreEhTagsConfirmation) {
+            Button("恢复内置版本", role: .destructive) {
+                ehTagTranslationUpdates.restoreBundled()
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("已下载的标签对应会从本机删除，之后仍可重新下载。")
         }
     }
 

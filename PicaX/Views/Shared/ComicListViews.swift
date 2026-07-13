@@ -169,6 +169,9 @@ struct ComicListSection: View {
         .onReceive(NotificationCenter.default.publisher(for: .picaxNhentaiTagNamesDidChange)) { _ in
             tagDisplayVersion &+= 1
         }
+        .onReceive(NotificationCenter.default.publisher(for: .picaxEhTagTranslationsDidChange)) { _ in
+            tagDisplayVersion &+= 1
+        }
     }
 
     private func makeSnapshotRequest() -> ComicListSnapshotRequest {

@@ -2,7 +2,7 @@ import CryptoKit
 import CFNetwork
 import Foundation
 
-private enum AppNetworkSettings {
+enum AppNetworkSettings {
     private enum Key {
         nonisolated static let useProxy = "settings.network.useProxy"
         nonisolated static let proxyHost = "settings.network.proxyHost"

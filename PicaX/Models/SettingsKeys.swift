@@ -187,6 +187,11 @@ enum SearchSettingsKey {
     }
 }
 
+enum EhTagTranslationSettingsKey {
+    nonisolated static let downloadedVersion = "settings.search.ehTagTranslation.downloadedVersion"
+    nonisolated static let lastUpdatedAt = "settings.search.ehTagTranslation.lastUpdatedAt"
+}
+
 enum SearchDefaultTargetMode: String, CaseIterable, Identifiable {
     case platform
     case aggregate

@@ -33,6 +33,12 @@ struct EhTagSuggestion: Identifiable, Hashable, Sendable {
 }
 
 enum EhTagTranslationService {
+    struct DatabaseInfo: Sendable {
+        let usesDownloadedDatabase: Bool
+        let version: String?
+        let updatedAt: Date?
+    }
+
     nonisolated private static let fallbackRows = [
         "language": "语言",
         "artist": "画师",
@@ -48,7 +54,6 @@ enum EhTagTranslationService {
         "uploader": "上传者"
     ]
 
-    nonisolated private static let translations = loadTranslations()
     nonisolated private static let suggestionNamespaces = [
         "female",
         "male",
@@ -72,17 +77,17 @@ enum EhTagTranslationService {
         "cosplayer",
         "other"
     ]
-    nonisolated private static let suggestionIndex = buildSuggestionIndex(namespaces: suggestionNamespaces)
-    nonisolated private static let suggestionBuckets = Dictionary(grouping: suggestionIndex) {
-        $0.normalizedTag.first.map(String.init) ?? ""
+    nonisolated private static let snapshotBox = SnapshotBox(
+        initialValue: makeSnapshot(translations: loadTranslations())
+    )
+
+    nonisolated private static var snapshot: Snapshot {
+        snapshotBox.value
     }
-    nonisolated private static let searchNamespaceAliases = buildSearchNamespaceAliases()
-    nonisolated private static let exactTranslatedTagsByNamespace = buildExactTranslatedTagsByNamespace()
-    nonisolated private static let exactTranslatedSuggestionIndex = buildExactTranslatedSuggestionIndex()
 
     nonisolated static func translatedGroupTitle(_ title: String) -> String {
         let namespace = normalizedNamespace(title)
-        return translations["rows"]?[namespace] ?? fallbackRows[namespace] ?? title
+        return snapshot.translations["rows"]?[namespace] ?? fallbackRows[namespace] ?? title
     }
 
     nonisolated static func translatedTagTitle(title: String, query: String, namespace: String) -> String {
@@ -96,12 +101,13 @@ enum EhTagTranslationService {
     }
 
     static func suggestions(for text: String, limit: Int = 60) -> [EhTagSuggestion] {
+        let snapshot = snapshot
         let (namespaceFilter, fragment) = suggestionFragment(from: text)
         guard !fragment.isEmpty else { return [] }
 
         var result = [EhTagSuggestion]()
         result.reserveCapacity(min(limit, 20))
-        for suggestion in suggestionCandidates(fragment: fragment) {
+        for suggestion in suggestionCandidates(fragment: fragment, snapshot: snapshot) {
             if let namespaceFilter, suggestion.namespace != namespaceFilter {
                 continue
             }
@@ -115,7 +121,8 @@ enum EhTagTranslationService {
     }
 
     static func categorySuggestions(limitPerNamespace: Int = 20) -> [EhTagSuggestion] {
-        categoryNamespaces.flatMap { namespace in
+        let suggestionIndex = snapshot.suggestionIndex
+        return categoryNamespaces.flatMap { namespace in
             suggestionIndex.lazy.filter { $0.namespace == namespace }.prefix(limitPerNamespace)
         }
     }
@@ -129,8 +136,9 @@ enum EhTagTranslationService {
     nonisolated static func translatedAnyTagTitle(_ title: String) -> String {
         let rawTag = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !rawTag.isEmpty else { return title }
+        let translations = snapshot.translations
         for namespace in suggestionNamespaces {
-            let translated = translatedTag(rawTag, namespace: namespace)
+            let translated = translatedTag(rawTag, namespace: namespace, translations: translations)
             if translated != rawTag {
                 return translated
             }
@@ -139,9 +147,17 @@ enum EhTagTranslationService {
     }
 
     private nonisolated static func translatedTag(_ tag: String, namespace: String) -> String {
+        translatedTag(tag, namespace: namespace, translations: snapshot.translations)
+    }
+
+    private nonisolated static func translatedTag(
+        _ tag: String,
+        namespace: String,
+        translations: [String: [String: String]]
+    ) -> String {
         if tag.contains(" | ") {
             for value in tag.components(separatedBy: " | ") {
-                let translated = translatedTag(value, namespace: namespace)
+                let translated = translatedTag(value, namespace: namespace, translations: translations)
                 if translated != value {
                     return translated
                 }
@@ -199,9 +215,12 @@ enum EhTagTranslationService {
         return (nil, normalizedTag(token))
     }
 
-    private nonisolated static func buildSuggestionIndex(namespaces: [String]) -> [EhTagSuggestion] {
+    private nonisolated static func buildSuggestionIndex(
+        namespaces: [String],
+        translations: [String: [String: String]]
+    ) -> [EhTagSuggestion] {
         namespaces.flatMap { namespace in
-            let namespaceTitle = translatedGroupTitle(namespace)
+            let namespaceTitle = translations["rows"]?[namespace] ?? fallbackRows[namespace] ?? namespace
             return (translations[namespace] ?? [:])
                 .keys
                 .sorted()
@@ -210,13 +229,15 @@ enum EhTagTranslationService {
                         namespace: namespace,
                         namespaceTitle: namespaceTitle,
                         tag: tag,
-                        translatedTitle: translatedTag(tag, namespace: namespace)
+                        translatedTitle: translatedTag(tag, namespace: namespace, translations: translations)
                     )
                 }
         }
     }
 
-    private nonisolated static func buildSearchNamespaceAliases() -> [String: String] {
+    private nonisolated static func buildSearchNamespaceAliases(
+        translations: [String: [String: String]]
+    ) -> [String: String] {
         var aliases: [String: String] = [:]
         let rowNamespaces = translations["rows"].map { Array($0.keys) } ?? []
         let namespaces = Set(suggestionNamespaces + categoryNamespaces + Array(fallbackRows.keys) + rowNamespaces)
@@ -233,7 +254,9 @@ enum EhTagTranslationService {
         return aliases
     }
 
-    private nonisolated static func buildExactTranslatedTagsByNamespace() -> [String: [String: String]] {
+    private nonisolated static func buildExactTranslatedTagsByNamespace(
+        translations: [String: [String: String]]
+    ) -> [String: [String: String]] {
         var result: [String: [String: String]] = [:]
         for namespace in suggestionNamespaces {
             for (tag, translatedTitle) in translations[namespace] ?? [:] {
@@ -247,7 +270,9 @@ enum EhTagTranslationService {
         return result
     }
 
-    private nonisolated static func buildExactTranslatedSuggestionIndex() -> [String: EhTagSuggestion] {
+    private nonisolated static func buildExactTranslatedSuggestionIndex(
+        suggestionIndex: [EhTagSuggestion]
+    ) -> [String: EhTagSuggestion] {
         var result: [String: EhTagSuggestion] = [:]
         for suggestion in suggestionIndex {
             guard SearchQueryTagTermTranslator.containsTranslatedText(suggestion.translatedTitle) else { continue }
@@ -260,17 +285,18 @@ enum EhTagTranslationService {
     }
 
     private static func translatedSearchTerm(_ rawValue: String, namespace rawNamespace: String?) -> SearchQueryTagTermTranslation? {
+        let snapshot = snapshot
         let value = htmlDecoded(rawValue).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty else { return nil }
 
-        if let namespace = normalizedSearchNamespace(rawNamespace) {
+        if let namespace = normalizedSearchNamespace(rawNamespace, aliases: snapshot.searchNamespaceAliases) {
             let normalizedValue = normalizedTag(value)
             if SearchQueryTagTermTranslator.containsTranslatedText(value),
-               let tag = exactTranslatedTagsByNamespace[namespace]?[normalizedValue] {
+               let tag = snapshot.exactTranslatedTagsByNamespace[namespace]?[normalizedValue] {
                 return SearchQueryTagTermTranslation(query: "\(namespace):\(SearchQueryTagTermTranslator.quoted(value: tag))")
             }
             if !SearchQueryTagTermTranslator.containsTranslatedText(value),
-               let tag = normalizedEnglishTag(value, namespace: namespace) {
+               let tag = normalizedEnglishTag(value, namespace: namespace, translations: snapshot.translations) {
                 return SearchQueryTagTermTranslation(query: "\(namespace):\(SearchQueryTagTermTranslator.quoted(value: tag))")
             }
             return nil
@@ -278,21 +304,25 @@ enum EhTagTranslationService {
 
         guard SearchQueryTagTermTranslator.containsTranslatedText(value) else { return nil }
         let normalizedValue = normalizedTag(value)
-        guard let suggestion = exactTranslatedSuggestionIndex[normalizedValue] else { return nil }
+        guard let suggestion = snapshot.exactTranslatedSuggestionIndex[normalizedValue] else { return nil }
         return SearchQueryTagTermTranslation(query: suggestion.query)
     }
 
-    private static func normalizedSearchNamespace(_ rawNamespace: String?) -> String? {
+    private static func normalizedSearchNamespace(_ rawNamespace: String?, aliases: [String: String]) -> String? {
         guard let rawNamespace else { return nil }
         let normalizedTag = normalizedTag(rawNamespace)
-        if let namespace = searchNamespaceAliases[normalizedTag] {
+        if let namespace = aliases[normalizedTag] {
             return namespace
         }
         let normalizedNamespace = normalizedNamespace(rawNamespace)
-        return searchNamespaceAliases[normalizedNamespace]
+        return aliases[normalizedNamespace]
     }
 
-    private static func normalizedEnglishTag(_ value: String, namespace: String) -> String? {
+    private static func normalizedEnglishTag(
+        _ value: String,
+        namespace: String,
+        translations: [String: [String: String]]
+    ) -> String? {
         let normalized = normalizedTag(value)
         guard translations[namespace]?[normalized] != nil else { return nil }
         return normalized
@@ -308,20 +338,131 @@ enum EhTagTranslationService {
         return suggestion.normalizedTranslatedTitle.contains(fragment)
     }
 
-    private static func suggestionCandidates(fragment: String) -> [EhTagSuggestion] {
+    private static func suggestionCandidates(fragment: String, snapshot: Snapshot) -> [EhTagSuggestion] {
         guard let scalar = fragment.unicodeScalars.first, scalar.isASCII else {
-            return suggestionIndex
+            return snapshot.suggestionIndex
         }
-        return suggestionBuckets[String(Character(scalar))] ?? []
+        return snapshot.suggestionBuckets[String(Character(scalar))] ?? []
     }
 
     private nonisolated static func loadTranslations() -> [String: [String: String]] {
+        if let data = try? Data(contentsOf: downloadedDatabaseURL),
+           let value = try? JSONDecoder().decode([String: [String: String]].self, from: data),
+           isValidDatabase(value) {
+            return value
+        }
+        return loadBundledTranslations()
+    }
+
+    private nonisolated static func loadBundledTranslations() -> [String: [String: String]] {
         guard let url = Bundle.main.url(forResource: "EhTagTranslations", withExtension: "json"),
               let data = try? Data(contentsOf: url),
               let value = try? JSONDecoder().decode([String: [String: String]].self, from: data) else {
             return [:]
         }
         return value
+    }
+
+    nonisolated static var databaseInfo: DatabaseInfo {
+        let usesDownloadedDatabase = FileManager.default.fileExists(atPath: downloadedDatabaseURL.path)
+        return DatabaseInfo(
+            usesDownloadedDatabase: usesDownloadedDatabase,
+            version: usesDownloadedDatabase ? UserDefaults.standard.string(forKey: EhTagTranslationSettingsKey.downloadedVersion) : nil,
+            updatedAt: usesDownloadedDatabase ? UserDefaults.standard.object(forKey: EhTagTranslationSettingsKey.lastUpdatedAt) as? Date : nil
+        )
+    }
+
+    nonisolated static func installDownloadedDatabase(
+        _ translations: [String: [String: String]],
+        version: String
+    ) throws {
+        guard isValidDatabase(translations) else {
+            throw EhTagTranslationUpdateError.invalidDatabase
+        }
+        let directory = downloadedDatabaseURL.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let data = try JSONEncoder().encode(translations)
+        try data.write(to: downloadedDatabaseURL, options: .atomic)
+        UserDefaults.standard.set(version, forKey: EhTagTranslationSettingsKey.downloadedVersion)
+        UserDefaults.standard.set(Date(), forKey: EhTagTranslationSettingsKey.lastUpdatedAt)
+        snapshotBox.replace(with: makeSnapshot(translations: translations))
+        NotificationCenter.default.post(name: .picaxEhTagTranslationsDidChange, object: nil)
+    }
+
+    nonisolated static func restoreBundledDatabase() throws {
+        if FileManager.default.fileExists(atPath: downloadedDatabaseURL.path) {
+            try FileManager.default.removeItem(at: downloadedDatabaseURL)
+        }
+        UserDefaults.standard.removeObject(forKey: EhTagTranslationSettingsKey.downloadedVersion)
+        UserDefaults.standard.removeObject(forKey: EhTagTranslationSettingsKey.lastUpdatedAt)
+        snapshotBox.replace(with: makeSnapshot(translations: loadBundledTranslations()))
+        NotificationCenter.default.post(name: .picaxEhTagTranslationsDidChange, object: nil)
+    }
+
+    private nonisolated static var downloadedDatabaseURL: URL {
+        let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.temporaryDirectory
+        return root
+            .appendingPathComponent("PicaX", isDirectory: true)
+            .appendingPathComponent("EhTagTranslations.downloaded.json")
+    }
+
+    private nonisolated static func isValidDatabase(_ translations: [String: [String: String]]) -> Bool {
+        guard translations["rows"]?.count ?? 0 >= 10,
+              translations["female"]?.count ?? 0 >= 100,
+              translations["male"]?.count ?? 0 >= 100 else {
+            return false
+        }
+        return translations.values.reduce(0) { $0 + $1.count } >= 1_000
+    }
+
+    private nonisolated static func makeSnapshot(
+        translations: [String: [String: String]]
+    ) -> Snapshot {
+        let suggestionIndex = buildSuggestionIndex(
+            namespaces: suggestionNamespaces,
+            translations: translations
+        )
+        return Snapshot(
+            translations: translations,
+            suggestionIndex: suggestionIndex,
+            suggestionBuckets: Dictionary(grouping: suggestionIndex) {
+                $0.normalizedTag.first.map(String.init) ?? ""
+            },
+            searchNamespaceAliases: buildSearchNamespaceAliases(translations: translations),
+            exactTranslatedTagsByNamespace: buildExactTranslatedTagsByNamespace(translations: translations),
+            exactTranslatedSuggestionIndex: buildExactTranslatedSuggestionIndex(suggestionIndex: suggestionIndex)
+        )
+    }
+
+    private struct Snapshot: Sendable {
+        let translations: [String: [String: String]]
+        let suggestionIndex: [EhTagSuggestion]
+        let suggestionBuckets: [String: [EhTagSuggestion]]
+        let searchNamespaceAliases: [String: String]
+        let exactTranslatedTagsByNamespace: [String: [String: String]]
+        let exactTranslatedSuggestionIndex: [String: EhTagSuggestion]
+    }
+
+    private final class SnapshotBox: @unchecked Sendable {
+        private let lock = NSLock()
+        nonisolated(unsafe) private var storedValue: Snapshot
+
+        nonisolated init(initialValue: Snapshot) {
+            storedValue = initialValue
+        }
+
+        nonisolated var value: Snapshot {
+            lock.lock()
+            defer { lock.unlock() }
+            return storedValue
+        }
+
+        nonisolated func replace(with value: Snapshot) {
+            lock.lock()
+            storedValue = value
+            lock.unlock()
+        }
     }
 
     private nonisolated static func htmlDecoded(_ value: String) -> String {
