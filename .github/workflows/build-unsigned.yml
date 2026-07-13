@@ -89,6 +89,20 @@ jobs:
 
           PREVIOUS_TAG="$(git tag --sort=-creatordate | grep -v "^${TAG_NAME}$" | head -n 1 || true)"
 
+          append_release_commits() {
+            awk '
+              !/^[[:space:]]*\[X\]/ {
+                print "- " $0
+                found = 1
+              }
+              END {
+                if (!found) {
+                  print "- 本次没有需要公开展示的提交记录。"
+                }
+              }
+            '
+          }
+
           cat > release_body.md <<EOF
           这是由 GitHub Actions 自动构建的发行版本。
 
@@ -122,11 +136,13 @@ jobs:
           if [ -n "$PREVIOUS_TAG" ]; then
             echo "从 \`${PREVIOUS_TAG}\` 到 \`${TAG_NAME}\` 的提交：" >> release_body.md
             echo "" >> release_body.md
-            git log "${PREVIOUS_TAG}..${TAG_NAME}" --pretty=format:"- %s" >> release_body.md
+            git log "${PREVIOUS_TAG}..${TAG_NAME}" --pretty=format:"%s" \
+              | append_release_commits >> release_body.md
           else
             echo "最近提交：" >> release_body.md
             echo "" >> release_body.md
-            git log -20 --pretty=format:"- %s" >> release_body.md
+            git log -20 --pretty=format:"%s" \
+              | append_release_commits >> release_body.md
           fi
 
           echo "" >> release_body.md
