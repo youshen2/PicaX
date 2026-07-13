@@ -1149,7 +1149,7 @@ private extension ComicContentService {
         guard let url = URL(string: "https://nhentai.net/api/v2/search?query=\(query)&page=\(page)&sort=\(sort)") else {
             throw ComicContentError.invalidURL("nhentai search")
         }
-        let json = try await requestJSON(url: url, headers: webHeaders(referer: "https://nhentai.net/"))
+        let json = try await requestJSON(url: url, headers: nhentaiAPIHeaders())
         return try nhentaiItems(from: json)
     }
 
@@ -1158,7 +1158,7 @@ private extension ComicContentService {
         guard let url = URL(string: "https://nhentai.net/api/v2/search?query=\(encoded)&page=\(page)&sort=\(sort)") else {
             throw ComicContentError.invalidURL("nhentai tag \(query)")
         }
-        let json = try await requestJSON(url: url, headers: webHeaders(referer: "https://nhentai.net/"))
+        let json = try await requestJSON(url: url, headers: nhentaiAPIHeaders())
         return try nhentaiItems(from: json)
     }
 
@@ -1206,8 +1206,13 @@ private extension ComicContentService {
         guard let token else {
             throw ComicContentError.loginRequired("NHentai 登录状态无效，请重新登录。")
         }
-        return webHeaders(referer: "https://nhentai.net/", userAgent: account.credential.userAgent)
-            .merging(["Authorization": "User \(token)"]) { _, new in new }
+        var headers = nhentaiAPIHeaders(userAgent: account.credential.userAgent)
+        headers["Authorization"] = "User \(token)"
+        let cookieHeader = nhentaiCookieHeader(account: account, accessToken: token)
+        if !cookieHeader.isEmpty {
+            headers["Cookie"] = cookieHeader
+        }
+        return headers
     }
 
     func refreshedNhentaiAuthHeaders(account: PlatformAccount) async throws -> [String: String]? {
@@ -1218,17 +1223,61 @@ private extension ComicContentService {
             throw ComicContentError.invalidURL("nhentai refresh")
         }
         let body = try JSONSerialization.data(withJSONObject: ["refresh_token": refreshToken])
-        let headers = webHeaders(referer: "https://nhentai.net/", userAgent: account.credential.userAgent)
+        var headers = nhentaiAPIHeaders(userAgent: account.credential.userAgent)
+        let cookieHeader = nhentaiCookieHeader(account: account, refreshToken: refreshToken)
+        if !cookieHeader.isEmpty {
+            headers["Cookie"] = cookieHeader
+        }
         let json = try await requestJSON(
             url: url,
             method: "POST",
             headers: headers.merging(["Content-Type": "application/json"]) { _, new in new },
             body: body
         )
-        guard let token = json["access_token"] as? String, !token.isEmpty else {
+        guard let token = (json["access_token"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !token.isEmpty else {
             return nil
         }
-        return headers.merging(["Authorization": "User \(token)"]) { _, new in new }
+        let nextRefreshToken = (json["refresh_token"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .nilIfEmpty ?? refreshToken
+        var updatedAccount = account
+        updatedAccount.credential.token = token
+        updatedAccount.credential.refreshToken = nextRefreshToken
+        updatedAccount.credential.tokenType = "User"
+        updatedAccount.credential.cookies.removeAll { $0.name == "access_token" || $0.name == "refresh_token" }
+        updatedAccount.credential.cookies.append(
+            StoredHTTPCookie(name: "access_token", value: token, domain: ".nhentai.net", isSecure: true)
+        )
+        updatedAccount.credential.cookies.append(
+            StoredHTTPCookie(name: "refresh_token", value: nextRefreshToken, domain: ".nhentai.net", isSecure: true)
+        )
+        PicaXSQLiteStore.upsertPlatformAccount(updatedAccount)
+        NotificationCenter.default.post(name: .picaxPlatformAccountsDidChange, object: nil)
+        return try nhentaiAuthHeaders(account: updatedAccount)
+    }
+
+    func nhentaiCookieHeader(
+        account: PlatformAccount,
+        accessToken: String? = nil,
+        refreshToken: String? = nil
+    ) -> String {
+        var values = [String: String]()
+        for cookie in account.credential.cookies {
+            let domain = cookie.domain.trimmingCharacters(in: CharacterSet(charactersIn: ".")).lowercased()
+            guard domain == "nhentai.net" || domain.hasSuffix(".nhentai.net"),
+                  cookie.expiresDate.map({ $0 > Date() }) ?? true,
+                  !cookie.value.isEmpty else { continue }
+            values[cookie.name] = cookie.value
+        }
+        if let accessToken, !accessToken.isEmpty {
+            values["access_token"] = accessToken
+        }
+        if let refreshToken, !refreshToken.isEmpty {
+            values["refresh_token"] = refreshToken
+        }
+        return values.keys.sorted().compactMap { name in
+            values[name].map { "\(name)=\($0)" }
+        }.joined(separator: "; ")
     }
 
     func nhentaiItems(from json: [String: Any], favoriteDate: Date? = nil) throws -> [ComicListItem] {
@@ -1261,7 +1310,7 @@ private extension ComicContentService {
         guard let url = URL(string: "https://nhentai.net/api/v2/galleries/\(item.id)") else {
             throw ComicContentError.invalidURL("nhentai detail \(item.id)")
         }
-        let json = try await requestJSON(url: url, headers: webHeaders(referer: "https://nhentai.net/"))
+        let json = try await requestJSON(url: url, headers: nhentaiAPIHeaders())
         let title = json.value(at: ["title", "english"]) as? String ??
             json.value(at: ["title", "japanese"]) as? String ??
             item.title
@@ -1358,7 +1407,7 @@ private extension ComicContentService {
         guard let url = URL(string: "https://nhentai.net/api/v2/galleries/\(item.id)") else {
             throw ComicContentError.invalidURL("nhentai images \(item.id)")
         }
-        let json = try await requestJSON(url: url, headers: webHeaders(referer: "https://nhentai.net/"))
+        let json = try await requestJSON(url: url, headers: nhentaiAPIHeaders())
         let pages = json["pages"] as? [[String: Any]] ?? []
         return pages.compactMap { page in
             guard let path = page["path"] as? String, !path.isEmpty else { return nil }
@@ -1391,12 +1440,13 @@ private extension ComicContentService {
         }
     }
 
-    func nhentaiAPIHeaders() -> [String: String] {
+    func nhentaiAPIHeaders(userAgent: String? = nil) -> [String: String] {
         [
             "Accept": "application/json",
             "Accept-Language": "zh-CN,zh-TW;q=0.9,zh;q=0.8,en-US;q=0.7,en;q=0.6",
             "Referer": "https://nhentai.net/",
-            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) GSA/300.0.598994205 Mobile/15E148 Safari/604"
+            "User-Agent": userAgent?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+                ?? "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) GSA/300.0.598994205 Mobile/15E148 Safari/604"
         ]
     }
 }
@@ -3851,7 +3901,7 @@ private extension ComicContentService {
 
     func isUnauthorized(_ error: Error) -> Bool {
         if case ComicContentError.server(let message) = error {
-            return message == "HTTP 401"
+            return message == "HTTP 401" || message == "HTTP 403"
         }
         return false
     }

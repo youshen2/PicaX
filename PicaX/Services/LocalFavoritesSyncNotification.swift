@@ -5,4 +5,5 @@ extension Notification.Name {
     static let picaxReadLaterDidChange = Notification.Name("picax.readLaterDidChange")
     static let picaxNhentaiTagNamesDidChange = Notification.Name("picax.nhentaiTagNamesDidChange")
     static let picaxFollowUpdatesDidChange = Notification.Name("picax.followUpdatesDidChange")
+    static let picaxPlatformAccountsDidChange = Notification.Name("picax.platformAccountsDidChange")
 }

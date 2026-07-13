@@ -70,6 +70,9 @@ struct PicaXApp: App {
                 .onReceive(NotificationCenter.default.publisher(for: .picaxLocalFavoritesDidChange)) { _ in
                     followUpdatesService.reload()
                 }
+                .onReceive(NotificationCenter.default.publisher(for: .picaxPlatformAccountsDidChange)) { _ in
+                    platformAccountService.reloadFromDefaults()
+                }
 
         #if os(iOS)
         baseContent
