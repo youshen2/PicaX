@@ -1425,6 +1425,7 @@ struct ComicReaderPage: View {
             .index
 
         guard let pageIndex else { return }
+        focusContinuousLoadableImage(pageIndex, images: images)
         updateReadingPage(pageIndex, totalPages: images.count, targetPixelWidth: targetPixelWidth)
     }
 
