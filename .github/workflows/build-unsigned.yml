@@ -19,8 +19,42 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  select_run:
+    name: Avoid duplicate branch and tag builds
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.decision.outputs.should_build }}
+
+    steps:
+      # GitHub emits separate push events for the branch and tag even when they
+      # are included in one git push. Let the tag run own a tagged commit.
+      - name: Checkout branch push
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Select build run
+        id: decision
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SHOULD_BUILD=true
+          if [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF}" == "refs/heads/main" ]]; then
+            MATCHING_TAG="$(git tag --points-at "${GITHUB_SHA}" --list 'v*')"
+            if [[ -n "${MATCHING_TAG}" ]]; then
+              SHOULD_BUILD=false
+              echo "Skipping the main branch build because ${GITHUB_SHA} is tagged with ${MATCHING_TAG}."
+            fi
+          fi
+
+          echo "should_build=${SHOULD_BUILD}" >> "${GITHUB_OUTPUT}"
+
   build:
     name: Build unsigned artifacts
+    needs: select_run
+    if: needs.select_run.outputs.should_build == 'true'
     runs-on: macos-26
     timeout-minutes: 90
 
