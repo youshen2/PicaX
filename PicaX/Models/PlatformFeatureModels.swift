@@ -87,3 +87,17 @@ struct JmAPIUpdateResult: Equatable {
             .joined(separator: "\n")
     }
 }
+
+struct SourceRouteSpeedTestResult: Identifiable, Equatable, Sendable {
+    let id: String
+    let endpoint: String
+    let milliseconds: Int?
+    let errorMessage: String?
+
+    var statusText: String {
+        if let milliseconds {
+            return "\(milliseconds) ms"
+        }
+        return errorMessage ?? "失败"
+    }
+}

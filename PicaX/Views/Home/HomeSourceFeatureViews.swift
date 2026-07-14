@@ -174,6 +174,89 @@ private struct SourceFeatureMessage: Identifiable {
     let detail: String
 }
 
+private struct SourceRouteSpeedOption: Identifiable {
+    let id: String
+    let title: String
+}
+
+private struct SourceRouteSpeedTestControl: View {
+    let actionTitle: String
+    let options: [SourceRouteSpeedOption]
+    let results: [SourceRouteSpeedTestResult]
+    let selectedID: String?
+    let isTesting: Bool
+    let test: () -> Void
+    let select: (String) -> Void
+
+    var body: some View {
+        Button(action: test) {
+            if isTesting {
+                HStack(spacing: 10) {
+                    ProgressView()
+                    Text("正在测速")
+                }
+            } else {
+                Label(actionTitle, systemImage: "speedometer")
+            }
+        }
+        .disabled(isTesting)
+
+        if !results.isEmpty {
+            ForEach(options) { option in
+                if let result = results.first(where: { $0.id == option.id }) {
+                    Button {
+                        select(option.id)
+                    } label: {
+                        HStack(spacing: 12) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(option.title)
+                                    .foregroundStyle(.primary)
+                                if !result.endpoint.isEmpty {
+                                    Text(result.endpoint)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                }
+                            }
+
+                            Spacer(minLength: 8)
+
+                            HStack(spacing: 6) {
+                                if result.id == fastestResultID {
+                                    Image(systemName: "bolt.fill")
+                                        .foregroundStyle(.green)
+                                        .accessibilityLabel("推荐")
+                                }
+                                Text(result.statusText)
+                                    .font(.subheadline.monospacedDigit())
+                                    .foregroundStyle(result.milliseconds == nil ? .red : .secondary)
+                                if result.id == selectedID {
+                                    Image(systemName: "checkmark")
+                                        .foregroundStyle(.tint)
+                                }
+                            }
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(result.milliseconds == nil)
+                }
+            }
+
+            Text("使用真实 HTTP 请求测量（非 Ping），数值越低通常越快；结果会受当前网络波动影响。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var fastestResultID: String? {
+        results
+            .filter { $0.milliseconds != nil }
+            .min { ($0.milliseconds ?? .max) < ($1.milliseconds ?? .max) }?
+            .id
+    }
+}
+
 private struct PicacgSourceFeatureSection: View {
     let service: ComicContentService
     let account: PlatformAccount?
@@ -187,6 +270,8 @@ private struct PicacgSourceFeatureSection: View {
     @AppStorage(PlatformFeatureSettingsKey.picacgAutoPunchIn) private var autoPunchIn = false
 
     @State private var isPunching = false
+    @State private var isTestingAPIChannels = false
+    @State private var apiChannelSpeedResults = [SourceRouteSpeedTestResult]()
 
     var body: some View {
         PicacgProfileSection(service: service, account: account)
@@ -197,6 +282,22 @@ private struct PicacgSourceFeatureSection: View {
                 Text("分流 2").tag("2")
                 Text("分流 3").tag("3")
             }
+
+            SourceRouteSpeedTestControl(
+                actionTitle: "测试 API 分流",
+                options: [
+                    SourceRouteSpeedOption(id: "1", title: "分流 1"),
+                    SourceRouteSpeedOption(id: "2", title: "分流 2"),
+                    SourceRouteSpeedOption(id: "3", title: "分流 3")
+                ],
+                results: apiChannelSpeedResults,
+                selectedID: appChannel,
+                isTesting: isTestingAPIChannels,
+                test: {
+                    Task { await testAPIChannels() }
+                },
+                select: { appChannel = $0 }
+            )
 
             Picker("图片质量", selection: $imageQuality) {
                 Text("省流").tag("省流")
@@ -243,6 +344,18 @@ private struct PicacgSourceFeatureSection: View {
                 Label("我的评论", systemImage: "text.bubble")
             }
             .disabled(account == nil)
+        }
+    }
+
+    @MainActor
+    private func testAPIChannels() async {
+        guard !isTestingAPIChannels else { return }
+        isTestingAPIChannels = true
+        defer { isTestingAPIChannels = false }
+        do {
+            apiChannelSpeedResults = try await service.testPicacgAPIChannels(account: account)
+        } catch {
+            showMessage("测速失败", error.localizedDescription)
         }
     }
 
@@ -355,6 +468,10 @@ private struct JmComicSourceFeatureSection: View {
     @State private var isUpdatingDomains = false
     @State private var isUpdatingVersion = false
     @State private var isCheckingIn = false
+    @State private var isTestingAPIEndpoints = false
+    @State private var isTestingImageEndpoints = false
+    @State private var apiSpeedResults = [SourceRouteSpeedTestResult]()
+    @State private var imageSpeedResults = [SourceRouteSpeedTestResult]()
 
     var body: some View {
         Section {
@@ -389,6 +506,21 @@ private struct JmComicSourceFeatureSection: View {
             }
             .disabled(isUpdatingDomains)
 
+            SourceRouteSpeedTestControl(
+                actionTitle: "测试 API 域名",
+                options: jmAPIOptions,
+                results: apiSpeedResults,
+                selectedID: autoSelectAPIEndpoint ? nil : apiEndpoint,
+                isTesting: isTestingAPIEndpoints,
+                test: {
+                    Task { await testAPIEndpoints() }
+                },
+                select: { id in
+                    autoSelectAPIEndpoint = false
+                    apiEndpoint = id
+                }
+            )
+
             Picker("图片分流", selection: $imageEndpoint) {
                 ForEach(JmImageEndpoint.allCases) { endpoint in
                     Text(endpoint.title).tag(endpoint.rawValue)
@@ -398,6 +530,18 @@ private struct JmComicSourceFeatureSection: View {
             if selectedImageEndpoint == .custom {
                 urlField("图片地址", text: $customImageBaseURL, placeholder: JmImageEndpoint.defaultBaseURL)
             }
+
+            SourceRouteSpeedTestControl(
+                actionTitle: "测试图片分流",
+                options: jmImageOptions,
+                results: imageSpeedResults,
+                selectedID: imageEndpoint,
+                isTesting: isTestingImageEndpoints,
+                test: {
+                    Task { await testImageEndpoints() }
+                },
+                select: { imageEndpoint = $0 }
+            )
 
             Picker("收藏排序", selection: $favoriteSort) {
                 ForEach(JmFavoriteSort.allCases) { sort in
@@ -460,6 +604,16 @@ private struct JmComicSourceFeatureSection: View {
         JmImageEndpoint(rawValue: imageEndpoint) ?? .mspProxy3
     }
 
+    private var jmAPIOptions: [SourceRouteSpeedOption] {
+        JmAPIEndpoint.allCases
+            .filter { $0 != .auto }
+            .map { SourceRouteSpeedOption(id: $0.id, title: $0.title) }
+    }
+
+    private var jmImageOptions: [SourceRouteSpeedOption] {
+        JmImageEndpoint.allCases.map { SourceRouteSpeedOption(id: $0.id, title: $0.title) }
+    }
+
     @ViewBuilder
     private func urlField(_ title: String, text: Binding<String>, placeholder: String) -> some View {
         LabeledContent {
@@ -471,6 +625,22 @@ private struct JmComicSourceFeatureSection: View {
         } label: {
             Text(title)
         }
+    }
+
+    @MainActor
+    private func testAPIEndpoints() async {
+        guard !isTestingAPIEndpoints else { return }
+        isTestingAPIEndpoints = true
+        defer { isTestingAPIEndpoints = false }
+        apiSpeedResults = await service.testJmAPIEndpoints()
+    }
+
+    @MainActor
+    private func testImageEndpoints() async {
+        guard !isTestingImageEndpoints else { return }
+        isTestingImageEndpoints = true
+        defer { isTestingImageEndpoints = false }
+        imageSpeedResults = await service.testJmImageEndpoints(customBaseURL: customImageBaseURL)
     }
 
     @MainActor
@@ -540,6 +710,8 @@ private struct EhentaiSourceFeatureSection: View {
     @AppStorage(PlatformFeatureSettingsKey.ehentaiPrefersOriginalImage) private var prefersOriginalImage = false
     @AppStorage(PlatformFeatureSettingsKey.ehentaiIgnoresContentWarning) private var ignoresContentWarning = true
     @AppStorage(PlatformFeatureSettingsKey.ehentaiPrefersJapaneseTitle) private var prefersJapaneseTitle = false
+    @State private var isTestingSites = false
+    @State private var siteSpeedResults = [SourceRouteSpeedTestResult]()
 
     var body: some View {
         Section("E-Hentai") {
@@ -548,6 +720,18 @@ private struct EhentaiSourceFeatureSection: View {
                     Text(site.title).tag(site.rawValue)
                 }
             }
+
+            SourceRouteSpeedTestControl(
+                actionTitle: "测试画廊站点",
+                options: EhentaiSite.allCases.map { SourceRouteSpeedOption(id: $0.id, title: $0.title) },
+                results: siteSpeedResults,
+                selectedID: selectedSiteID,
+                isTesting: isTestingSites,
+                test: {
+                    Task { await testSites() }
+                },
+                select: { frontendURL = $0 }
+            )
 
             Toggle("优先加载原图", isOn: $prefersOriginalImage)
             Toggle("忽略警告", isOn: $ignoresContentWarning)
@@ -575,6 +759,21 @@ private struct EhentaiSourceFeatureSection: View {
         } set: { value in
             frontendURL = value
         }
+    }
+
+    private var selectedSiteID: String {
+        EhentaiSite(rawValue: PlatformFeatureSettings.normalizedBaseURL(
+            frontendURL,
+            fallback: EhentaiSite.eHentai.rawValue
+        ))?.id ?? EhentaiSite.eHentai.id
+    }
+
+    @MainActor
+    private func testSites() async {
+        guard !isTestingSites else { return }
+        isTestingSites = true
+        defer { isTestingSites = false }
+        siteSpeedResults = await service.testEhentaiSites()
     }
 }
 
@@ -623,7 +822,9 @@ private struct HtMangaSourceFeatureSection: View {
 
     @AppStorage(PlatformFeatureSettingsKey.frontendBaseURL(.htManga)) private var apiBaseURL = PlatformFeatureSettings.defaultFrontendBaseURL(for: .htManga)
     @State private var isLoading = false
+    @State private var isTesting = false
     @State private var apiOptions = [String]()
+    @State private var speedResults = [SourceRouteSpeedTestResult]()
     @State private var showsOptions = false
 
     var body: some View {
@@ -656,6 +857,18 @@ private struct HtMangaSourceFeatureSection: View {
                 }
             }
             .disabled(isLoading)
+
+            SourceRouteSpeedTestControl(
+                actionTitle: "测试 API 分流",
+                options: speedTestOptions,
+                results: speedResults,
+                selectedID: normalizedAPIBaseURL,
+                isTesting: isTesting,
+                test: {
+                    Task { await testAPIOptions() }
+                },
+                select: { apiBaseURL = $0 }
+            )
         } header: {
             Text("HT Manga")
         } footer: {
@@ -672,6 +885,34 @@ private struct HtMangaSourceFeatureSection: View {
         .onDisappear {
             normalize()
         }
+    }
+
+    @MainActor
+    private func testAPIOptions() async {
+        guard !isTesting else { return }
+        isTesting = true
+        defer { isTesting = false }
+        do {
+            if apiOptions.isEmpty {
+                apiOptions = try await service.loadHtMangaAPIBaseURLs()
+            }
+            speedResults = await service.testHtMangaAPIBaseURLs(apiOptions)
+        } catch {
+            showMessage("测速失败", error.localizedDescription)
+        }
+    }
+
+    private var speedTestOptions: [SourceRouteSpeedOption] {
+        apiOptions.map { option in
+            SourceRouteSpeedOption(id: option, title: URL(string: option)?.host ?? option)
+        }
+    }
+
+    private var normalizedAPIBaseURL: String {
+        PlatformFeatureSettings.normalizedBaseURL(
+            apiBaseURL,
+            fallback: PlatformFeatureSettings.defaultFrontendBaseURL(for: .htManga)
+        )
     }
 
     @MainActor

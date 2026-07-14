@@ -576,6 +576,167 @@ struct ComicContentService {
         return version
     }
 
+    func testPicacgAPIChannels(account: PlatformAccount?) async throws -> [SourceRouteSpeedTestResult] {
+        let token = try await picacgToken(account: account)
+        var results: [SourceRouteSpeedTestResult] = []
+
+        for channel in ["1", "2", "3"] {
+            try Task.checkCancellation()
+            let startedAt = Date()
+            do {
+                _ = try await picacgJSON(path: "categories", token: token, appChannel: channel)
+                results.append(
+                    SourceRouteSpeedTestResult(
+                        id: channel,
+                        endpoint: "picaapi.picacomic.com",
+                        milliseconds: max(Int(Date().timeIntervalSince(startedAt) * 1_000), 1),
+                        errorMessage: nil
+                    )
+                )
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                results.append(
+                    SourceRouteSpeedTestResult(
+                        id: channel,
+                        endpoint: "picaapi.picacomic.com",
+                        milliseconds: nil,
+                        errorMessage: (error as? URLError)?.code == .timedOut ? "超时" : "失败"
+                    )
+                )
+            }
+        }
+
+        return results
+    }
+
+    func testJmAPIEndpoints() async -> [SourceRouteSpeedTestResult] {
+        let configuredBaseURLs = PlatformFeatureSettings.jmAPIBaseURLs()
+        let candidates = JmAPIEndpoint.allCases.compactMap { endpoint -> SourceRouteSpeedTestCandidate? in
+            guard endpoint != .auto else { return nil }
+            let baseURL = endpoint.dynamicIndex.flatMap { index in
+                configuredBaseURLs.indices.contains(index) ? configuredBaseURLs[index] : nil
+            } ?? endpoint.baseURLString
+            guard let baseURL,
+                  let url = URL(string: "\(PlatformFeatureSettings.normalizedBaseURL(baseURL, fallback: ""))/latest?page=1") else {
+                return nil
+            }
+            let time = Int(Date().timeIntervalSince1970)
+            var request = speedTestRequest(url: url)
+            jmHeaders(time: time, post: false).forEach {
+                request.setValue($0.value, forHTTPHeaderField: $0.key)
+            }
+            return SourceRouteSpeedTestCandidate(id: endpoint.id, request: request, acceptsClientError: false)
+        }
+        return await testSourceRoutes(candidates)
+    }
+
+    func testJmImageEndpoints(customBaseURL: String) async -> [SourceRouteSpeedTestResult] {
+        let candidates = JmImageEndpoint.allCases.compactMap { endpoint -> SourceRouteSpeedTestCandidate? in
+            let baseURL = endpoint.baseURLString ?? PlatformFeatureSettings.normalizedBaseURL(
+                customBaseURL,
+                fallback: JmImageEndpoint.defaultBaseURL
+            )
+            guard let url = URL(string: baseURL) else { return nil }
+            var request = speedTestRequest(url: url)
+            request.setValue("bytes=0-65535", forHTTPHeaderField: "Range")
+            request.setValue("image/avif,image/webp,image/*,*/*;q=0.8", forHTTPHeaderField: "Accept")
+            return SourceRouteSpeedTestCandidate(id: endpoint.id, request: request, acceptsClientError: true)
+        }
+        return await testSourceRoutes(candidates)
+    }
+
+    func testEhentaiSites() async -> [SourceRouteSpeedTestResult] {
+        let candidates = EhentaiSite.allCases.compactMap { site -> SourceRouteSpeedTestCandidate? in
+            guard let url = URL(string: site.rawValue) else { return nil }
+            var request = speedTestRequest(url: url)
+            webHeaders(referer: site.rawValue).forEach {
+                request.setValue($0.value, forHTTPHeaderField: $0.key)
+            }
+            return SourceRouteSpeedTestCandidate(id: site.id, request: request, acceptsClientError: false)
+        }
+        return await testSourceRoutes(candidates)
+    }
+
+    func testHtMangaAPIBaseURLs(_ baseURLs: [String]) async -> [SourceRouteSpeedTestResult] {
+        let candidates = uniqueBaseURLs(baseURLs).compactMap { baseURL -> SourceRouteSpeedTestCandidate? in
+            guard let url = URL(string: "\(baseURL)/albums.html") else { return nil }
+            var request = speedTestRequest(url: url)
+            webHeaders(referer: baseURL).forEach {
+                request.setValue($0.value, forHTTPHeaderField: $0.key)
+            }
+            return SourceRouteSpeedTestCandidate(id: baseURL, request: request, acceptsClientError: false)
+        }
+        return await testSourceRoutes(candidates)
+    }
+
+    private func speedTestRequest(url: URL) -> URLRequest {
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 12)
+        request.httpMethod = "GET"
+        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+        return request
+    }
+
+    private func testSourceRoutes(_ candidates: [SourceRouteSpeedTestCandidate]) async -> [SourceRouteSpeedTestResult] {
+        await withTaskGroup(of: SourceRouteSpeedTestResult.self) { group in
+            for candidate in candidates {
+                group.addTask { @MainActor in
+                    await measureSourceRoute(candidate)
+                }
+            }
+
+            var resultsByID: [String: SourceRouteSpeedTestResult] = [:]
+            for await result in group {
+                resultsByID[result.id] = result
+            }
+            return candidates.compactMap { resultsByID[$0.id] }
+        }
+    }
+
+    private func measureSourceRoute(_ candidate: SourceRouteSpeedTestCandidate) async -> SourceRouteSpeedTestResult {
+        let startedAt = Date()
+        do {
+            try Task.checkCancellation()
+            let (_, response) = try await session.data(for: candidate.request)
+            try Task.checkCancellation()
+            guard let response = response as? HTTPURLResponse else {
+                throw ComicContentError.invalidResponse("测速请求没有返回 HTTP 响应。")
+            }
+            let succeeds = (200..<300).contains(response.statusCode)
+                || (candidate.acceptsClientError && (400..<500).contains(response.statusCode))
+            guard succeeds else {
+                throw ComicContentError.server("HTTP \(response.statusCode)")
+            }
+            let milliseconds = max(Int(Date().timeIntervalSince(startedAt) * 1_000), 1)
+            return SourceRouteSpeedTestResult(
+                id: candidate.id,
+                endpoint: candidate.request.url?.host ?? candidate.request.url?.absoluteString ?? candidate.id,
+                milliseconds: milliseconds,
+                errorMessage: nil
+            )
+        } catch is CancellationError {
+            return SourceRouteSpeedTestResult(
+                id: candidate.id,
+                endpoint: candidate.request.url?.host ?? candidate.id,
+                milliseconds: nil,
+                errorMessage: "已取消"
+            )
+        } catch {
+            let errorMessage: String
+            if (error as? URLError)?.code == .timedOut {
+                errorMessage = "超时"
+            } else {
+                errorMessage = "失败"
+            }
+            return SourceRouteSpeedTestResult(
+                id: candidate.id,
+                endpoint: candidate.request.url?.host ?? candidate.id,
+                milliseconds: nil,
+                errorMessage: errorMessage
+            )
+        }
+    }
+
     func loadEhentaiProfiles() async throws -> [EhentaiProfile] {
         guard let url = URL(string: "\(ehentaiBaseURL)/uconfig.php") else {
             throw ComicContentError.invalidURL("E-Hentai Profile")
@@ -618,6 +779,12 @@ struct ComicContentService {
         }
         return uniqueBaseURLs(values)
     }
+}
+
+private struct SourceRouteSpeedTestCandidate {
+    let id: String
+    let request: URLRequest
+    let acceptsClientError: Bool
 }
 
 struct ComicFavoritePage: Equatable {
@@ -839,11 +1006,17 @@ private extension ComicContentService {
         )
     }
 
-    func picacgJSON(path: String, method: String = "GET", token: String, body: Data? = nil) async throws -> [String: Any] {
+    func picacgJSON(
+        path: String,
+        method: String = "GET",
+        token: String,
+        body: Data? = nil,
+        appChannel: String? = nil
+    ) async throws -> [String: Any] {
         guard let url = URL(string: "https://picaapi.picacomic.com/\(path)") else {
             throw ComicContentError.invalidURL(path)
         }
-        let headers = picacgHeaders(path: path, method: method, token: token)
+        let headers = picacgHeaders(path: path, method: method, token: token, appChannel: appChannel)
         return try await requestJSON(url: url, method: method, headers: headers, body: body)
     }
 
@@ -1069,7 +1242,7 @@ private extension ComicContentService {
         return result
     }
 
-    func picacgHeaders(path: String, method: String, token: String) -> [String: String] {
+    func picacgHeaders(path: String, method: String, token: String, appChannel: String? = nil) -> [String: String] {
         let apiKey = "C69BAF41DA5ABD1FFEDC6D2FEA56B"
         let nonce = UUID().uuidString.replacingOccurrences(of: "-", with: "")
         let time = "\(Int(Date().timeIntervalSince1970))"
@@ -1081,7 +1254,7 @@ private extension ComicContentService {
         return [
             "api-key": apiKey,
             "accept": "application/vnd.picacomic.com.v1+json",
-            "app-channel": PlatformFeatureSettings.picacgAppChannel(),
+            "app-channel": appChannel ?? PlatformFeatureSettings.picacgAppChannel(),
             "authorization": token,
             "time": time,
             "nonce": nonce,
