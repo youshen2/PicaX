@@ -2356,6 +2356,7 @@ private struct ReaderSettingsView: View {
     @AppStorage(ReaderSettingsKey.progressBackgroundOpacity) private var progressBackgroundOpacity = 0.78
     @AppStorage(ReaderSettingsKey.progressBottomInset) private var progressBottomInset = 0.0
     @AppStorage(ReaderSettingsKey.readingMode) private var readingMode = ReaderReadingMode.topToBottomContinuous.rawValue
+    @AppStorage(ReaderSettingsKey.wholeBookContinuousReading) private var wholeBookContinuousReading = false
     @AppStorage(ReaderSettingsKey.imageSpacing) private var imageSpacing = 0.0
     @AppStorage(ReaderSettingsKey.firstImageTopPadding) private var firstImageTopPadding = 115.0
     @AppStorage(ReaderSettingsKey.lastImageBottomPadding) private var lastImageBottomPadding = 0.0
@@ -2436,6 +2437,14 @@ private struct ReaderSettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
+                Toggle("整卷连续阅读", isOn: $wholeBookContinuousReading)
+
+                if wholeBookContinuousReading {
+                    Text("下一章会提前追加到当前章节末尾；连续滚动和分页阅读都会无缝进入下一章，直到全书结束。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
                 Toggle("深色模式下降低图片亮度", isOn: $reducesImageBrightnessInDarkMode)
             }
 
@@ -2480,6 +2489,7 @@ private struct ReaderSettingsView: View {
                 }
 
                 Toggle("自动进入下一章", isOn: $autoPagingTurnsChapter)
+                    .disabled(wholeBookContinuousReading)
             }
 
             Section {

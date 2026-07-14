@@ -63,6 +63,22 @@ struct ReaderVisiblePageFramesPreferenceKey: PreferenceKey {
     }
 }
 
+struct ReaderWholeBookPageID: Hashable {
+    let chapterIndex: Int
+    let pageIndex: Int
+}
+
+struct ReaderWholeBookVisiblePageFramesPreferenceKey: PreferenceKey {
+    static var defaultValue: [ReaderWholeBookPageID: CGRect] = [:]
+
+    static func reduce(
+        value: inout [ReaderWholeBookPageID: CGRect],
+        nextValue: () -> [ReaderWholeBookPageID: CGRect]
+    ) {
+        value.merge(nextValue(), uniquingKeysWith: { _, newValue in newValue })
+    }
+}
+
 @MainActor
 final class ReaderContinuousScrollBridge {
     #if os(iOS)

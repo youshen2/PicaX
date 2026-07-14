@@ -44,6 +44,7 @@ struct ComicReaderPage: View {
     @AppStorage(ReaderSettingsKey.progressBackgroundOpacity) private var progressBackgroundOpacity = 0.78
     @AppStorage(ReaderSettingsKey.progressBottomInset) private var progressBottomInset = 0.0
     @AppStorage(ReaderSettingsKey.readingMode) private var readingMode = ReaderReadingMode.topToBottomContinuous.rawValue
+    @AppStorage(ReaderSettingsKey.wholeBookContinuousReading) private var wholeBookContinuousReading = false
     @AppStorage(ReaderSettingsKey.imageSpacing) private var imageSpacing = 0.0
     @AppStorage(ReaderSettingsKey.firstImageTopPadding) private var firstImageTopPadding = 115.0
     @AppStorage(ReaderSettingsKey.lastImageBottomPadding) private var lastImageBottomPadding = 0.0
@@ -316,9 +317,14 @@ struct ComicReaderPage: View {
                         Toggle(isOn: $autoPagingTurnsChapter) {
                             Label("自动进入下一章", systemImage: "arrow.down.doc")
                         }
+                        .disabled(wholeBookContinuousReading)
                     }
 
                     Section {
+                        Toggle(isOn: $wholeBookContinuousReading) {
+                            Label("整卷连续阅读", systemImage: "rectangle.stack.fill")
+                        }
+
                         Button {
                             detailRequest = ComicListDetailRequest(item: detail.item)
                         } label: {
@@ -420,6 +426,7 @@ struct ComicReaderPage: View {
 
     private var chapterEndAction: ReaderChapterEndAction? {
         guard showsNextChapterButtonAtEnd,
+              !wholeBookContinuousReading,
               !isAutoPaging,
               isAtChapterEnd else {
             return nil
@@ -604,6 +611,15 @@ struct ComicReaderPage: View {
 
     @ViewBuilder
     private func readerContent(images: [ComicChapterImage]) -> some View {
+        if wholeBookContinuousReading {
+            wholeBookReaderContent(images: images)
+        } else {
+            standardReaderContent(images: images)
+        }
+    }
+
+    @ViewBuilder
+    private func standardReaderContent(images: [ComicChapterImage]) -> some View {
         switch readerReadingMode {
         case .topToBottomContinuous:
             continuousReaderContent(images: images)
@@ -611,6 +627,125 @@ struct ComicReaderPage: View {
             verticalPagedReaderContent(images: images)
         case .leftToRight, .rightToLeft:
             horizontalPagedReaderContent(images: images)
+        }
+    }
+
+    @ViewBuilder
+    private func wholeBookReaderContent(images: [ComicChapterImage]) -> some View {
+        GeometryReader { geometry in
+            let targetPixelWidth = readerTargetPixelWidth(for: geometry.size.width)
+            if readerReadingMode == .topToBottomContinuous {
+                ReaderWholeBookContinuousView(
+                    item: detail.item,
+                    chapters: detail.chapters,
+                    initialChapterIndex: viewModel.loadedChapterIndex,
+                    initialPageIndex: viewModel.requestedPageIndex,
+                    initialImages: images,
+                    service: service,
+                    account: platformAccounts.account(for: detail.item.platform),
+                    localCommentsProvider: localChapterCommentsProvider,
+                    loadChapterImages: { chapterIndex in
+                        try await viewModel.chapterImages(
+                            index: chapterIndex,
+                            account: platformAccounts.account(for: detail.item.platform)
+                        )
+                    },
+                    imageSpacing: CGFloat(imageSpacing),
+                    firstImageTopPadding: CGFloat(firstImageTopPadding),
+                    lastImageBottomPadding: CGFloat(lastImageBottomPadding),
+                    preloadImageCount: boundedPreloadImageCount,
+                    chapterLoadThreshold: boundedChapterEndPageThreshold,
+                    retryCount: boundedImageRetryCount,
+                    retryInterval: boundedImageRetryInterval,
+                    targetPixelWidth: targetPixelWidth,
+                    displaySize: geometry.size,
+                    zoomConfiguration: readerZoomConfiguration,
+                    dimsImages: dimsReaderImages,
+                    showsChapterComments: shouldShowChapterCommentsAtEnd,
+                    uiToggleMode: readerUIToggleMode,
+                    tapPagingEnabled: tapPagingEnabled,
+                    tapPagingEdgePercent: boundedTapPagingEdgePercent,
+                    tapPagingInverted: tapPagingInverted,
+                    tapPagingDistancePercent: boundedTapPagingDistancePercent,
+                    doubleTapZoomEnabled: effectiveDoubleTapZoomEnabled,
+                    isAutoPaging: isAutoPaging,
+                    autoPagingInterval: boundedAutoPageInterval,
+                    autoPagingDistancePercent: boundedAutoPageDistancePercent,
+                    progressJumpRequest: $progressJumpRequest,
+                    onToggleUI: { toggleReaderUI() },
+                    onPositionChange: { chapterIndex, pageIndex, pageCount in
+                        updateWholeBookReadingPosition(
+                            chapterIndex: chapterIndex,
+                            pageIndex: pageIndex,
+                            pageCount: pageCount
+                        )
+                    },
+                    onReachedBookEnd: { handleWholeBookEndReached() }
+                )
+            } else {
+                ReaderWholeBookPagedView(
+                    item: detail.item,
+                    chapters: detail.chapters,
+                    readingMode: readerReadingMode,
+                    initialChapterIndex: viewModel.loadedChapterIndex,
+                    initialPageIndex: viewModel.requestedPageIndex,
+                    initialImages: images,
+                    service: service,
+                    account: platformAccounts.account(for: detail.item.platform),
+                    localCommentsProvider: localChapterCommentsProvider,
+                    loadChapterImages: { chapterIndex in
+                        try await viewModel.chapterImages(
+                            index: chapterIndex,
+                            account: platformAccounts.account(for: detail.item.platform)
+                        )
+                    },
+                    preloadImageCount: boundedPreloadImageCount,
+                    chapterLoadThreshold: boundedChapterEndPageThreshold,
+                    retryCount: boundedImageRetryCount,
+                    retryInterval: boundedImageRetryInterval,
+                    targetPixelWidth: targetPixelWidth,
+                    displaySize: geometry.size,
+                    zoomConfiguration: readerZoomConfiguration,
+                    dimsImages: dimsReaderImages,
+                    showsChapterComments: shouldShowChapterCommentsAtEnd,
+                    uiToggleMode: readerUIToggleMode,
+                    tapPagingEnabled: tapPagingEnabled,
+                    tapPagingEdgePercent: boundedTapPagingEdgePercent,
+                    tapPagingInverted: tapPagingInverted,
+                    doubleTapZoomEnabled: effectiveDoubleTapZoomEnabled,
+                    isAutoPaging: isAutoPaging,
+                    autoPagingInterval: boundedAutoPageInterval,
+                    progressJumpRequest: $progressJumpRequest,
+                    onToggleUI: { toggleReaderUI() },
+                    onPositionChange: { chapterIndex, pageIndex, pageCount in
+                        updateWholeBookReadingPosition(
+                            chapterIndex: chapterIndex,
+                            pageIndex: pageIndex,
+                            pageCount: pageCount
+                        )
+                    },
+                    onReachedBookEnd: { handleWholeBookEndReached() }
+                )
+            }
+        }
+        .ignoresSafeArea(.container)
+    }
+
+    private func updateWholeBookReadingPosition(chapterIndex: Int, pageIndex: Int, pageCount: Int) {
+        let didChange = viewModel.updateReadingPosition(
+            chapterIndex: chapterIndex,
+            pageIndex: pageIndex,
+            pageCount: pageCount
+        )
+        guard didChange else { return }
+        scheduleReadingHistoryRecord(pageIndex: pageIndex, totalPages: pageCount)
+    }
+
+    private func handleWholeBookEndReached() {
+        if isAutoPaging {
+            stopAutoPaging(toast: "已读完全书")
+        } else {
+            showReaderToast("已读完全书")
         }
     }
 
@@ -1439,18 +1574,25 @@ struct ComicReaderPage: View {
     }
 
     private func presentProgressSelection(respectsTapSetting: Bool = true) {
-        guard (!respectsTapSetting || progressTapSelectionEnabled),
-              case .loaded(let images) = viewModel.state,
-              !images.isEmpty else {
+        guard !respectsTapSetting || progressTapSelectionEnabled else {
             return
         }
 
-        let pageIndex = min(max(viewModel.currentPageIndex, 0), images.count - 1)
+        let pageCount: Int
+        if wholeBookContinuousReading {
+            pageCount = viewModel.currentChapterPageCount
+        } else if case .loaded(let images) = viewModel.state {
+            pageCount = images.count
+        } else {
+            return
+        }
+        guard pageCount > 0 else { return }
+        let pageIndex = min(max(viewModel.currentPageIndex, 0), pageCount - 1)
         progressSelectionContext = ReaderProgressSelectionContext(
             chapterIndex: viewModel.currentChapterIndex,
             chapterTitle: viewModel.navigationTitle,
             pageIndex: pageIndex,
-            pageCount: images.count
+            pageCount: pageCount
         )
     }
 
@@ -1879,8 +2021,17 @@ struct ComicReaderPage: View {
         case .topToBottom, .leftToRight, .rightToLeft:
             candidatePage = pagedPageIndex
         }
-        let pageIndex = min(max(candidatePage, 0), images.count - 1)
-        _ = viewModel.updateCurrentPage(pageIndex)
+        let pageCount = wholeBookContinuousReading ? viewModel.currentChapterPageCount : images.count
+        let pageIndex = min(max(candidatePage, 0), max(pageCount - 1, 0))
+        if wholeBookContinuousReading {
+            _ = viewModel.updateReadingPosition(
+                chapterIndex: viewModel.currentChapterIndex,
+                pageIndex: pageIndex,
+                pageCount: pageCount
+            )
+        } else {
+            _ = viewModel.updateCurrentPage(pageIndex)
+        }
     }
 
     private func reachedContinuousBottom(in images: [ComicChapterImage]) -> Bool {

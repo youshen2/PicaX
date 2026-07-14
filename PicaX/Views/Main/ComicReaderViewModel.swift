@@ -7,6 +7,8 @@ final class ComicReaderViewModel: ObservableObject {
     @Published private(set) var currentChapterIndex: Int
     @Published private(set) var currentPageIndex: Int
     @Published private(set) var requestedPageIndex: Int
+    @Published private(set) var currentChapterPageCount = 0
+    @Published private(set) var loadedChapterIndex: Int
 
     private let detail: ComicDetailInfo
     private let service: ComicContentService
@@ -29,6 +31,7 @@ final class ComicReaderViewModel: ObservableObject {
     ) {
         self.detail = detail
         self.currentChapterIndex = min(max(initialChapterIndex, 0), max(detail.chapters.count - 1, 0))
+        self.loadedChapterIndex = min(max(initialChapterIndex, 0), max(detail.chapters.count - 1, 0))
         self.currentPageIndex = max(initialPageIndex, 0)
         self.requestedPageIndex = max(initialPageIndex, 0)
         self.service = service
@@ -42,13 +45,13 @@ final class ComicReaderViewModel: ObservableObject {
 
     var progressTitle: String {
         let page = currentPageIndex + 1
-        let total = currentImagesCount
+        let total = currentChapterPageCount
         return total > 0 ? "E\(currentChapterIndex + 1)/\(max(detail.chapters.count, 1)) · P\(page)/\(total)" : "正在准备"
     }
 
     var progress: Double {
-        guard currentImagesCount > 0 else { return 0 }
-        return Double(currentPageIndex + 1) / Double(currentImagesCount)
+        guard currentChapterPageCount > 0 else { return 0 }
+        return Double(currentPageIndex + 1) / Double(currentChapterPageCount)
     }
 
     var canLoadPreviousChapter: Bool {
@@ -57,13 +60,6 @@ final class ComicReaderViewModel: ObservableObject {
 
     var canLoadNextChapter: Bool {
         currentChapterIndex < detail.chapters.count - 1
-    }
-
-    private var currentImagesCount: Int {
-        if case .loaded(let images) = state {
-            return images.count
-        }
-        return 0
     }
 
     func loadChapter(index: Int, pageIndex: Int, account: PlatformAccount?, force: Bool = false, preloadImageCount: Int = 0, preloadDelay: Double = 0) async {
@@ -78,28 +74,18 @@ final class ComicReaderViewModel: ObservableObject {
         }
 
         currentChapterIndex = boundedIndex
+        loadedChapterIndex = boundedIndex
         currentPageIndex = max(pageIndex, 0)
         requestedPageIndex = max(pageIndex, 0)
+        currentChapterPageCount = 0
         cancelImagePreload()
         cancelNextChapterPreload()
         state = .loading
         do {
-            let images: [ComicChapterImage]
-            if preloadedChapterID == chapter.id, !preloadedChapterImages.isEmpty {
-                images = preloadedChapterImages
-                preloadedChapterID = nil
-                preloadedChapterImages = []
-            } else if let localChapterImageProvider {
-                images = await localChapterImageProvider(chapter, boundedIndex)
-                guard !images.isEmpty else {
-                    state = .failed("当前章节尚未下载。")
-                    return
-                }
-            } else {
-                images = try await service.loadChapterImages(item: detail.item, chapter: chapter, account: account)
-            }
+            let images = try await chapterImages(index: boundedIndex, account: account)
             loadedChapterID = chapter.id
             state = .loaded(images)
+            currentChapterPageCount = images.count
             currentPageIndex = min(currentPageIndex, max(images.count - 1, 0))
             requestedPageIndex = min(requestedPageIndex, max(images.count - 1, 0))
             scheduleImagePreload(
@@ -131,6 +117,44 @@ final class ComicReaderViewModel: ObservableObject {
         currentPageIndex = boundedIndex
         requestedPageIndex = boundedIndex
         return true
+    }
+
+    func updateReadingPosition(chapterIndex: Int, pageIndex: Int, pageCount: Int) -> Bool {
+        guard detail.chapters.indices.contains(chapterIndex) else { return false }
+        let boundedPageCount = max(pageCount, 0)
+        let boundedPageIndex = min(max(pageIndex, 0), max(boundedPageCount - 1, 0))
+        guard currentChapterIndex != chapterIndex
+                || currentPageIndex != boundedPageIndex
+                || requestedPageIndex != boundedPageIndex
+                || currentChapterPageCount != boundedPageCount else {
+            return false
+        }
+        currentChapterIndex = chapterIndex
+        currentPageIndex = boundedPageIndex
+        requestedPageIndex = boundedPageIndex
+        currentChapterPageCount = boundedPageCount
+        return true
+    }
+
+    func chapterImages(index: Int, account: PlatformAccount?) async throws -> [ComicChapterImage] {
+        guard detail.chapters.indices.contains(index) else {
+            throw ReaderChapterImageLoadError.invalidChapter
+        }
+        let chapter = detail.chapters[index]
+        if preloadedChapterID == chapter.id, !preloadedChapterImages.isEmpty {
+            let images = preloadedChapterImages
+            preloadedChapterID = nil
+            preloadedChapterImages = []
+            return images
+        }
+        if let localChapterImageProvider {
+            let images = await localChapterImageProvider(chapter, index)
+            guard !images.isEmpty else {
+                throw ReaderChapterImageLoadError.chapterNotDownloaded
+            }
+            return images
+        }
+        return try await service.loadChapterImages(item: detail.item, chapter: chapter, account: account)
     }
 
     func scheduleImagePreload(aroundPage index: Int, count: Int, delay: Double, targetPixelWidth: Int?) {
@@ -259,7 +283,7 @@ final class ComicReaderViewModel: ObservableObject {
     func isCurrentPageNearChapterEnd(pageThreshold: Int) -> Bool {
         Self.isPageNearChapterEnd(
             currentPageIndex,
-            totalPages: currentImagesCount,
+            totalPages: currentChapterPageCount,
             pageThreshold: pageThreshold
         )
     }
@@ -302,6 +326,20 @@ final class ComicReaderViewModel: ObservableObject {
         preloadDebounceTask = nil
         preloadTask?.cancel()
         preloadTask = nil
+    }
+}
+
+private enum ReaderChapterImageLoadError: LocalizedError {
+    case invalidChapter
+    case chapterNotDownloaded
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidChapter:
+            "章节不存在。"
+        case .chapterNotDownloaded:
+            "当前章节尚未下载。"
+        }
     }
 }
 
