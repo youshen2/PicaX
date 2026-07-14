@@ -1385,6 +1385,7 @@ struct ComicSearchPage: View {
     @State private var aggregatePlatforms = Set(ComicPlatform.allCases)
     @State private var searchOptions = ComicSearchAdvancedOptions()
     @State private var showsAdvancedOptions = false
+    @State private var hiddenTagSuggestionsQuery: String?
     @State private var searchSubmitSuppressionGeneration = 0
     @State private var suppressedSearchSubmitGeneration: Int?
     @State private var searchCancelRestorationCandidate: String?
@@ -1569,6 +1570,7 @@ struct ComicSearchPage: View {
         let trimmedKeyword = viewModel.trimmedKeyword(query)
         guard !trimmedKeyword.isEmpty else { return }
         query = trimmedKeyword
+        hiddenTagSuggestionsQuery = trimmedKeyword
         isSearchFocused = false
         if recordsHistory {
             searchHistory.record(keyword: trimmedKeyword, target: selectedSearchTarget)
@@ -1587,6 +1589,10 @@ struct ComicSearchPage: View {
     }
 
     private func handleSearchQueryChange(oldValue: String, newValue: String) {
+        if hiddenTagSuggestionsQuery != nil, newValue != hiddenTagSuggestionsQuery {
+            hiddenTagSuggestionsQuery = nil
+        }
+
         if newValue.isEmpty, !oldValue.isEmpty {
             searchCancelRestorationCandidate = oldValue
             searchClearGeneration += 1
@@ -1691,7 +1697,9 @@ struct ComicSearchPage: View {
 
     @ViewBuilder
     private var tagSuggestions: some View {
-        if enablesSearchSuggestions, selectedSearchTarget == .platform(.eHentai) {
+        if hiddenTagSuggestionsQuery != query,
+           enablesSearchSuggestions,
+           selectedSearchTarget == .platform(.eHentai) {
             let suggestions = EhTagTranslationService.suggestions(for: query)
             if !suggestions.isEmpty {
                 Section("E-Hentai 标签") {
@@ -1713,7 +1721,9 @@ struct ComicSearchPage: View {
                     }
                 }
             }
-        } else if enablesSearchSuggestions, selectedSearchTarget == .platform(.nhentai) {
+        } else if hiddenTagSuggestionsQuery != query,
+                  enablesSearchSuggestions,
+                  selectedSearchTarget == .platform(.nhentai) {
             let suggestions = NhentaiTagSuggestionService.suggestions(for: query)
             if !suggestions.isEmpty {
                 Section("NHentai 标签") {
