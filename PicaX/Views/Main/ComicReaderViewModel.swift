@@ -176,8 +176,6 @@ final class ComicReaderViewModel: ObservableObject {
     }
 
     func scheduleNextChapterPreloadIfNeeded(
-        currentPage index: Int,
-        totalPages: Int,
         enabled: Bool,
         pageThreshold: Int,
         account: PlatformAccount?,
@@ -188,11 +186,10 @@ final class ComicReaderViewModel: ObservableObject {
             cancelNextChapterPreload(clearCachedChapter: true)
             return
         }
-        guard totalPages > 0, canLoadNextChapter else { return }
-        let boundedPageIndex = min(max(index, 0), totalPages - 1)
-        let boundedPageThreshold = min(max(pageThreshold, 1), 30)
-        let preloadStartIndex = max(totalPages - boundedPageThreshold, 0)
-        guard boundedPageIndex >= preloadStartIndex else { return }
+        guard canLoadNextChapter,
+              isCurrentPageNearChapterEnd(pageThreshold: pageThreshold) else {
+            return
+        }
 
         let nextChapterIndex = currentChapterIndex + 1
         let nextChapter = detail.chapters[nextChapterIndex]
@@ -257,6 +254,21 @@ final class ComicReaderViewModel: ObservableObject {
             preloadedChapterID = nil
             preloadedChapterImages = []
         }
+    }
+
+    func isCurrentPageNearChapterEnd(pageThreshold: Int) -> Bool {
+        Self.isPageNearChapterEnd(
+            currentPageIndex,
+            totalPages: currentImagesCount,
+            pageThreshold: pageThreshold
+        )
+    }
+
+    private static func isPageNearChapterEnd(_ pageIndex: Int, totalPages: Int, pageThreshold: Int) -> Bool {
+        guard totalPages > 0 else { return false }
+        let boundedPageIndex = min(max(pageIndex, 0), totalPages - 1)
+        let boundedPageThreshold = min(max(pageThreshold, 1), 30)
+        return boundedPageIndex >= max(totalPages - boundedPageThreshold, 0)
     }
 
     private func startImagePreload(urlStrings: [String], preloadKeys: [String], chapterID: String?, pageIndex: Int, targetPixelWidth: Int?) {

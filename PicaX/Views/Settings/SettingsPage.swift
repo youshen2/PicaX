@@ -267,7 +267,7 @@ private enum SettingsSearchItem: CaseIterable {
         case .platformAccounts:
             ComicPlatform.allCases.map(\.title) + ["登录", "账号", "cookie"]
         case .reader:
-            ["自动翻页", "点按翻页", "两指缩放", "双击缩放", "长按缩放", "预加载", "状态栏", "页码", "亮度", "深色模式"]
+            ["自动翻页", "点按翻页", "两指缩放", "双击缩放", "长按缩放", "预加载", "章节末尾", "下一章", "浮动按钮", "按钮位置", "边距", "批量阅读", "切换书籍", "状态栏", "页码", "亮度", "深色模式"]
         case .home:
             ["阅读时长", "阅读历史", "稍后再读", "下载", "折叠", "首页卡片"]
         case .storage:
@@ -2361,7 +2361,7 @@ private struct ReaderSettingsView: View {
     @AppStorage(ReaderSettingsKey.lastImageBottomPadding) private var lastImageBottomPadding = 0.0
     @AppStorage(ReaderSettingsKey.preloadImageCount) private var preloadImageCount = 3
     @AppStorage(ReaderSettingsKey.preloadsNextChapterNearEnd) private var preloadsNextChapterNearEnd = false
-    @AppStorage(ReaderSettingsKey.nextChapterPreloadPageThreshold) private var nextChapterPreloadPageThreshold = 3
+    @AppStorage(ReaderSettingsKey.chapterEndPageThreshold) private var chapterEndPageThreshold = 3
     @AppStorage(ReaderSettingsKey.pagedPreloadDelay) private var pagedPreloadDelay = 1.2
     @AppStorage(ReaderSettingsKey.imageRetryCount) private var imageRetryCount = 2
     @AppStorage(ReaderSettingsKey.imageRetryInterval) private var imageRetryInterval = 1.0
@@ -2380,6 +2380,11 @@ private struct ReaderSettingsView: View {
     @AppStorage(ReaderSettingsKey.autoPagingInterval) private var autoPagingInterval = 6.0
     @AppStorage(ReaderSettingsKey.autoPagingDistancePercent) private var autoPagingDistancePercent = 85
     @AppStorage(ReaderSettingsKey.autoPagingTurnsChapter) private var autoPagingTurnsChapter = true
+    @AppStorage(ReaderSettingsKey.showsNextChapterButtonAtEnd) private var showsNextChapterButtonAtEnd = false
+    @AppStorage(ReaderSettingsKey.chapterEndButtonPosition) private var chapterEndButtonPosition = ReaderOverlayPosition.bottomTrailing.rawValue
+    @AppStorage(ReaderSettingsKey.chapterEndButtonHorizontalInset) private var chapterEndButtonHorizontalInset = 20.0
+    @AppStorage(ReaderSettingsKey.chapterEndButtonVerticalInset) private var chapterEndButtonVerticalInset = 24.0
+    @AppStorage(ReaderSettingsKey.nextChapterButtonSwitchesBooks) private var nextChapterButtonSwitchesBooks = false
     @AppStorage(ReaderSettingsKey.showsChapterCommentsAtEnd) private var showsChapterCommentsAtEnd = false
     @AppStorage(ReaderSettingsKey.showsSystemStatus) private var showsSystemStatus = false
     @AppStorage(ReaderSettingsKey.systemStatusFollowsUIVisibility) private var systemStatusFollowsUIVisibility = false
@@ -2431,12 +2436,29 @@ private struct ReaderSettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
+                Toggle("深色模式下降低图片亮度", isOn: $reducesImageBrightnessInDarkMode)
+            }
+
+            Section {
+                IntegerSettingsInputRow(
+                    title: "预加载图片",
+                    value: $preloadImageCount,
+                    unit: "张",
+                    lowerBound: 0,
+                    upperBound: 15,
+                    detail: preloadImageCount == 0 ? "关闭图片预加载" : nil
+                )
+
                 VStack(alignment: .leading, spacing: 8) {
                     Text("预加载延迟 \(pagedPreloadDelay, specifier: "%.1f") 秒")
                     Slider(value: $pagedPreloadDelay, in: 0...5, step: 0.1)
                 }
 
-                Toggle("深色模式下降低图片亮度", isOn: $reducesImageBrightnessInDarkMode)
+                Toggle("接近章节末尾时预加载下一章", isOn: $preloadsNextChapterNearEnd)
+            } header: {
+                Text("预加载")
+            } footer: {
+                Text("开启下一章预加载后，会按照“章节末尾”分区设置的范围提前获取下一章图片列表，并按“预加载图片”数量加载开头图片。")
             }
 
             Section("自动翻页") {
@@ -2461,9 +2483,42 @@ private struct ReaderSettingsView: View {
             }
 
             Section {
+                IntegerSettingsInputRow(
+                    title: "章节末尾范围",
+                    value: $chapterEndPageThreshold,
+                    unit: "页",
+                    lowerBound: 1,
+                    upperBound: 30
+                )
+
+                Toggle("显示下一章浮动按钮", isOn: $showsNextChapterButtonAtEnd)
+
+                if showsNextChapterButtonAtEnd {
+                    Picker("浮动按钮位置", selection: $chapterEndButtonPosition) {
+                        ForEach(ReaderOverlayPosition.allCases) { position in
+                            Text(position.title)
+                                .tag(position.rawValue)
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("水平边距 \(Int(chapterEndButtonHorizontalInset))")
+                        Slider(value: $chapterEndButtonHorizontalInset, in: 0...120, step: 2)
+                    }
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("垂直边距 \(Int(chapterEndButtonVerticalInset))")
+                        Slider(value: $chapterEndButtonVerticalInset, in: 0...120, step: 2)
+                    }
+
+                    Toggle("批量阅读时用于切换书籍", isOn: $nextChapterButtonSwitchesBooks)
+                }
+
                 Toggle("章节末尾显示评论", isOn: $showsChapterCommentsAtEnd)
+            } header: {
+                Text("章节末尾")
             } footer: {
-                Text("支持的来源会在每章最后显示评论。已下载漫画会优先使用下载时保存的章节评论。")
+                Text("最后 \(boundedChapterEndPageThreshold) 页会视为章节末尾，并同时用于下一章预加载和浮动按钮。按钮边距从所选角落的屏幕边缘开始计算，控制栏显示时会自动避让。存在下一章时显示“下一章”；开启批量阅读切换后，最后一章存在下一本书时显示“下一本”。")
             }
 
             Section {
@@ -2637,27 +2692,6 @@ private struct ReaderSettingsView: View {
                     Slider(value: $lastImageBottomPadding, in: 0...160, step: 4)
                 }
 
-                IntegerSettingsInputRow(
-                    title: "预加载图片",
-                    value: $preloadImageCount,
-                    unit: "张",
-                    lowerBound: 0,
-                    upperBound: 15,
-                    detail: preloadImageCount == 0 ? "关闭" : nil
-                )
-
-                Toggle("接近章节末尾时预加载下一章", isOn: $preloadsNextChapterNearEnd)
-
-                if preloadsNextChapterNearEnd {
-                    IntegerSettingsInputRow(
-                        title: "章节末尾范围",
-                        value: $nextChapterPreloadPageThreshold,
-                        unit: "页",
-                        lowerBound: 1,
-                        upperBound: 30
-                    )
-                }
-
                 IntegerSettingsInputRow(title: "图片重试次数", value: $imageRetryCount, unit: "次", lowerBound: 0, upperBound: 8)
 
                 VStack(alignment: .leading, spacing: 8) {
@@ -2666,8 +2700,6 @@ private struct ReaderSettingsView: View {
                 }
             } header: {
                 Text("图片")
-            } footer: {
-                Text("开启后，阅读到章节最后 \(boundedNextChapterPreloadPageThreshold) 页时会提前获取下一章图片列表，并按“预加载图片”数量加载下一章开头图片。")
             }
         }
         .picaxInsetGroupedListStyle()
@@ -2682,8 +2714,8 @@ private struct ReaderSettingsView: View {
         ReaderProgressStyle(rawValue: progressStyle) ?? .circular
     }
 
-    private var boundedNextChapterPreloadPageThreshold: Int {
-        min(max(nextChapterPreloadPageThreshold, 1), 30)
+    private var boundedChapterEndPageThreshold: Int {
+        min(max(chapterEndPageThreshold, 1), 30)
     }
 
     private var selectedPosition: ReaderProgressPosition {

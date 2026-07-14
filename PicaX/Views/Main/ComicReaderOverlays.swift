@@ -19,7 +19,7 @@ enum ReaderSettingsKey {
     static let lastImageBottomPadding = "settings.reader.lastImageBottomPadding"
     static let preloadImageCount = "settings.reader.preloadImageCount"
     static let preloadsNextChapterNearEnd = "settings.reader.preloadsNextChapterNearEnd"
-    static let nextChapterPreloadPageThreshold = "settings.reader.nextChapterPreloadPageThreshold"
+    static let chapterEndPageThreshold = "settings.reader.nextChapterPreloadPageThreshold"
     static let pagedPreloadDelay = "settings.reader.pagedPreloadDelay"
     static let imageRetryCount = "settings.reader.imageRetryCount"
     static let imageRetryInterval = "settings.reader.imageRetryInterval"
@@ -38,6 +38,11 @@ enum ReaderSettingsKey {
     static let autoPagingInterval = "settings.reader.autoPagingInterval"
     static let autoPagingDistancePercent = "settings.reader.autoPagingDistancePercent"
     static let autoPagingTurnsChapter = "settings.reader.autoPagingTurnsChapter"
+    static let showsNextChapterButtonAtEnd = "settings.reader.showsNextChapterButtonAtEnd"
+    static let chapterEndButtonPosition = "settings.reader.chapterEndButtonPosition"
+    static let chapterEndButtonHorizontalInset = "settings.reader.chapterEndButtonHorizontalInset"
+    static let chapterEndButtonVerticalInset = "settings.reader.chapterEndButtonVerticalInset"
+    static let nextChapterButtonSwitchesBooks = "settings.reader.nextChapterButtonSwitchesBooks"
     static let showsChapterCommentsAtEnd = "settings.reader.showsChapterCommentsAtEnd"
     static let showsSystemStatus = "settings.reader.showsSystemStatus"
     static let systemStatusFollowsUIVisibility = "settings.reader.systemStatusFollowsUIVisibility"
@@ -142,6 +147,7 @@ enum ReaderProgressPosition: String, CaseIterable, Identifiable, Equatable {
             .bottomTrailing
         }
     }
+
 }
 
 enum ReaderSystemStatusStyle: String, CaseIterable, Identifiable, Equatable {
@@ -196,6 +202,19 @@ enum ReaderOverlayPosition: String, CaseIterable, Identifiable, Equatable {
     }
 
     var alignment: Alignment {
+        switch self {
+        case .topLeading:
+            .topLeading
+        case .topTrailing:
+            .topTrailing
+        case .bottomLeading:
+            .bottomLeading
+        case .bottomTrailing:
+            .bottomTrailing
+        }
+    }
+
+    var anchor: UnitPoint {
         switch self {
         case .topLeading:
             .topLeading
@@ -805,6 +824,37 @@ struct ReaderToastView: View {
                     .stroke(.white.opacity(0.24), lineWidth: 0.5)
             }
             .shadow(color: .black.opacity(0.28), radius: 12, x: 0, y: 6)
+    }
+}
+
+struct ReaderChapterEndActionButton: View {
+    let title: String
+    let systemImage: String
+    let isLoading: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                if isLoading {
+                    ProgressView()
+                        .tint(.white)
+                } else {
+                    Image(systemName: systemImage)
+                }
+                Text(title)
+            }
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 11)
+            .background(.blue, in: Capsule(style: .continuous))
+            .shadow(color: .black.opacity(0.3), radius: 12, x: 0, y: 6)
+        }
+        .buttonStyle(.plain)
+        .glassProminentIfAvailable(tint: .blue)
+        .disabled(isLoading)
+        .accessibilityLabel(title)
     }
 }
 

@@ -9,6 +9,25 @@ import UIKit
 import AppKit
 #endif
 
+private enum ReaderChapterEndAction: Equatable {
+    case nextChapter
+    case nextBook
+
+    var title: String {
+        switch self {
+        case .nextChapter: "下一章"
+        case .nextBook: "下一本"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .nextChapter: "arrow.down.doc"
+        case .nextBook: "books.vertical.fill"
+        }
+    }
+}
+
 struct ComicReaderPage: View {
     @EnvironmentObject private var platformAccounts: PlatformAccountService
     @EnvironmentObject private var readingHistory: ReadingHistoryService
@@ -30,7 +49,7 @@ struct ComicReaderPage: View {
     @AppStorage(ReaderSettingsKey.lastImageBottomPadding) private var lastImageBottomPadding = 0.0
     @AppStorage(ReaderSettingsKey.preloadImageCount) private var preloadImageCount = 3
     @AppStorage(ReaderSettingsKey.preloadsNextChapterNearEnd) private var preloadsNextChapterNearEnd = false
-    @AppStorage(ReaderSettingsKey.nextChapterPreloadPageThreshold) private var nextChapterPreloadPageThreshold = 3
+    @AppStorage(ReaderSettingsKey.chapterEndPageThreshold) private var chapterEndPageThreshold = 3
     @AppStorage(ReaderSettingsKey.pagedPreloadDelay) private var pagedPreloadDelay = 1.2
     @AppStorage(ReaderSettingsKey.imageRetryCount) private var imageRetryCount = 2
     @AppStorage(ReaderSettingsKey.imageRetryInterval) private var imageRetryInterval = 1.0
@@ -49,6 +68,11 @@ struct ComicReaderPage: View {
     @AppStorage(ReaderSettingsKey.autoPagingInterval) private var autoPagingInterval = 6.0
     @AppStorage(ReaderSettingsKey.autoPagingDistancePercent) private var autoPagingDistancePercent = 85
     @AppStorage(ReaderSettingsKey.autoPagingTurnsChapter) private var autoPagingTurnsChapter = true
+    @AppStorage(ReaderSettingsKey.showsNextChapterButtonAtEnd) private var showsNextChapterButtonAtEnd = false
+    @AppStorage(ReaderSettingsKey.chapterEndButtonPosition) private var chapterEndButtonPosition = ReaderOverlayPosition.bottomTrailing.rawValue
+    @AppStorage(ReaderSettingsKey.chapterEndButtonHorizontalInset) private var chapterEndButtonHorizontalInset = 20.0
+    @AppStorage(ReaderSettingsKey.chapterEndButtonVerticalInset) private var chapterEndButtonVerticalInset = 24.0
+    @AppStorage(ReaderSettingsKey.nextChapterButtonSwitchesBooks) private var nextChapterButtonSwitchesBooks = false
     @AppStorage(ReaderSettingsKey.showsChapterCommentsAtEnd) private var showsChapterCommentsAtEnd = false
     @AppStorage(ReaderSettingsKey.showsSystemStatus) private var showsSystemStatus = false
     @AppStorage(ReaderSettingsKey.systemStatusFollowsUIVisibility) private var systemStatusFollowsUIVisibility = false
@@ -84,6 +108,7 @@ struct ComicReaderPage: View {
     @State private var isRestoringPagedScrollPosition = false
     @State private var isAutoPaging = false
     @State private var isAutoPagingTurnInFlight = false
+    @State private var isChapterEndActionInFlight = false
     @State private var autoPagingCommentActionChapterIndex: Int?
     @State private var readerToastMessage: String?
     @State private var readerToastTask: Task<Void, Never>?
@@ -199,9 +224,28 @@ struct ComicReaderPage: View {
                     .allowsHitTesting(false)
             }
         }
+        .overlay(alignment: readerChapterEndButtonPosition.alignment) {
+            if let chapterEndAction {
+                ReaderChapterEndActionButton(
+                    title: chapterEndAction.title,
+                    systemImage: chapterEndAction.systemImage,
+                    isLoading: isChapterEndActionInFlight
+                ) {
+                    performChapterEndAction(chapterEndAction)
+                }
+                .padding(.horizontal, boundedChapterEndButtonHorizontalInset)
+                .padding(.top, readerChapterEndButtonPosition.isBottom ? 0 : chapterEndButtonVerticalPadding)
+                .padding(.bottom, readerChapterEndButtonPosition.isBottom ? chapterEndButtonVerticalPadding : 0)
+                .transition(
+                    .scale(scale: 0.9, anchor: readerChapterEndButtonPosition.anchor)
+                        .combined(with: .opacity)
+                )
+            }
+        }
         .animation(.easeInOut(duration: 0.18), value: showsSystemStatus)
         .animation(readerChromeAnimation, value: showsReaderUI)
         .animation(.easeInOut(duration: 0.16), value: readerToastMessage)
+        .animation(.easeInOut(duration: 0.18), value: chapterEndAction)
         .toolbar {
             ToolbarItem(placement: .principal) {
                 Menu {
@@ -349,19 +393,20 @@ struct ComicReaderPage: View {
         }
         .onChange(of: viewModel.currentChapterIndex) { _ in
             autoPagingCommentActionChapterIndex = nil
+            isChapterEndActionInFlight = false
         }
         .onChange(of: preloadsNextChapterNearEnd) { isEnabled in
-            guard case .loaded(let images) = viewModel.state else { return }
+            guard case .loaded = viewModel.state else { return }
             if isEnabled {
-                scheduleNextChapterPreload(currentPage: viewModel.currentPageIndex, totalPages: images.count, targetPixelWidth: nil)
+                scheduleNextChapterPreload(targetPixelWidth: nil)
             } else {
                 viewModel.cancelNextChapterPreload(clearCachedChapter: true)
             }
         }
-        .onChange(of: nextChapterPreloadPageThreshold) { _ in
+        .onChange(of: chapterEndPageThreshold) { _ in
             guard preloadsNextChapterNearEnd,
-                  case .loaded(let images) = viewModel.state else { return }
-            scheduleNextChapterPreload(currentPage: viewModel.currentPageIndex, totalPages: images.count, targetPixelWidth: nil)
+                  case .loaded = viewModel.state else { return }
+            scheduleNextChapterPreload(targetPixelWidth: nil)
         }
     }
 
@@ -371,6 +416,26 @@ struct ComicReaderPage: View {
 
     private var canMoveToNextBook: Bool {
         listContext?.canMoveNext ?? false
+    }
+
+    private var chapterEndAction: ReaderChapterEndAction? {
+        guard showsNextChapterButtonAtEnd,
+              !isAutoPaging,
+              isAtChapterEnd else {
+            return nil
+        }
+        if viewModel.canLoadNextChapter {
+            return .nextChapter
+        }
+        if nextChapterButtonSwitchesBooks, hasReadingList, canMoveToNextBook {
+            return .nextBook
+        }
+        return nil
+    }
+
+    private var isAtChapterEnd: Bool {
+        guard case .loaded(let images) = viewModel.state, !images.isEmpty else { return false }
+        return viewModel.isCurrentPageNearChapterEnd(pageThreshold: boundedChapterEndPageThreshold)
     }
 
     private var containsChapterImages: Bool {
@@ -408,6 +473,28 @@ struct ComicReaderPage: View {
     private func requestChapterLoad(at index: Int) {
         Task {
             await loadChapter(at: index, pageIndex: 0, force: true)
+        }
+    }
+
+    private func performChapterEndAction(_ action: ReaderChapterEndAction) {
+        guard !isChapterEndActionInFlight else { return }
+        isChapterEndActionInFlight = true
+        Task { @MainActor in
+            switch action {
+            case .nextChapter:
+                guard viewModel.canLoadNextChapter else {
+                    isChapterEndActionInFlight = false
+                    return
+                }
+                await loadNextChapter()
+            case .nextBook:
+                guard nextChapterButtonSwitchesBooks else {
+                    isChapterEndActionInFlight = false
+                    return
+                }
+                _ = moveReadingList(.next)
+            }
+            isChapterEndActionInFlight = false
         }
     }
 
@@ -1337,16 +1424,14 @@ struct ComicReaderPage: View {
             delay: readerPreloadDelay,
             targetPixelWidth: targetPixelWidth
         )
-        scheduleNextChapterPreload(currentPage: index, totalPages: totalPages, targetPixelWidth: targetPixelWidth)
+        scheduleNextChapterPreload(targetPixelWidth: targetPixelWidth)
         scheduleReadingHistoryRecord(pageIndex: index, totalPages: totalPages)
     }
 
-    private func scheduleNextChapterPreload(currentPage: Int, totalPages: Int, targetPixelWidth: Int?) {
+    private func scheduleNextChapterPreload(targetPixelWidth: Int?) {
         viewModel.scheduleNextChapterPreloadIfNeeded(
-            currentPage: currentPage,
-            totalPages: totalPages,
             enabled: preloadsNextChapterNearEnd,
-            pageThreshold: boundedNextChapterPreloadPageThreshold,
+            pageThreshold: boundedChapterEndPageThreshold,
             account: platformAccounts.account(for: detail.item.platform),
             preloadImageCount: boundedPreloadImageCount,
             targetPixelWidth: targetPixelWidth
@@ -1638,12 +1723,26 @@ struct ComicReaderPage: View {
         ReaderOverlayPosition(rawValue: systemStatusPosition) ?? .bottomLeading
     }
 
+    private var readerChapterEndButtonPosition: ReaderOverlayPosition {
+        ReaderOverlayPosition(rawValue: chapterEndButtonPosition) ?? .bottomTrailing
+    }
+
+    private var boundedChapterEndButtonHorizontalInset: CGFloat {
+        CGFloat(min(max(chapterEndButtonHorizontalInset, 0), 120))
+    }
+
+    private var chapterEndButtonVerticalPadding: CGFloat {
+        let edgeInset = CGFloat(min(max(chapterEndButtonVerticalInset, 0), 120))
+        guard showsReaderUI else { return edgeInset }
+        return edgeInset + (readerChapterEndButtonPosition.isBottom ? 60 : 40)
+    }
+
     private var boundedPreloadImageCount: Int {
         min(max(preloadImageCount, 0), 15)
     }
 
-    private var boundedNextChapterPreloadPageThreshold: Int {
-        min(max(nextChapterPreloadPageThreshold, 1), 30)
+    private var boundedChapterEndPageThreshold: Int {
+        min(max(chapterEndPageThreshold, 1), 30)
     }
 
     private var boundedPagedPreloadDelay: Double {
@@ -1785,7 +1884,9 @@ struct ComicReaderPage: View {
     }
 
     private func reachedContinuousBottom(in images: [ComicChapterImage]) -> Bool {
-        guard !images.isEmpty else { return true }
+        guard viewModel.isCurrentPageNearChapterEnd(pageThreshold: 1) else {
+            return false
+        }
         let maxY = continuousScrollTracker.maxScrollY(fallbackViewportHeight: 1)
         if continuousScrollTracker.hasContentMetrics {
             return continuousScrollTracker.scrollY >= maxY - 4
