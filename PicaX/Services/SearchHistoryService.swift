@@ -141,13 +141,6 @@ final class SearchHistoryService: ObservableObject {
         PicaXSQLiteStore.deleteSearchHistory(id: record.id)
     }
 
-    func remove(at offsets: IndexSet, displayedRecords: [SearchHistoryRecord]) {
-        for index in offsets {
-            guard displayedRecords.indices.contains(index) else { continue }
-            remove(displayedRecords[index])
-        }
-    }
-
     func clear() {
         records.removeAll()
         PicaXSQLiteStore.clearSearchHistory()

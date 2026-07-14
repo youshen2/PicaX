@@ -1419,9 +1419,7 @@ struct ComicSearchPage: View {
                     SearchHistoryListView(
                         records: searchHistory.records,
                         onSelect: applyHistory,
-                        onDelete: { offsets, records in
-                            searchHistory.remove(at: offsets, displayedRecords: records)
-                        }
+                        onDelete: searchHistory.remove
                     )
                 } else {
                     ContentUnavailableView("搜索漫画", systemImage: "magnifyingglass", description: Text("输入关键词、作者或标签开始搜索"))
@@ -1496,50 +1494,13 @@ struct ComicSearchPage: View {
                 .foregroundStyle(isSearchOptionsCustomized ? selectedSearchTarget.accentColor : .primary)
                 .accessibilityLabel("高级选项")
 
-                Menu {
-                    Section("聚合搜索") {
-                        Button {
-                            selectedSearchTarget = aggregateSearchTarget
-                        } label: {
-                            if selectedSearchTarget.isAggregate {
-                                Label(aggregateSearchTarget.title, systemImage: "checkmark")
-                            } else {
-                                Label(aggregateSearchTarget.title, systemImage: aggregateSearchTarget.systemImage)
-                            }
-                        }
-
-                        ForEach(ComicPlatform.allCases) { platform in
-                            Button {
-                                toggleAggregatePlatform(platform)
-                            } label: {
-                                Label(
-                                    platform.title,
-                                    systemImage: aggregatePlatforms.contains(platform) ? "checkmark.circle.fill" : "circle"
-                                )
-                            }
-                        }
-                    }
-
-                    Divider()
-
-                    Section("单平台") {
-                        ForEach(ComicPlatform.allCases) { platform in
-                            let target = ComicSearchTarget.platform(platform)
-                            Button {
-                                selectedSearchTarget = target
-                            } label: {
-                                if selectedSearchTarget == target {
-                                    Label(platform.title, systemImage: "checkmark")
-                                } else {
-                                    Label(platform.title, systemImage: platform.systemImage)
-                                }
-                            }
-                        }
-                    }
-                } label: {
-                    Image(systemName: selectedSearchTarget.systemImage)
-                }
-                .accessibilityLabel("选择平台")
+                ComicSearchTargetMenu(
+                    selectedTarget: selectedSearchTarget,
+                    aggregatePlatforms: aggregatePlatforms,
+                    onSelectTarget: { selectedSearchTarget = $0 },
+                    onToggleAggregatePlatform: toggleAggregatePlatform
+                )
+                .equatable()
 
                 Button {
                     Task { await search(force: true) }
@@ -1632,10 +1593,6 @@ struct ComicSearchPage: View {
         searchCancelRestorationCandidate = nil
         searchClearGeneration += 1
         query = candidate
-    }
-
-    private var aggregateSearchTarget: ComicSearchTarget {
-        .aggregate(ComicPlatform.allCases.filter { aggregatePlatforms.contains($0) })
     }
 
     private var searchAccounts: [ComicPlatform: PlatformAccount] {
@@ -1781,6 +1738,69 @@ struct ComicSearchPage: View {
     }
 }
 
+private struct ComicSearchTargetMenu: View, Equatable {
+    let selectedTarget: ComicSearchTarget
+    let aggregatePlatforms: Set<ComicPlatform>
+    let onSelectTarget: (ComicSearchTarget) -> Void
+    let onToggleAggregatePlatform: (ComicPlatform) -> Void
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.selectedTarget == rhs.selectedTarget
+            && lhs.aggregatePlatforms == rhs.aggregatePlatforms
+    }
+
+    var body: some View {
+        Menu {
+            Section("聚合搜索") {
+                Button {
+                    onSelectTarget(aggregateSearchTarget)
+                } label: {
+                    if selectedTarget.isAggregate {
+                        Label(aggregateSearchTarget.title, systemImage: "checkmark")
+                    } else {
+                        Label(aggregateSearchTarget.title, systemImage: aggregateSearchTarget.systemImage)
+                    }
+                }
+
+                ForEach(ComicPlatform.allCases) { platform in
+                    Button {
+                        onToggleAggregatePlatform(platform)
+                    } label: {
+                        Label(
+                            platform.title,
+                            systemImage: aggregatePlatforms.contains(platform) ? "checkmark.circle.fill" : "circle"
+                        )
+                    }
+                }
+            }
+
+            Divider()
+
+            Section("单平台") {
+                ForEach(ComicPlatform.allCases) { platform in
+                    let target = ComicSearchTarget.platform(platform)
+                    Button {
+                        onSelectTarget(target)
+                    } label: {
+                        if selectedTarget == target {
+                            Label(platform.title, systemImage: "checkmark")
+                        } else {
+                            Label(platform.title, systemImage: platform.systemImage)
+                        }
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: selectedTarget.systemImage)
+        }
+        .accessibilityLabel("选择平台")
+    }
+
+    private var aggregateSearchTarget: ComicSearchTarget {
+        .aggregate(ComicPlatform.allCases.filter { aggregatePlatforms.contains($0) })
+    }
+}
+
 private extension String {
     func replacingLastSearchFragment(with replacement: String, suggestionTag: String, translatedTitle: String) -> String {
         let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1832,21 +1852,25 @@ private extension String {
 private struct SearchHistoryListView: View {
     let records: [SearchHistoryRecord]
     let onSelect: (SearchHistoryRecord) -> Void
-    let onDelete: (IndexSet, [SearchHistoryRecord]) -> Void
+    let onDelete: (SearchHistoryRecord) -> Void
 
     var body: some View {
         List {
             Section("搜索历史") {
-                ForEach(records) { record in
+                LazyLocalForEach(items: records, initialCount: 48, pageSize: 48) { record in
                     Button {
                         onSelect(record)
                     } label: {
                         SearchHistoryRow(record: record)
                     }
                     .buttonStyle(.plain)
-                }
-                .onDelete { offsets in
-                    onDelete(offsets, records)
+                    .swipeActions(edge: .trailing) {
+                        Button(role: .destructive) {
+                            onDelete(record)
+                        } label: {
+                            Label("删除", systemImage: "trash")
+                        }
+                    }
                 }
             }
         }
