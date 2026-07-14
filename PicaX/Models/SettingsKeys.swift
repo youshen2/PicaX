@@ -94,6 +94,29 @@ enum AppBehaviorSettingsKey {
     static let marksImageContentAsSensitive = "settings.appBehavior.marksImageContentAsSensitive"
 }
 
+enum AppRecommendationSettingsKey {
+    static let launchCount = "settings.appRecommendation.launchCount"
+    static let hasPresentedPrompt = "settings.appRecommendation.hasPresentedPrompt"
+}
+
+enum AppRecommendationPrompt {
+    static let launchThreshold = 5
+
+    static func recordLaunch(defaults: UserDefaults = .standard) -> Bool {
+        guard !defaults.bool(forKey: AppRecommendationSettingsKey.hasPresentedPrompt) else {
+            return false
+        }
+
+        let currentCount = max(defaults.integer(forKey: AppRecommendationSettingsKey.launchCount), 0)
+        let launchCount = min(currentCount + 1, launchThreshold)
+        defaults.set(launchCount, forKey: AppRecommendationSettingsKey.launchCount)
+
+        guard launchCount >= launchThreshold else { return false }
+        defaults.set(true, forKey: AppRecommendationSettingsKey.hasPresentedPrompt)
+        return true
+    }
+}
+
 enum WatchConnectivitySettingsKey {
     static let syncsReadingHistory = "settings.watchConnectivity.syncsReadingHistory"
     static let syncsReadingHistoryWithWatch = "settings.watchConnectivity.syncsReadingHistoryWithWatch"

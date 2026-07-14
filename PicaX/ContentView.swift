@@ -1,4 +1,7 @@
 import SwiftUI
+#if os(iOS)
+import UIKit
+#endif
 
 struct ContentView: View {
     @Environment(\.openURL) private var openURL
@@ -6,6 +9,10 @@ struct ContentView: View {
     @EnvironmentObject private var accountService: AccountService
     @AppStorage(AppAppearanceSettingsKey.colorScheme) private var colorScheme = AppAppearanceMode.system.rawValue
     @AppStorage(AppBehaviorSettingsKey.checksUpdatesOnLaunch) private var checksUpdatesOnLaunch = true
+    @State private var didHandleLaunch = false
+    @State private var showsRecommendationDialog = false
+    @State private var sharesRecommendationAfterDialogDismissal = false
+    @State private var showsRecommendationShareSheet = false
     @State private var didRunAutomaticUpdateCheck = false
     @State private var automaticUpdateAlert: AutomaticUpdateAlert?
 
@@ -23,7 +30,32 @@ struct ContentView: View {
         }
         .preferredColorScheme(selectedAppearanceMode.colorScheme)
         .task {
-            await checkForUpdatesOnLaunch()
+            await handleLaunch()
+        }
+        .confirmationDialog(
+            "喜欢 PicaX 吗？",
+            isPresented: $showsRecommendationDialog,
+            titleVisibility: .visible
+        ) {
+            Button("分享 PicaX") {
+                shareApplication()
+            }
+            Button("还是算了") {}
+        } message: {
+            Text("如果 PicaX 对你有帮助，欢迎把它推荐给更多人。你的分享会帮助项目被更多用户发现。")
+        }
+        .onChange(of: showsRecommendationDialog) { isPresented in
+            guard !isPresented else { return }
+#if os(iOS)
+            if sharesRecommendationAfterDialogDismissal {
+                sharesRecommendationAfterDialogDismissal = false
+                DispatchQueue.main.async {
+                    showsRecommendationShareSheet = true
+                }
+                return
+            }
+#endif
+            Task { await checkForUpdatesOnLaunch() }
         }
         .alert(item: $automaticUpdateAlert) { alert in
             Alert(
@@ -35,10 +67,39 @@ struct ContentView: View {
                 secondaryButton: .cancel(Text("稍后"))
             )
         }
+#if os(iOS)
+        .sheet(isPresented: $showsRecommendationShareSheet, onDismiss: {
+            Task { await checkForUpdatesOnLaunch() }
+        }) {
+            ApplicationRecommendationShareSheet(
+                activityItems: ["我正在使用 PicaX，推荐你也试试！", AppUpdateService.repositoryURL]
+            )
+        }
+#endif
     }
 
     private var selectedAppearanceMode: AppAppearanceMode {
         AppAppearanceMode(rawValue: colorScheme) ?? .system
+    }
+
+    @MainActor
+    private func handleLaunch() async {
+        guard !didHandleLaunch else { return }
+        didHandleLaunch = true
+
+        if AppRecommendationPrompt.recordLaunch() {
+            showsRecommendationDialog = true
+        } else {
+            await checkForUpdatesOnLaunch()
+        }
+    }
+
+    private func shareApplication() {
+#if os(iOS)
+        sharesRecommendationAfterDialogDismissal = true
+#else
+        openURL(AppUpdateService.repositoryURL)
+#endif
     }
 
     @MainActor
@@ -67,6 +128,18 @@ struct ContentView: View {
         let releaseURL: URL
     }
 }
+
+#if os(iOS)
+private struct ApplicationRecommendationShareSheet: UIViewControllerRepresentable {
+    let activityItems: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+#endif
 
 struct ContentView_Previews: PreviewProvider {
     static var previews: some View {
