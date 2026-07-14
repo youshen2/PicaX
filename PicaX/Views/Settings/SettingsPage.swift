@@ -248,7 +248,7 @@ private enum SettingsSearchItem: CaseIterable {
         case .storage:
             "空间占用、图片缓存与详情缓存"
         case .backup:
-            "导出或导入本地数据"
+            "本地文件与 WebDAV 备份、同步和恢复"
         case .appDisplay:
             "显示模式"
         case .appBehavior:
@@ -969,6 +969,20 @@ private struct BackupSettingsView: View {
     var body: some View {
         List {
             Section {
+                NavigationLink {
+                    WebDAVSettingsView()
+                } label: {
+                    SettingsActionRow(
+                        title: "WebDAV 备份与同步",
+                        subtitle: "自动同步、远端备份和恢复",
+                        systemImage: "externaldrive.connected.to.line.below"
+                    )
+                }
+            } footer: {
+                Text("通过支持 WebDAV 的服务器在设备间合并同步数据，或保留独立的远端备份。")
+            }
+
+            Section {
                 ForEach(BackupContentKind.allCases) { content in
                     Toggle(isOn: backupContentBinding(for: content)) {
                         VStack(alignment: .leading, spacing: 2) {
@@ -1177,6 +1191,7 @@ private struct BackupSettingsView: View {
             let backup = BackupService.filteredBackup(preview.backup, includedContent: includedContent)
             try await BackupService.importBackup(backup, mode: mode)
             reloadServicesAfterImport()
+            NotificationCenter.default.post(name: .picaxBackupDidImport, object: nil)
             operationResult = BackupOperationResult(title: "导入完成", message: mode == .overwrite ? "备份已覆盖本地数据。" : "备份已与本地数据合并。")
         } catch {
             operationResult = BackupOperationResult(title: "导入失败", message: error.localizedDescription)
@@ -1200,6 +1215,400 @@ private struct BackupSettingsView: View {
     private static let fileNameFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyyMMdd-HHmmss"
+        return formatter
+    }()
+}
+
+private struct WebDAVSettingsView: View {
+    @EnvironmentObject private var webDAVSync: WebDAVSyncService
+
+    @AppStorage(WebDAVSettingsKey.automaticSyncEnabled) private var automaticSyncEnabled = false
+    @AppStorage(WebDAVSettingsKey.syncContentSelection) private var syncContentSelectionRaw = WebDAVSyncContentSettings.defaultRawValue
+    @AppStorage(WebDAVSettingsKey.lastSuccessfulSyncAt) private var lastSuccessfulSyncTimestamp = 0.0
+
+    @State private var serverURL: String
+    @State private var username: String
+    @State private var password: String
+    @State private var remoteDirectory: String
+    @State private var hasLoadedBackups = false
+    @State private var isImporting = false
+    @State private var pendingImport: BackupImportPreview?
+    @State private var pendingDelete: WebDAVRemoteBackup?
+    @State private var operationResult: BackupOperationResult?
+
+    init() {
+        let configuration = try? WebDAVConfigurationStore.load()
+        _serverURL = State(initialValue: configuration?.displayServerURL ?? "")
+        _username = State(initialValue: configuration?.username ?? "")
+        _password = State(initialValue: configuration?.password ?? "")
+        _remoteDirectory = State(initialValue: configuration?.remoteDirectory ?? WebDAVSettingsKey.defaultRemoteDirectory)
+    }
+
+    var body: some View {
+        List {
+            configurationSection
+            syncSection
+            remoteBackupsSection
+        }
+        .picaxInsetGroupedListStyle()
+        .navigationTitle("WebDAV")
+        .picaxHidesTabBar()
+        .task {
+            guard !serverURL.isEmpty, !webDAVSync.isBusy else { return }
+            await refreshBackups(showsSuccess: false)
+        }
+        .sheet(item: $pendingImport) { preview in
+            BackupImportPreviewSheet(
+                preview: preview,
+                isImporting: isImporting,
+                onCancel: { pendingImport = nil },
+                onOverwrite: { includedContent in
+                    Task {
+                        await importRemoteBackup(preview, mode: .overwrite, includedContent: includedContent)
+                    }
+                },
+                onMerge: { includedContent in
+                    Task {
+                        await importRemoteBackup(preview, mode: .merge, includedContent: includedContent)
+                    }
+                }
+            )
+        }
+        .alert(item: $operationResult) { result in
+            Alert(
+                title: Text(result.title),
+                message: Text(result.message),
+                dismissButton: .default(Text("好"))
+            )
+        }
+        .confirmationDialog(
+            "删除远端备份？",
+            isPresented: Binding(
+                get: { pendingDelete != nil },
+                set: { if !$0 { pendingDelete = nil } }
+            ),
+            presenting: pendingDelete
+        ) { backup in
+            Button("删除 \(backup.name)", role: .destructive) {
+                Task { await deleteBackup(backup) }
+            }
+            Button("取消", role: .cancel) {}
+        } message: { _ in
+            Text("删除后无法从 WebDAV 恢复此备份。")
+        }
+    }
+
+    private var configurationSection: some View {
+        Section {
+            TextField("https://example.com/webdav/", text: $serverURL)
+                .picaxKeyboardType(.url)
+                .picaxDisablesTextAutocapitalization()
+                .autocorrectionDisabled()
+            TextField("用户名", text: $username)
+                .picaxDisablesTextAutocapitalization()
+                .autocorrectionDisabled()
+            SecureField("密码或应用专用密码", text: $password)
+            TextField("远端目录", text: $remoteDirectory)
+                .picaxDisablesTextAutocapitalization()
+                .autocorrectionDisabled()
+
+            Button {
+                Task { await saveAndTest() }
+            } label: {
+                activityLabel(defaultTitle: "保存并测试连接", systemImage: "checkmark.icloud", activity: .testing)
+            }
+            .disabled(isBusy || serverURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        } header: {
+            Text("服务器")
+        } footer: {
+            Text("请输入 WebDAV 根地址。用户名和服务器地址保存在本机设置中，密码仅保存在 Keychain。建议使用 HTTPS。")
+        }
+    }
+
+    private var syncSection: some View {
+        Section {
+            Toggle("App 激活时自动同步", isOn: $automaticSyncEnabled)
+
+            ForEach(BackupContentKind.allCases) { content in
+                Toggle(isOn: syncContentBinding(for: content)) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(content.title)
+                        Text(content.summary)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .disabled(isBusy)
+            }
+
+            Button {
+                Task { await synchronize() }
+            } label: {
+                activityLabel(defaultTitle: "立即同步", systemImage: "arrow.triangle.2.circlepath.icloud", activity: .syncing)
+            }
+            .disabled(isBusy || syncContentSelection.isEmpty)
+
+            Button {
+                Task { await createRemoteBackup() }
+            } label: {
+                activityLabel(defaultTitle: "备份到 WebDAV", systemImage: "icloud.and.arrow.up", activity: .backingUp)
+            }
+            .disabled(isBusy || syncContentSelection.isEmpty)
+
+            if lastSuccessfulSyncTimestamp > 0 {
+                LabeledContent("上次同步", value: Self.dateFormatter.string(from: lastSuccessfulSyncAt))
+                    .foregroundStyle(.secondary)
+            }
+
+            if let error = webDAVSync.lastAutomaticSyncError {
+                Label(error, systemImage: "exclamationmark.triangle")
+                    .font(.footnote)
+                    .foregroundStyle(.orange)
+            }
+        } header: {
+            Text("同步内容")
+        } footer: {
+            Text(syncContentSelection.isEmpty
+                ? "至少选择一项内容后才能备份或同步。"
+                : "同步会先合并服务器上的 PicaX-Sync.picax，再上传合并后的数据。已下载漫画可能产生较大流量。")
+        }
+    }
+
+    private var remoteBackupsSection: some View {
+        Section {
+            Button {
+                Task { await refreshBackups(showsSuccess: true) }
+            } label: {
+                activityLabel(defaultTitle: "刷新远端备份", systemImage: "arrow.clockwise", activity: .loading)
+            }
+            .disabled(isBusy)
+
+            ForEach(webDAVSync.backups) { backup in
+                Button {
+                    Task { await downloadBackup(backup) }
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "doc.zipper")
+                            .foregroundStyle(.tint)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(backup.name)
+                                .foregroundStyle(.primary)
+                            Text(remoteBackupDetail(backup))
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        if webDAVSync.activity == .downloading(backup.name) {
+                            ProgressView()
+                        } else {
+                            Image(systemName: "chevron.right")
+                                .font(.footnote.weight(.semibold))
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(isBusy)
+                .swipeActions {
+                    Button(role: .destructive) {
+                        pendingDelete = backup
+                    } label: {
+                        Label("删除", systemImage: "trash")
+                    }
+                }
+            }
+
+            if hasLoadedBackups, webDAVSync.backups.isEmpty {
+                ContentUnavailableView(
+                    "没有远端备份",
+                    systemImage: "icloud",
+                    description: Text("点击“备份到 WebDAV”创建第一份备份。")
+                )
+            }
+        } header: {
+            Text("远端备份")
+        } footer: {
+            Text("这里显示独立的时间戳备份；设备间自动同步使用的固定文件不会列出。点击备份可预览并选择合并或覆盖恢复。")
+        }
+    }
+
+    private var syncContentSelection: Set<BackupContentKind> {
+        WebDAVSyncContentSettings.selection(from: syncContentSelectionRaw)
+    }
+
+    private var isBusy: Bool {
+        webDAVSync.isBusy || isImporting
+    }
+
+    private var lastSuccessfulSyncAt: Date {
+        Date(timeIntervalSince1970: lastSuccessfulSyncTimestamp)
+    }
+
+    private func syncContentBinding(for content: BackupContentKind) -> Binding<Bool> {
+        Binding {
+            syncContentSelection.contains(content)
+        } set: { isSelected in
+            var selection = syncContentSelection
+            if isSelected {
+                selection.insert(content)
+            } else {
+                selection.remove(content)
+            }
+            syncContentSelectionRaw = WebDAVSyncContentSettings.rawValue(for: selection)
+        }
+    }
+
+    @ViewBuilder
+    private func activityLabel(defaultTitle: String, systemImage: String, activity: WebDAVSyncService.Activity) -> some View {
+        if webDAVSync.activity == activity {
+            HStack {
+                ProgressView()
+                Text(activity.title ?? defaultTitle)
+            }
+        } else {
+            Label(defaultTitle, systemImage: systemImage)
+        }
+    }
+
+    @MainActor
+    private func saveAndTest() async {
+        do {
+            let configuration = try saveConfiguration()
+            try await webDAVSync.test(configuration: configuration)
+            try await webDAVSync.refresh(configuration: configuration)
+            hasLoadedBackups = true
+            operationResult = BackupOperationResult(title: "连接成功", message: "WebDAV 配置已保存，远端目录可以访问。")
+        } catch {
+            operationResult = BackupOperationResult(title: "连接失败", message: error.localizedDescription)
+        }
+    }
+
+    @MainActor
+    private func refreshBackups(showsSuccess: Bool) async {
+        do {
+            let configuration = try saveConfiguration()
+            try await webDAVSync.refresh(configuration: configuration)
+            hasLoadedBackups = true
+            if showsSuccess {
+                operationResult = BackupOperationResult(title: "刷新完成", message: "已读取 \(webDAVSync.backups.count) 份远端备份。")
+            }
+        } catch {
+            operationResult = BackupOperationResult(title: "刷新失败", message: error.localizedDescription)
+        }
+    }
+
+    @MainActor
+    private func createRemoteBackup() async {
+        do {
+            let configuration = try saveConfiguration()
+            let fileName = try await webDAVSync.createBackup(
+                configuration: configuration,
+                includedContent: syncContentSelection
+            )
+            hasLoadedBackups = true
+            operationResult = BackupOperationResult(title: "备份完成", message: "已上传 \(fileName)。")
+        } catch {
+            operationResult = BackupOperationResult(title: "备份失败", message: error.localizedDescription)
+        }
+    }
+
+    @MainActor
+    private func synchronize() async {
+        do {
+            let configuration = try saveConfiguration()
+            try await webDAVSync.synchronize(
+                configuration: configuration,
+                includedContent: syncContentSelection
+            )
+            hasLoadedBackups = true
+            operationResult = BackupOperationResult(title: "同步完成", message: "远端与本地数据已合并，并已上传最新同步副本。")
+        } catch {
+            operationResult = BackupOperationResult(title: "同步失败", message: error.localizedDescription)
+        }
+    }
+
+    @MainActor
+    private func downloadBackup(_ backup: WebDAVRemoteBackup) async {
+        do {
+            let configuration = try saveConfiguration()
+            pendingImport = try await webDAVSync.download(backup, configuration: configuration)
+        } catch {
+            operationResult = BackupOperationResult(title: "下载失败", message: error.localizedDescription)
+        }
+    }
+
+    @MainActor
+    private func deleteBackup(_ backup: WebDAVRemoteBackup) async {
+        pendingDelete = nil
+        do {
+            let configuration = try saveConfiguration()
+            try await webDAVSync.delete(backup, configuration: configuration)
+            operationResult = BackupOperationResult(title: "删除完成", message: "远端备份已删除。")
+        } catch {
+            operationResult = BackupOperationResult(title: "删除失败", message: error.localizedDescription)
+        }
+    }
+
+    @MainActor
+    private func importRemoteBackup(
+        _ preview: BackupImportPreview,
+        mode: BackupImportMode,
+        includedContent: Set<BackupContentKind>
+    ) async {
+        guard !isImporting else { return }
+        isImporting = true
+        defer {
+            isImporting = false
+            pendingImport = nil
+        }
+        do {
+            let backup = BackupService.filteredBackup(preview.backup, includedContent: includedContent)
+            try await BackupService.importBackup(backup, mode: mode)
+            NotificationCenter.default.post(name: .picaxBackupDidImport, object: nil)
+            operationResult = BackupOperationResult(
+                title: "恢复完成",
+                message: mode == .overwrite ? "远端备份已覆盖所选本地数据。" : "远端备份已与本地数据合并。"
+            )
+        } catch {
+            operationResult = BackupOperationResult(title: "恢复失败", message: error.localizedDescription)
+        }
+    }
+
+    private func saveConfiguration() throws -> WebDAVConfiguration {
+        let configuration = try WebDAVConfigurationStore.save(
+            serverURL: serverURL,
+            username: username,
+            password: password,
+            remoteDirectory: remoteDirectory
+        )
+        serverURL = configuration.displayServerURL
+        username = configuration.username
+        remoteDirectory = configuration.remoteDirectory
+        return configuration
+    }
+
+    private func remoteBackupDetail(_ backup: WebDAVRemoteBackup) -> String {
+        var values: [String] = []
+        if let modifiedAt = backup.modifiedAt {
+            values.append(Self.dateFormatter.string(from: modifiedAt))
+        }
+        if let size = backup.size {
+            values.append(Self.byteFormatter.string(fromByteCount: size))
+        }
+        return values.isEmpty ? "远端备份" : values.joined(separator: " · ")
+    }
+
+    private static let dateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter
+    }()
+
+    private static let byteFormatter: ByteCountFormatter = {
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
         return formatter
     }()
 }

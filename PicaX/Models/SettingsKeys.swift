@@ -101,6 +101,38 @@ enum WatchConnectivitySettingsKey {
     static let syncsReadLater = "settings.watchConnectivity.syncsReadLater"
 }
 
+enum WebDAVSettingsKey {
+    static let serverURL = "settings.webDAV.serverURL"
+    static let username = "settings.webDAV.username"
+    static let remoteDirectory = "settings.webDAV.remoteDirectory"
+    static let automaticSyncEnabled = "settings.webDAV.automaticSyncEnabled"
+    static let syncContentSelection = "settings.webDAV.syncContentSelection"
+    static let lastSuccessfulSyncAt = "settings.webDAV.lastSuccessfulSyncAt"
+
+    static let defaultRemoteDirectory = "PicaX"
+    static let syncFileName = "PicaX-Sync.picax"
+}
+
+enum WebDAVSyncContentSettings {
+    static var defaultRawValue: String {
+        rawValue(for: BackupContentKind.defaultSelection)
+    }
+
+    static func rawValue(for selection: Set<BackupContentKind>) -> String {
+        BackupContentKind.allCases
+            .filter { selection.contains($0) }
+            .map(\.rawValue)
+            .joined(separator: ",")
+    }
+
+    static func selection(from rawValue: String) -> Set<BackupContentKind> {
+        let values = rawValue
+            .split(separator: ",")
+            .compactMap { BackupContentKind(rawValue: String($0)) }
+        return Set(values)
+    }
+}
+
 enum WatchConnectivitySettings {
     static func syncsReadingHistory(defaults: UserDefaults = .standard) -> Bool {
         defaults.object(forKey: WatchConnectivitySettingsKey.syncsReadingHistory) as? Bool ?? true

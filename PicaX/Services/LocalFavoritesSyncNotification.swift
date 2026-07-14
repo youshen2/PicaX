@@ -7,4 +7,5 @@ extension Notification.Name {
     nonisolated static let picaxEhTagTranslationsDidChange = Notification.Name("picax.ehTagTranslationsDidChange")
     static let picaxFollowUpdatesDidChange = Notification.Name("picax.followUpdatesDidChange")
     static let picaxPlatformAccountsDidChange = Notification.Name("picax.platformAccountsDidChange")
+    static let picaxBackupDidImport = Notification.Name("picax.backupDidImport")
 }

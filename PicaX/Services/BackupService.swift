@@ -277,6 +277,10 @@ enum BackupService {
     private static let valueDecoder = JSONDecoder()
 
     static func makeDocument(includedContent: Set<BackupContentKind>, defaults: UserDefaults = .standard) async throws -> PicaXBackupDocument {
+        PicaXBackupDocument(data: try await makeData(includedContent: includedContent, defaults: defaults))
+    }
+
+    static func makeData(includedContent: Set<BackupContentKind>, defaults: UserDefaults = .standard) async throws -> Data {
         let orderedContent = BackupContentKind.allCases.filter { includedContent.contains($0) }
         let includesDownloads = includedContent.contains(.downloads)
         let exportedDefaults = exportDefaults(includedContent: includedContent, defaults: defaults)
@@ -297,8 +301,7 @@ enum BackupService {
         entries += exportedDownloadFiles.map { file in
             StoredZipEntry(path: BackupSQLiteArchive.downloadEntryPath(for: file.relativePath), data: file.data)
         }
-        let data = try StoredZipArchive.makeArchive(entries: entries)
-        return PicaXBackupDocument(data: data)
+        return try StoredZipArchive.makeArchive(entries: entries)
     }
 
     static func preview(from data: Data) throws -> BackupImportPreview {
@@ -644,6 +647,9 @@ enum BackupService {
     }
 
     private static func contentKind(for key: String) -> BackupContentKind? {
+        if key.hasPrefix("settings.webDAV.") {
+            return nil
+        }
         if key == "picax.accounts" || key == "picax.session" || key == "picax.platformAccounts" {
             return .accounts
         }
