@@ -18,6 +18,8 @@ enum ReaderSettingsKey {
     static let firstImageTopPadding = "settings.reader.firstImageTopPadding"
     static let lastImageBottomPadding = "settings.reader.lastImageBottomPadding"
     static let preloadImageCount = "settings.reader.preloadImageCount"
+    static let preloadsNextChapterNearEnd = "settings.reader.preloadsNextChapterNearEnd"
+    static let nextChapterPreloadPageThreshold = "settings.reader.nextChapterPreloadPageThreshold"
     static let pagedPreloadDelay = "settings.reader.pagedPreloadDelay"
     static let imageRetryCount = "settings.reader.imageRetryCount"
     static let imageRetryInterval = "settings.reader.imageRetryInterval"

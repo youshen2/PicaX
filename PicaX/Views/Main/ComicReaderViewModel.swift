@@ -15,6 +15,10 @@ final class ComicReaderViewModel: ObservableObject {
     private var preloadDebounceTask: Task<Void, Never>?
     private var preloadTask: Task<Void, Never>?
     private var preloadedImageKeys = Set<String>()
+    private var nextChapterPreloadTask: Task<Void, Never>?
+    private var preloadingChapterID: String?
+    private var preloadedChapterID: String?
+    private var preloadedChapterImages: [ComicChapterImage] = []
 
     init(
         detail: ComicDetailInfo,
@@ -77,10 +81,15 @@ final class ComicReaderViewModel: ObservableObject {
         currentPageIndex = max(pageIndex, 0)
         requestedPageIndex = max(pageIndex, 0)
         cancelImagePreload()
+        cancelNextChapterPreload()
         state = .loading
         do {
             let images: [ComicChapterImage]
-            if let localChapterImageProvider {
+            if preloadedChapterID == chapter.id, !preloadedChapterImages.isEmpty {
+                images = preloadedChapterImages
+                preloadedChapterID = nil
+                preloadedChapterImages = []
+            } else if let localChapterImageProvider {
                 images = await localChapterImageProvider(chapter, boundedIndex)
                 guard !images.isEmpty else {
                     state = .failed("当前章节尚未下载。")
@@ -163,6 +172,90 @@ final class ComicReaderViewModel: ObservableObject {
                 guard let self, self.loadedChapterID == chapterID, self.currentPageIndex == pageIndex else { return }
                 self.startImagePreload(urlStrings: urlStrings, preloadKeys: preloadKeys, chapterID: chapterID, pageIndex: pageIndex, targetPixelWidth: targetPixelWidth)
             }
+        }
+    }
+
+    func scheduleNextChapterPreloadIfNeeded(
+        currentPage index: Int,
+        totalPages: Int,
+        enabled: Bool,
+        pageThreshold: Int,
+        account: PlatformAccount?,
+        preloadImageCount: Int,
+        targetPixelWidth: Int?
+    ) {
+        guard enabled else {
+            cancelNextChapterPreload(clearCachedChapter: true)
+            return
+        }
+        guard totalPages > 0, canLoadNextChapter else { return }
+        let boundedPageIndex = min(max(index, 0), totalPages - 1)
+        let boundedPageThreshold = min(max(pageThreshold, 1), 30)
+        let preloadStartIndex = max(totalPages - boundedPageThreshold, 0)
+        guard boundedPageIndex >= preloadStartIndex else { return }
+
+        let nextChapterIndex = currentChapterIndex + 1
+        let nextChapter = detail.chapters[nextChapterIndex]
+        guard preloadedChapterID != nextChapter.id,
+              preloadingChapterID != nextChapter.id else {
+            return
+        }
+
+        nextChapterPreloadTask?.cancel()
+        preloadingChapterID = nextChapter.id
+        let service = service
+        let item = detail.item
+        let localChapterImageProvider = localChapterImageProvider
+        let boundedImageCount = min(max(preloadImageCount, 0), 15)
+        nextChapterPreloadTask = Task(priority: .utility) { [weak self, service, item, nextChapter, nextChapterIndex, localChapterImageProvider, account, boundedImageCount, targetPixelWidth] in
+            let images: [ComicChapterImage]
+            if let localChapterImageProvider {
+                images = await localChapterImageProvider(nextChapter, nextChapterIndex)
+            } else {
+                do {
+                    images = try await service.loadChapterImages(item: item, chapter: nextChapter, account: account)
+                } catch {
+                    guard let self, self.preloadingChapterID == nextChapter.id else { return }
+                    self.preloadingChapterID = nil
+                    self.nextChapterPreloadTask = nil
+                    return
+                }
+            }
+
+            guard !Task.isCancelled else { return }
+            guard !images.isEmpty else {
+                guard let self, self.preloadingChapterID == nextChapter.id else { return }
+                self.preloadingChapterID = nil
+                self.nextChapterPreloadTask = nil
+                return
+            }
+            let initialURLStrings = images.prefix(boundedImageCount).map(\.urlString)
+            if !initialURLStrings.isEmpty {
+                if let targetPixelWidth {
+                    await ReaderImageDecoder.preload(urlStrings: initialURLStrings, targetPixelWidth: targetPixelWidth)
+                } else {
+                    await service.prefetchImages(urlStrings: initialURLStrings)
+                }
+            }
+            guard !Task.isCancelled,
+                  let self,
+                  self.preloadingChapterID == nextChapter.id else {
+                return
+            }
+            self.preloadedChapterID = nextChapter.id
+            self.preloadedChapterImages = images
+            self.preloadingChapterID = nil
+            self.nextChapterPreloadTask = nil
+        }
+    }
+
+    func cancelNextChapterPreload(clearCachedChapter: Bool = false) {
+        nextChapterPreloadTask?.cancel()
+        nextChapterPreloadTask = nil
+        preloadingChapterID = nil
+        if clearCachedChapter {
+            preloadedChapterID = nil
+            preloadedChapterImages = []
         }
     }
 

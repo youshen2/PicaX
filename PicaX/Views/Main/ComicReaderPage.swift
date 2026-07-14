@@ -29,6 +29,8 @@ struct ComicReaderPage: View {
     @AppStorage(ReaderSettingsKey.firstImageTopPadding) private var firstImageTopPadding = 115.0
     @AppStorage(ReaderSettingsKey.lastImageBottomPadding) private var lastImageBottomPadding = 0.0
     @AppStorage(ReaderSettingsKey.preloadImageCount) private var preloadImageCount = 3
+    @AppStorage(ReaderSettingsKey.preloadsNextChapterNearEnd) private var preloadsNextChapterNearEnd = false
+    @AppStorage(ReaderSettingsKey.nextChapterPreloadPageThreshold) private var nextChapterPreloadPageThreshold = 3
     @AppStorage(ReaderSettingsKey.pagedPreloadDelay) private var pagedPreloadDelay = 1.2
     @AppStorage(ReaderSettingsKey.imageRetryCount) private var imageRetryCount = 2
     @AppStorage(ReaderSettingsKey.imageRetryInterval) private var imageRetryInterval = 1.0
@@ -326,6 +328,7 @@ struct ComicReaderPage: View {
         }
         .onDisappear {
             continuousScrollRestoreTask?.cancel()
+            viewModel.cancelNextChapterPreload(clearCachedChapter: true)
             flushPendingHistoryRecord()
             flushReadingDurationSession()
             readerToastTask?.cancel()
@@ -346,6 +349,19 @@ struct ComicReaderPage: View {
         }
         .onChange(of: viewModel.currentChapterIndex) { _ in
             autoPagingCommentActionChapterIndex = nil
+        }
+        .onChange(of: preloadsNextChapterNearEnd) { isEnabled in
+            guard case .loaded(let images) = viewModel.state else { return }
+            if isEnabled {
+                scheduleNextChapterPreload(currentPage: viewModel.currentPageIndex, totalPages: images.count, targetPixelWidth: nil)
+            } else {
+                viewModel.cancelNextChapterPreload(clearCachedChapter: true)
+            }
+        }
+        .onChange(of: nextChapterPreloadPageThreshold) { _ in
+            guard preloadsNextChapterNearEnd,
+                  case .loaded(let images) = viewModel.state else { return }
+            scheduleNextChapterPreload(currentPage: viewModel.currentPageIndex, totalPages: images.count, targetPixelWidth: nil)
         }
     }
 
@@ -1321,7 +1337,20 @@ struct ComicReaderPage: View {
             delay: readerPreloadDelay,
             targetPixelWidth: targetPixelWidth
         )
+        scheduleNextChapterPreload(currentPage: index, totalPages: totalPages, targetPixelWidth: targetPixelWidth)
         scheduleReadingHistoryRecord(pageIndex: index, totalPages: totalPages)
+    }
+
+    private func scheduleNextChapterPreload(currentPage: Int, totalPages: Int, targetPixelWidth: Int?) {
+        viewModel.scheduleNextChapterPreloadIfNeeded(
+            currentPage: currentPage,
+            totalPages: totalPages,
+            enabled: preloadsNextChapterNearEnd,
+            pageThreshold: boundedNextChapterPreloadPageThreshold,
+            account: platformAccounts.account(for: detail.item.platform),
+            preloadImageCount: boundedPreloadImageCount,
+            targetPixelWidth: targetPixelWidth
+        )
     }
 
     private func presentProgressSelection(respectsTapSetting: Bool = true) {
@@ -1611,6 +1640,10 @@ struct ComicReaderPage: View {
 
     private var boundedPreloadImageCount: Int {
         min(max(preloadImageCount, 0), 15)
+    }
+
+    private var boundedNextChapterPreloadPageThreshold: Int {
+        min(max(nextChapterPreloadPageThreshold, 1), 30)
     }
 
     private var boundedPagedPreloadDelay: Double {

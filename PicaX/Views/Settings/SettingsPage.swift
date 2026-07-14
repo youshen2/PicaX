@@ -2360,6 +2360,8 @@ private struct ReaderSettingsView: View {
     @AppStorage(ReaderSettingsKey.firstImageTopPadding) private var firstImageTopPadding = 115.0
     @AppStorage(ReaderSettingsKey.lastImageBottomPadding) private var lastImageBottomPadding = 0.0
     @AppStorage(ReaderSettingsKey.preloadImageCount) private var preloadImageCount = 3
+    @AppStorage(ReaderSettingsKey.preloadsNextChapterNearEnd) private var preloadsNextChapterNearEnd = false
+    @AppStorage(ReaderSettingsKey.nextChapterPreloadPageThreshold) private var nextChapterPreloadPageThreshold = 3
     @AppStorage(ReaderSettingsKey.pagedPreloadDelay) private var pagedPreloadDelay = 1.2
     @AppStorage(ReaderSettingsKey.imageRetryCount) private var imageRetryCount = 2
     @AppStorage(ReaderSettingsKey.imageRetryInterval) private var imageRetryInterval = 1.0
@@ -2619,7 +2621,7 @@ private struct ReaderSettingsView: View {
                 }
             }
 
-            Section("图片") {
+            Section {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("图片间距 \(Int(imageSpacing))")
                     Slider(value: $imageSpacing, in: 0...24, step: 2)
@@ -2644,12 +2646,28 @@ private struct ReaderSettingsView: View {
                     detail: preloadImageCount == 0 ? "关闭" : nil
                 )
 
+                Toggle("接近章节末尾时预加载下一章", isOn: $preloadsNextChapterNearEnd)
+
+                if preloadsNextChapterNearEnd {
+                    IntegerSettingsInputRow(
+                        title: "章节末尾范围",
+                        value: $nextChapterPreloadPageThreshold,
+                        unit: "页",
+                        lowerBound: 1,
+                        upperBound: 30
+                    )
+                }
+
                 IntegerSettingsInputRow(title: "图片重试次数", value: $imageRetryCount, unit: "次", lowerBound: 0, upperBound: 8)
 
                 VStack(alignment: .leading, spacing: 8) {
                     Text("重试间隔 \(imageRetryInterval, specifier: "%.1f") 秒")
                     Slider(value: $imageRetryInterval, in: 0.2...10, step: 0.2)
                 }
+            } header: {
+                Text("图片")
+            } footer: {
+                Text("开启后，阅读到章节最后 \(boundedNextChapterPreloadPageThreshold) 页时会提前获取下一章图片列表，并按“预加载图片”数量加载下一章开头图片。")
             }
         }
         .picaxInsetGroupedListStyle()
@@ -2662,6 +2680,10 @@ private struct ReaderSettingsView: View {
 
     private var selectedStyle: ReaderProgressStyle {
         ReaderProgressStyle(rawValue: progressStyle) ?? .circular
+    }
+
+    private var boundedNextChapterPreloadPageThreshold: Int {
+        min(max(nextChapterPreloadPageThreshold, 1), 30)
     }
 
     private var selectedPosition: ReaderProgressPosition {
