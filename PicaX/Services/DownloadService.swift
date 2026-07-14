@@ -600,13 +600,29 @@ final class DownloadService: ObservableObject {
     func prioritize(_ task: ComicDownloadTask) {
         guard let index = tasks.firstIndex(where: { $0.id == task.id }) else { return }
         var value = tasks.remove(at: index)
-        if value.status == .failed {
+        let shouldRestartWorker = value.status != .downloading && workerTask != nil
+        if value.status != .downloading {
             value.status = .queued
             value.errorMessage = nil
+            value.currentChapterIndex = nil
+            value.currentPageIndex = 0
+            value.currentPageCount = 0
         }
         tasks.insert(value, at: 0)
+
+        if shouldRestartWorker {
+            for index in tasks.indices where tasks[index].status == .downloading {
+                tasks[index].status = .queued
+                tasks[index].errorMessage = nil
+            }
+        }
+
         saveTasks()
-        startIfNeeded()
+        if shouldRestartWorker {
+            workerTask?.cancel()
+        } else {
+            startIfNeeded()
+        }
     }
 
     func removeTask(_ task: ComicDownloadTask) {
