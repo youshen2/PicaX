@@ -123,6 +123,27 @@ alt="Get it on GitHub" align="center" height="80" /></a>
 
 项目当前部署目标为 iOS 15.0 / watchOS 9.0 / macOS 26.0 / visionOS 26.0，Live Activity 扩展的部署目标为 iOS 16.1。由于项目包含 iOS 26、macOS 26 和 visionOS 26 API 的条件适配，构建时需要 Xcode 26 或更新版本；生成的 iOS 主应用仍可运行在 iOS 15 及更高版本。
 
+### Telegram CI 发布
+
+每次 CI 成功生成产物后，GitHub Actions 会先汇总上一次成功编译到本次编译之间的每条 Commit（短 SHA、标题和作者），再通过 Telegram Bot 将汇总以及以下 4 个未签名产物发送到频道：
+
+- `PicaX-unsigned.ipa`
+- `PicaX-with-watch-unsigned.ipa`
+- `PicaX-WatchApp-unsigned.zip`
+- `PicaX.dmg`
+
+Commit 较多时会自动拆分为多条 Telegram 消息。外部 Fork 发起的 Pull Request 不会读取仓库 Secrets，因此只构建和保存产物，不会发送到频道。
+
+配置方式：
+
+1. 通过 Telegram 的 `@BotFather` 创建机器人并取得 Bot Token。
+2. 将机器人添加为目标频道管理员，并授予发布消息权限。
+3. 在 GitHub 仓库的 `Settings > Secrets and variables > Actions` 中添加以下 Repository secrets：
+   - `TELEGRAM_BOT_TOKEN`：机器人 Token。
+   - `TELEGRAM_CHAT_ID`：频道标识；公开频道可填写 `@频道用户名`，私有频道可填写 `-100` 开头的数字 ID。
+
+如果任一 Secret 缺失、机器人没有频道发布权限或 Telegram 上传失败，`Send artifacts to Telegram channel` 任务会失败并显示原因。
+
 ## 特别鸣谢
 
 [![Readme Card](https://github-readme-stats.vercel.app/api/pin/?username=ccbkv&repo=PicaComic)](https://github.com/ccbkv/PicaComic)

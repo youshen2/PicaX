@@ -199,3 +199,157 @@ jobs:
             build/PicaX-with-watch-unsigned.ipa
             build/PicaX-WatchApp-unsigned.zip
             build/PicaX.dmg
+
+  telegram:
+    name: Send artifacts to Telegram channel
+    needs:
+      - select_run
+      - build
+    if: >-
+      needs.select_run.outputs.should_build == 'true' &&
+      needs.build.result == 'success' &&
+      (github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+
+    steps:
+      - name: Checkout commit history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download unsigned artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: PicaX-*-${{ github.run_number }}
+          path: telegram-assets
+          merge-multiple: true
+
+      - name: Generate commit summary
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TARGET_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          FALLBACK_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+
+          python3 .github/scripts/ci_commit_summary.py \
+            --current-sha "${TARGET_SHA}" \
+            --current-run-id "${GITHUB_RUN_ID}" \
+            --current-run-number "${GITHUB_RUN_NUMBER}" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --workflow "build-unsigned.yml" \
+            --fallback-sha "${FALLBACK_SHA}" \
+            --output "${RUNNER_TEMP}/commit-summary.txt" \
+            --chunks-directory "${RUNNER_TEMP}/telegram-commit-messages"
+
+      - name: Send commit summary and artifacts to Telegram
+        shell: bash
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          REPOSITORY: ${{ github.repository }}
+          REF_NAME: ${{ github.ref_name }}
+          COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          RUN_NUMBER: ${{ github.run_number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${TELEGRAM_BOT_TOKEN}" ]]; then
+            echo "::error::缺少 Actions Secret：TELEGRAM_BOT_TOKEN"
+            exit 1
+          fi
+
+          if [[ -z "${TELEGRAM_CHAT_ID}" ]]; then
+            echo "::error::缺少 Actions Secret：TELEGRAM_CHAT_ID"
+            exit 1
+          fi
+
+          ARTIFACTS=(
+            "telegram-assets/PicaX-unsigned.ipa"
+            "telegram-assets/PicaX-with-watch-unsigned.ipa"
+            "telegram-assets/PicaX-WatchApp-unsigned.zip"
+            "telegram-assets/PicaX.dmg"
+          )
+
+          for ARTIFACT_PATH in "${ARTIFACTS[@]}"; do
+            if [[ ! -f "${ARTIFACT_PATH}" ]]; then
+              echo "::error::找不到待发送的构建产物：${ARTIFACT_PATH}"
+              exit 1
+            fi
+          done
+
+          telegram_error_description() {
+            python3 -c 'import json, sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("description", "未知错误"))' \
+              "$1" 2>/dev/null \
+              || echo "无法读取 Telegram API 错误响应"
+          }
+
+          shopt -s nullglob
+          SUMMARY_FILES=("${RUNNER_TEMP}"/telegram-commit-messages/message-*.txt)
+          if (( ${#SUMMARY_FILES[@]} == 0 )); then
+            echo "::error::找不到待发送的 Commit 汇总"
+            exit 1
+          fi
+
+          MESSAGE_INDEX=0
+          for SUMMARY_FILE in "${SUMMARY_FILES[@]}"; do
+            MESSAGE_INDEX=$((MESSAGE_INDEX + 1))
+            SUMMARY_TEXT="$(< "${SUMMARY_FILE}")"
+            SUMMARY_RESPONSE="${RUNNER_TEMP}/telegram-summary-${MESSAGE_INDEX}.json"
+
+            if ! curl \
+                --fail-with-body \
+                --silent \
+                --show-error \
+                --connect-timeout 15 \
+                --max-time 60 \
+                --request POST \
+                "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+                --form-string "chat_id=${TELEGRAM_CHAT_ID}" \
+                --form-string "text=${SUMMARY_TEXT}" \
+                --output "${SUMMARY_RESPONSE}"; then
+              DESCRIPTION="$(telegram_error_description "${SUMMARY_RESPONSE}")"
+              echo "::error::Telegram API：${DESCRIPTION}"
+              exit 1
+            fi
+          done
+
+          SHORT_SHA="${COMMIT_SHA:0:7}"
+          ARTIFACT_INDEX=0
+          for ARTIFACT_PATH in "${ARTIFACTS[@]}"; do
+            ARTIFACT_INDEX=$((ARTIFACT_INDEX + 1))
+            ARTIFACT_NAME="$(basename "${ARTIFACT_PATH}")"
+            CAPTION="$(printf 'PicaX CI 构建完成\n\n产物：%s\n版本：%s\nCommit：%s\n构建：#%s\n仓库：%s\n详情：%s' \
+              "${ARTIFACT_NAME}" \
+              "${REF_NAME}" \
+              "${SHORT_SHA}" \
+              "${RUN_NUMBER}" \
+              "${REPOSITORY}" \
+              "${RUN_URL}")"
+            RESPONSE_FILE="${RUNNER_TEMP}/telegram-artifact-${ARTIFACT_INDEX}.json"
+
+            if ! curl \
+                --fail-with-body \
+                --silent \
+                --show-error \
+                --connect-timeout 15 \
+                --max-time 600 \
+                --request POST \
+                "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument" \
+                --form-string "chat_id=${TELEGRAM_CHAT_ID}" \
+                --form "document=@${ARTIFACT_PATH};type=application/octet-stream" \
+                --form-string "caption=${CAPTION}" \
+                --output "${RESPONSE_FILE}"; then
+              DESCRIPTION="$(telegram_error_description "${RESPONSE_FILE}")"
+              echo "::error::Telegram API：${DESCRIPTION}"
+              exit 1
+            fi
+          done
+
+          echo "Commit 汇总和 4 个构建产物已发送到 Telegram 频道。"
