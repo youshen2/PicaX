@@ -426,13 +426,15 @@ struct ComicReaderPage: View {
 
     private var chapterEndAction: ReaderChapterEndAction? {
         guard showsNextChapterButtonAtEnd,
-              !wholeBookContinuousReading,
               !isAutoPaging,
               isAtChapterEnd else {
             return nil
         }
-        if viewModel.canLoadNextChapter {
+        if !wholeBookContinuousReading, viewModel.canLoadNextChapter {
             return .nextChapter
+        }
+        if wholeBookContinuousReading, viewModel.canLoadNextChapter {
+            return nil
         }
         if nextChapterButtonSwitchesBooks, hasReadingList, canMoveToNextBook {
             return .nextBook
