@@ -33,7 +33,7 @@ alt="Get it on GitHub" align="center" height="80" /></a>
 - NHentai
 - E-Hentai / ExHentai
 - Hitomi
-- HT Manga
+- 绅士漫画
 
 ## 已有功能
 

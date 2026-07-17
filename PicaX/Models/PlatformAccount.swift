@@ -41,7 +41,7 @@ enum ComicPlatform: String, CaseIterable, Codable, Identifiable, Sendable {
         case .hitomi:
             "Hitomi"
         case .htManga:
-            "HT Manga"
+            "绅士漫画"
         }
     }
 
@@ -58,7 +58,7 @@ enum ComicPlatform: String, CaseIterable, Codable, Identifiable, Sendable {
         case .hitomi:
             "Hitomi 浏览状态"
         case .htManga:
-            "HT Manga 账号"
+            "绅士漫画账号"
         }
     }
 

@@ -1238,7 +1238,7 @@ private extension WatchComicAPIClient {
         let html = try await requestString(url: url, headers: webHeaders(referer: htMangaBaseURL))
         let images = htMangaImageURLs(from: html)
         guard !images.isEmpty else {
-            throw WatchComicAPIError.invalidResponse("HT Manga 阅读页没有返回图片。")
+            throw WatchComicAPIError.invalidResponse("绅士漫画阅读页没有返回图片。")
         }
         return images
     }
@@ -1388,7 +1388,7 @@ private extension WatchComicAPIClient {
         let html = try await requestString(url: url, headers: webHeaders(referer: htMangaBaseURL))
         let items = parseHtMangaList(html)
         guard page > 1 || !items.isEmpty else {
-            throw WatchComicAPIError.invalidResponse("HT Manga 列表没有返回可解析的漫画。")
+            throw WatchComicAPIError.invalidResponse("绅士漫画列表没有返回可解析的漫画。")
         }
         return items
     }
@@ -1414,10 +1414,10 @@ private extension WatchComicAPIClient {
         let folders = html.regexMatches(#"<option[^>]+value="([^"]+)"[^>]*>.*?</option>"#, options: [.dotMatchesLineSeparators]).compactMap { row -> WatchFavoriteFolder? in
             guard let id = row.firstRegexCapture(#"value="([^"]+)""#), !id.isEmpty else { return nil }
             let title = row.strippingHTML
-            return WatchFavoriteFolder(id: id, title: title.isEmpty ? "云端收藏夹" : title, subtitle: "HT Manga 收藏夹", platform: .htManga)
+            return WatchFavoriteFolder(id: id, title: title.isEmpty ? "云端收藏夹" : title, subtitle: "绅士漫画收藏夹", platform: .htManga)
         }
         return folders.isEmpty
-            ? [WatchFavoriteFolder(id: "0", title: "云端收藏夹", subtitle: "HT Manga 默认收藏", platform: .htManga)]
+            ? [WatchFavoriteFolder(id: "0", title: "云端收藏夹", subtitle: "绅士漫画默认收藏", platform: .htManga)]
             : folders
     }
 

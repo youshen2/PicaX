@@ -260,7 +260,7 @@ enum WatchComicPlatform: String, CaseIterable, Codable, Identifiable {
         case .hitomi:
             "Hitomi"
         case .htManga:
-            "HT Manga"
+            "绅士漫画"
         }
     }
 
@@ -277,7 +277,7 @@ enum WatchComicPlatform: String, CaseIterable, Codable, Identifiable {
         case .hitomi:
             "Hitomi 浏览状态"
         case .htManga:
-            "HT Manga 账号"
+            "绅士漫画账号"
         }
     }
 

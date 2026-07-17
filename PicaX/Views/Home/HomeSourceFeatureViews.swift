@@ -870,9 +870,9 @@ private struct HtMangaSourceFeatureSection: View {
                 select: { apiBaseURL = $0 }
             )
         } header: {
-            Text("HT Manga")
+            Text("绅士漫画")
         } footer: {
-            Text("API 地址会影响 HT Manga 的列表、详情和图片解析。")
+            Text("API 地址会影响绅士漫画的列表、详情和图片解析。")
         }
         .confirmationDialog("API 分流", isPresented: $showsOptions, titleVisibility: .visible) {
             ForEach(apiOptions, id: \.self) { option in

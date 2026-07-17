@@ -1510,7 +1510,7 @@ final class DownloadService: ObservableObject {
         case .hitomi:
             "Hitomi"
         case .htManga:
-            "HT Manga"
+            "绅士漫画"
         }
     }
 

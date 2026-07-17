@@ -284,7 +284,7 @@ enum HomeToolLinkParser {
         }
 
         if matchesHost(host, platform: .htManga, defaults: ["www.wnacg.com", "wnacg.com", "www.htmanga3.top", "htmanga3.top"]) {
-            guard let id = htMangaID(from: url) else { return .failure(HomeToolLinkParseError(message: "不是有效的 HT Manga 链接")) }
+            guard let id = htMangaID(from: url) else { return .failure(HomeToolLinkParseError(message: "不是有效的绅士漫画链接")) }
             return .success(htMangaItem(id: id))
         }
 
@@ -319,7 +319,7 @@ enum HomeToolLinkParser {
         ComicListItem(
             id: id,
             platform: .htManga,
-            title: "HT Manga \(id)",
+            title: "绅士漫画 \(id)",
             subtitle: id,
             coverURLString: "",
             tags: [],

@@ -758,7 +758,7 @@ struct ComicContentService {
 
     func loadHtMangaAPIBaseURLs() async throws -> [String] {
         guard let url = URL(string: "https://raw.githubusercontent.com/ccbkv/PicaComicapitxt/refs/heads/main/htmanga_api_list.txt") else {
-            throw ComicContentError.invalidURL("HT Manga API 分流")
+            throw ComicContentError.invalidURL("绅士漫画 API 分流")
         }
         let text = try await requestString(url: url, headers: webHeaders(referer: "https://github.com/ccbkv/PicaComicapitxt"))
         let values = text
@@ -775,7 +775,7 @@ struct ComicContentService {
             }
             .filter { URL(string: $0)?.host != nil }
         guard !values.isEmpty else {
-            throw ComicContentError.invalidResponse("HT Manga 没有返回可用 API 分流。")
+            throw ComicContentError.invalidResponse("绅士漫画没有返回可用 API 分流。")
         }
         return uniqueBaseURLs(values)
     }
@@ -2031,14 +2031,14 @@ private extension ComicContentService {
         case .latest:
             path = "/albums.html"
         case .random, .search:
-            throw ComicContentError.unsupported("HT Manga 当前入口不可用。")
+            throw ComicContentError.unsupported("绅士漫画当前入口不可用。")
         }
         let urlString = htMangaPagedURL(base + path, page: page)
         guard let url = URL(string: urlString) else { throw ComicContentError.invalidURL(urlString) }
         let html = try await requestString(url: url, headers: webHeaders(referer: base))
         let items = parseHtMangaList(html, baseURL: base)
         guard page > 1 || !items.isEmpty else {
-            throw ComicContentError.invalidResponse("HT Manga 列表没有返回可解析的漫画。")
+            throw ComicContentError.invalidResponse("绅士漫画列表没有返回可解析的漫画。")
         }
         return items
     }
@@ -2058,7 +2058,7 @@ private extension ComicContentService {
 
     func loadHtMangaFavoriteFolders(account: PlatformAccount?) async throws -> [PlatformFavoriteFolder] {
         guard let account else {
-            throw ComicContentError.loginRequired("HT Manga 收藏需要先登录平台账号。")
+            throw ComicContentError.loginRequired("绅士漫画收藏需要先登录平台账号。")
         }
         let base = htMangaBaseURL
         let cookies = try htMangaCookieStorage(account: account)
@@ -2069,14 +2069,14 @@ private extension ComicContentService {
         let folders = html.regexMatches(#"<option[^>]+value="([^"]+)"[^>]*>.*?</option>"#, options: [.dotMatchesLineSeparators]).compactMap { row -> PlatformFavoriteFolder? in
             guard let id = row.firstRegexCapture(#"value="([^"]+)""#), !id.isEmpty else { return nil }
             let title = row.strippingHTML
-            return PlatformFavoriteFolder(id: id, title: title.isEmpty ? "云端收藏夹" : title, subtitle: "HT Manga 收藏夹", platform: .htManga)
+            return PlatformFavoriteFolder(id: id, title: title.isEmpty ? "云端收藏夹" : title, subtitle: "绅士漫画收藏夹", platform: .htManga)
         }
-        return folders.isEmpty ? [PlatformFavoriteFolder(id: "0", title: "云端收藏夹", subtitle: "HT Manga 默认收藏", platform: .htManga)] : folders
+        return folders.isEmpty ? [PlatformFavoriteFolder(id: "0", title: "云端收藏夹", subtitle: "绅士漫画默认收藏", platform: .htManga)] : folders
     }
 
     func addHtMangaFavorite(item: ComicListItem, folderID: String, account: PlatformAccount?) async throws {
         guard let account else {
-            throw ComicContentError.loginRequired("HT Manga 收藏需要先登录平台账号。")
+            throw ComicContentError.loginRequired("绅士漫画收藏需要先登录平台账号。")
         }
         let base = htMangaBaseURL
         let cookies = try htMangaCookieStorage(account: account)
@@ -2114,13 +2114,13 @@ private extension ComicContentService {
             cookies: cookies
         )
         guard let text = String(data: data, encoding: .utf8), text.contains("登錄成功") || text.contains("登录成功") else {
-            throw ComicContentError.loginRequired("HT Manga 登录失败。")
+            throw ComicContentError.loginRequired("绅士漫画登录失败。")
         }
     }
 
     func htMangaCookieStorage(account: PlatformAccount) throws -> HTTPCookieStorage {
         guard !account.credential.cookies.isEmpty else {
-            throw ComicContentError.loginRequired("HT Manga 登录状态无效，请重新登录。")
+            throw ComicContentError.loginRequired("绅士漫画登录状态无效，请重新登录。")
         }
         return account.credential.cookieStorage()
     }
@@ -2273,7 +2273,7 @@ private extension ComicContentService {
         let html = try await requestString(url: url, headers: webHeaders(referer: base))
         let images = htMangaImageURLs(from: html)
         guard !images.isEmpty else {
-            throw ComicContentError.invalidResponse("HT Manga 阅读页没有返回图片。")
+            throw ComicContentError.invalidResponse("绅士漫画阅读页没有返回图片。")
         }
         return images
     }
