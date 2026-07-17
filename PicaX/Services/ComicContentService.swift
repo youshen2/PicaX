@@ -2036,7 +2036,11 @@ private extension ComicContentService {
         let urlString = htMangaPagedURL(base + path, page: page)
         guard let url = URL(string: urlString) else { throw ComicContentError.invalidURL(urlString) }
         let html = try await requestString(url: url, headers: webHeaders(referer: base))
-        return parseHtMangaList(html, baseURL: base)
+        let items = parseHtMangaList(html, baseURL: base)
+        guard page > 1 || !items.isEmpty else {
+            throw ComicContentError.invalidResponse("HT Manga 列表没有返回可解析的漫画。")
+        }
+        return items
     }
 
     func loadHtMangaFavorites(account: PlatformAccount, folderID: String? = nil, page: Int = 1) async throws -> ComicFavoritePage {
@@ -2122,19 +2126,20 @@ private extension ComicContentService {
     }
 
     func parseHtMangaList(_ html: String, baseURL: String, favoriteDate: Date? = nil) -> [ComicListItem] {
-        let rows = html.regexMatches(#"<li>.*?</li>"#, options: [.dotMatchesLineSeparators]) +
-            html.regexMatches(#"<div class="asTB".*?</div>\s*</div>"#, options: [.dotMatchesLineSeparators])
+        let rows = html.regexMatches(#"<li\b[^>]*>.*?</li>"#, options: [.dotMatchesLineSeparators]) +
+            html.regexMatches(#"<div\b[^>]*class="[^"]*\basTB\b[^"]*"[^>]*>.*?(?=<div\b[^>]*class="[^"]*\basTB\b[^"]*"|\z)"#, options: [.dotMatchesLineSeparators])
         return rows.compactMap { row in
             guard let link = row.firstRegexCapture(#"href="([^"]*aid-[0-9]+[^"]*)""#),
                   let id = link.firstRegexCapture(#"aid-([0-9]+)"#) else {
                 return nil
             }
             let title = row.firstRegexCapture(#"title="([^"]+)""#)?.htmlDecoded ??
-                row.firstRegexCapture(#"<p class="l_title">\s*<a[^>]*>(.*?)</a>"#)?.htmlDecoded ??
-                row.firstRegexCapture(#"<div class="title">\s*<a[^>]*>(.*?)</a>"#)?.htmlDecoded ??
+                row.firstRegexCapture(#"<p\b[^>]*class="[^"]*\bl_title\b[^"]*"[^>]*>\s*<a[^>]*>(.*?)</a>"#)?.htmlDecoded ??
+                row.firstRegexCapture(#"<div\b[^>]*class="[^"]*\btitle\b[^"]*"[^>]*>\s*<a[^>]*>(.*?)</a>"#)?.htmlDecoded ??
                 id
             let image = row.firstRegexCapture(#"<img[^>]+src="([^"]+)""#) ?? ""
-            let pages = row.firstRegexCapture(#"(?:頁數|页数|页)：?([0-9]+)"#).flatMap(Int.init)
+            let pages = row.firstRegexCapture(#"(?:頁數|页数|页)\s*[：:]?\s*([0-9]+)"#).flatMap(Int.init) ??
+                row.firstRegexCapture(#"([0-9]+)\s*(?:張|张)(?:圖片|图片|照片)?"#).flatMap(Int.init)
             return ComicListItem(
                 id: id,
                 platform: .htManga,
@@ -2223,14 +2228,14 @@ private extension ComicContentService {
             throw ComicContentError.invalidURL("htmanga detail \(item.id)")
         }
         let html = try await requestString(url: url, headers: webHeaders(referer: base))
-        let title = html.firstRegexCapture(#"<div class="userwrap"[^>]*>.*?<h2[^>]*>(.*?)</h2>"#)?.htmlDecoded ?? item.title
-        let cover = html.firstRegexCapture(#"<div class="asTBcell uwthumb"[^>]*>.*?<img[^>]+src="([^"]+)""#).map { absoluteURL($0, baseURL: base) } ?? item.coverURLString
+        let title = html.firstRegexCapture(#"<div\b[^>]*class="[^"]*\buserwrap\b[^"]*"[^>]*>.*?<h2[^>]*>(.*?)</h2>"#)?.htmlDecoded ?? item.title
+        let cover = html.firstRegexCapture(#"<div\b[^>]*class="[^"]*\buwthumb\b[^"]*"[^>]*>.*?<img[^>]+src="([^"]+)""#).map { absoluteURL($0, baseURL: base) } ?? item.coverURLString
         let labels = html.regexMatches(#"<label[^>]*>.*?</label>"#, options: [.dotMatchesLineSeparators]).map(\.htmlDecoded)
         let category = labels.first { $0.contains("分類") || $0.contains("分类") }?.components(separatedBy: "：").last ?? ""
         let pages = labels.first { $0.contains("頁數") || $0.contains("页数") }?.firstRegexCapture(#"([0-9]+)"#).flatMap(Int.init)
-        let description = html.firstRegexCapture(#"<div class="asTBcell uwconn"[^>]*>.*?<p[^>]*>(.*?)</p>"#)?.htmlDecoded ?? ""
-        let uploader = html.firstRegexCapture(#"<div class="asTBcell uwuinfo"[^>]*>.*?<a[^>]*>\s*<p[^>]*>(.*?)</p>"#)?.htmlDecoded ?? item.subtitle
-        let tags = html.regexMatches(#"<a class="tagshow"[^>]*href="([^"]+)"[^>]*>.*?</a>"#, options: [.dotMatchesLineSeparators]).compactMap { row -> ComicTagReference? in
+        let description = html.firstRegexCapture(#"<div\b[^>]*class="[^"]*\buwconn\b[^"]*"[^>]*>.*?<p[^>]*>(.*?)</p>"#)?.htmlDecoded ?? ""
+        let uploader = html.firstRegexCapture(#"<div\b[^>]*class="[^"]*\buwuinfo\b[^"]*"[^>]*>.*?<a[^>]*>.*?<p[^>]*>(.*?)</p>"#)?.htmlDecoded ?? item.subtitle
+        let tags = html.regexMatches(#"<a\b[^>]*class="[^"]*\btagshow\b[^"]*"[^>]*href="([^"]+)"[^>]*>.*?</a>"#, options: [.dotMatchesLineSeparators]).compactMap { row -> ComicTagReference? in
             guard let link = row.firstRegexCapture(#"href="([^"]+)""#) else { return nil }
             let title = row.strippingHTML
             return ComicTagReference(title: title, query: title, platform: .htManga, urlString: absoluteURL(link, baseURL: base))
@@ -2266,7 +2271,23 @@ private extension ComicContentService {
             throw ComicContentError.invalidURL("htmanga images \(item.id)")
         }
         let html = try await requestString(url: url, headers: webHeaders(referer: base))
-        return html.regexMatches(#"(?<=//)[\w./\[\]()-]+"#).map { "https://\($0)" }
+        let images = htMangaImageURLs(from: html)
+        guard !images.isEmpty else {
+            throw ComicContentError.invalidResponse("HT Manga 阅读页没有返回图片。")
+        }
+        return images
+    }
+
+    func htMangaImageURLs(from html: String) -> [String] {
+        var seen = Set<String>()
+        return html.regexMatches(
+            #"//[^"\\\s,}]+?\.(?:jpe?g|png|webp|gif|avif)"#,
+            options: [.caseInsensitive]
+        )
+        .compactMap { match in
+            let url = "https://\(match.drop(while: { $0 == "/" }))"
+            return seen.insert(url).inserted ? url : nil
+        }
     }
 
     func searchHtManga(tag: ComicTagReference, page: Int) async throws -> [ComicListItem] {
@@ -4225,7 +4246,10 @@ private extension ComicContentService {
 
     func absoluteURL(_ value: String, baseURL: String) -> String {
         if value.hasPrefix("http") { return value }
-        if value.hasPrefix("//") { return "https:\(value)" }
+        if value.hasPrefix("//") {
+            let path = value.drop(while: { $0 == "/" })
+            return path.isEmpty ? "" : "https://\(path)"
+        }
         if value.hasPrefix("/") { return baseURL + value }
         return value.isEmpty ? "" : "\(baseURL)/\(value)"
     }
