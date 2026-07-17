@@ -593,7 +593,7 @@ struct ComicContentService {
                         errorMessage: nil
                     )
                 )
-            } catch is CancellationError {
+            } catch where error.isTaskCancellation {
                 throw CancellationError()
             } catch {
                 results.append(
@@ -714,7 +714,7 @@ struct ComicContentService {
                 milliseconds: milliseconds,
                 errorMessage: nil
             )
-        } catch is CancellationError {
+        } catch where error.isTaskCancellation {
             return SourceRouteSpeedTestResult(
                 id: candidate.id,
                 endpoint: candidate.request.url?.host ?? candidate.id,

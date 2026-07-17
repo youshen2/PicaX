@@ -233,7 +233,7 @@ final class FollowUpdatesService: ObservableObject {
                     updated: progress.updated + (changed ? 1 : 0),
                     errors: progress.errors
                 )
-            } catch is CancellationError {
+            } catch where error.isTaskCancellation {
                 break
             } catch {
                 records[index].lastCheckDate = Date()
@@ -259,7 +259,7 @@ final class FollowUpdatesService: ObservableObject {
         for attempt in 0..<3 {
             do {
                 return try await contentService.loadDetail(item: item, account: accountProvider?(item.platform))
-            } catch is CancellationError {
+            } catch where error.isTaskCancellation {
                 throw CancellationError()
             } catch {
                 lastError = error

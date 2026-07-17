@@ -221,7 +221,7 @@ struct ComicListSection: View {
             updateRenderedComicCount(oldSnapshot: renderSnapshot, newSnapshot: snapshot)
             renderSnapshot = snapshot
             service.warmNhentaiTagNameCache(for: snapshot.visibleComics)
-        } catch is CancellationError {
+        } catch where error.isTaskCancellation {
             return
         } catch {
             return
@@ -2112,7 +2112,7 @@ private final class ComicTagComicsViewModel: ObservableObject {
             loadedIDs = nextLoadedIDs
             hasMore = !comics.isEmpty
             state = .loaded(comics)
-        } catch is CancellationError {
+        } catch where error.isTaskCancellation {
             return
         } catch {
             state = .failed(error.localizedDescription)
@@ -2140,7 +2140,7 @@ private final class ComicTagComicsViewModel: ObservableObject {
             hasMore = !newComics.isEmpty && !uniqueResult.items.isEmpty
             guard !uniqueResult.items.isEmpty else { return }
             state = .loaded(comics + uniqueResult.items)
-        } catch is CancellationError {
+        } catch where error.isTaskCancellation {
             return
         } catch {
             hasMore = false
@@ -2222,6 +2222,9 @@ private final class ComicSearchViewModel: ObservableObject {
                 platformHasMore[platform] = !comics.isEmpty
                 groups.append(comics)
             } catch {
+                guard !error.isTaskCancellation else {
+                    return
+                }
                 currentPages[platform] = 0
                 platformHasMore[platform] = false
                 failures.append("\(platform.title): \(error.localizedDescription)")
@@ -2236,7 +2239,7 @@ private final class ComicSearchViewModel: ObservableObject {
                 loadedIDs: loadedIDs,
                 identity: .platformAndID
             )
-        } catch is CancellationError {
+        } catch where error.isTaskCancellation {
             return
         } catch {
             uniqueResult = ComicListUniqueResult(items: [], loadedIDs: loadedIDs)
@@ -2274,6 +2277,9 @@ private final class ComicSearchViewModel: ObservableObject {
                 platformHasMore[platform] = !newComics.isEmpty
                 groups.append(newComics)
             } catch {
+                guard !error.isTaskCancellation else {
+                    return
+                }
                 platformHasMore[platform] = false
             }
         }
@@ -2286,7 +2292,7 @@ private final class ComicSearchViewModel: ObservableObject {
                 loadedIDs: loadedIDs,
                 identity: .platformAndID
             )
-        } catch is CancellationError {
+        } catch where error.isTaskCancellation {
             return
         } catch {
             uniqueResult = ComicListUniqueResult(items: [], loadedIDs: loadedIDs)

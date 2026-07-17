@@ -187,6 +187,8 @@ struct ComicDetailPage: View {
             )
             isLiked = newValue
             await viewModel.updateLikeState(newValue, account: platformAccounts.account(for: detail.item.platform))
+        } catch where error.isTaskCancellation {
+            return
         } catch {
             likeErrorMessage = error.localizedDescription
         }
@@ -1632,7 +1634,7 @@ private final class ComicDetailViewModel: ObservableObject {
             return
         }
 
-        await loadFromNetwork(account: account, showsLoading: true)
+        await loadFromNetwork(account: account, showsLoading: loadedDetail == nil)
     }
 
     private func loadFromNetwork(account: PlatformAccount?, showsLoading: Bool) async {
@@ -1645,9 +1647,7 @@ private final class ComicDetailViewModel: ObservableObject {
             try Task.checkCancellation()
             state = .loaded(detail)
             await ComicDetailCacheService.store(detail, account: account)
-        } catch is CancellationError {
-            return
-        } catch let error as URLError where error.code == .cancelled {
+        } catch where error.isTaskCancellation {
             return
         } catch {
             if showsLoading {
@@ -1691,9 +1691,7 @@ private final class ComicCommentsViewModel: ObservableObject {
         do {
             let comments = try await service.loadComments(item: item, account: account)
             state = .loaded(comments)
-        } catch is CancellationError {
-            return
-        } catch let error as URLError where error.code == .cancelled {
+        } catch where error.isTaskCancellation {
             return
         } catch {
             state = .failed(error.localizedDescription)
@@ -1714,9 +1712,7 @@ private final class ComicCommentsViewModel: ObservableObject {
             draft = ""
             await load(force: true)
             return true
-        } catch is CancellationError {
-            return false
-        } catch let error as URLError where error.code == .cancelled {
+        } catch where error.isTaskCancellation {
             return false
         } catch {
             state = .failed(error.localizedDescription)

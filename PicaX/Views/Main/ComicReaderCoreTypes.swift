@@ -42,11 +42,13 @@ struct ReaderScrollMetrics: Equatable {
     let offsetY: CGFloat
     let contentHeight: CGFloat
     let visibleHeight: CGFloat
+    let isUserInteracting: Bool
 
-    init(offsetY: CGFloat, contentHeight: CGFloat, visibleHeight: CGFloat) {
+    init(offsetY: CGFloat, contentHeight: CGFloat, visibleHeight: CGFloat, isUserInteracting: Bool = false) {
         self.offsetY = max(offsetY, 0)
         self.contentHeight = max(contentHeight, 0)
         self.visibleHeight = max(visibleHeight, 0)
+        self.isUserInteracting = isUserInteracting
     }
 }
 
@@ -126,6 +128,8 @@ final class ReaderContinuousScrollTracker {
     private(set) var scrollY: CGFloat = 0
     private(set) var contentHeight: CGFloat = 0
     private(set) var visibleHeight: CGFloat = 0
+    private(set) var isUserInteracting = false
+    private(set) var lastUserScrollY: CGFloat?
     private var isReady = false
     private var aspectRatios: [Int: Double] = [:]
     private var lastReportedPageIndex: Int?
@@ -138,6 +142,8 @@ final class ReaderContinuousScrollTracker {
         scrollY = 0
         contentHeight = 0
         visibleHeight = 0
+        isUserInteracting = false
+        lastUserScrollY = nil
         isReady = false
         aspectRatios.removeAll(keepingCapacity: true)
         lastReportedPageIndex = nil
@@ -148,9 +154,43 @@ final class ReaderContinuousScrollTracker {
     }
 
     func updateMetrics(_ metrics: ReaderScrollMetrics) {
+        let movedWithoutUserInteraction = !metrics.isUserInteracting
+            && abs(scrollY - metrics.offsetY) > 1
         scrollY = metrics.offsetY
         contentHeight = metrics.contentHeight
         visibleHeight = metrics.visibleHeight
+        isUserInteracting = metrics.isUserInteracting
+        if metrics.isUserInteracting {
+            lastUserScrollY = metrics.offsetY
+        } else if movedWithoutUserInteraction {
+            lastUserScrollY = nil
+        }
+    }
+
+    func wasLastUserScrollNearTop(maximumOffset: CGFloat) -> Bool {
+        guard let lastUserScrollY, maximumOffset.isFinite else { return false }
+        return lastUserScrollY <= max(maximumOffset, 0) + 1
+    }
+
+    func wasLastUserScrollWithinFirstPage(
+        images: [ComicChapterImage],
+        displayWidth: CGFloat,
+        imageSpacing: CGFloat,
+        firstImageTopPadding: CGFloat,
+        lastImageBottomPadding: CGFloat
+    ) -> Bool {
+        guard let firstIndex = images.indices.first else { return false }
+        let firstPageHeight = pageHeight(
+            for: firstIndex,
+            imageCount: images.count,
+            displayWidth: displayWidth,
+            aspectRatio: aspectRatio(for: firstIndex, image: images[firstIndex]),
+            firstImageTopPadding: firstImageTopPadding,
+            lastImageBottomPadding: lastImageBottomPadding
+        )
+        return wasLastUserScrollNearTop(
+            maximumOffset: Self.verticalPadding + firstPageHeight + max(imageSpacing, 0)
+        )
     }
 
     func updateScrollY(_ value: CGFloat) {
@@ -551,7 +591,8 @@ private final class ReaderScrollViewResolverView: UIView {
         let metrics = ReaderScrollMetrics(
             offsetY: scrollView.contentOffset.y,
             contentHeight: scrollView.contentSize.height,
-            visibleHeight: scrollView.bounds.height
+            visibleHeight: scrollView.bounds.height,
+            isUserInteracting: scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating
         )
         if metrics != lastMetrics {
             lastMetrics = metrics

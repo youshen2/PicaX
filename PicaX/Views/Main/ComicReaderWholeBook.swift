@@ -370,6 +370,15 @@ struct ReaderWholeBookContinuousView: View {
             return
         }
 
+        if visiblePage == flattenedPages.first?.id,
+           visiblePage != currentVisiblePage,
+           !scrollTracker.isUserInteracting,
+           !scrollTracker.wasLastUserScrollNearTop(
+               maximumOffset: (pageFrames[visiblePage]?.height ?? displaySize.height) + imageSpacing
+           ) {
+            return
+        }
+
         currentVisiblePage = visiblePage
         focusLoadableImages(around: visiblePage, visiblePageIDs: Set(visiblePages.map(\.0)))
         onPositionChange(visiblePage.chapterIndex, visiblePage.pageIndex, section.images.count)

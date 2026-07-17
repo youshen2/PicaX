@@ -877,7 +877,7 @@ final class DownloadService: ObservableObject {
 
             tasks.removeAll { $0.id == id }
             saveTasks()
-        } catch is CancellationError {
+        } catch where error.isTaskCancellation {
             updateTask(id) { value in
                 value.status = .queued
                 value.errorMessage = nil

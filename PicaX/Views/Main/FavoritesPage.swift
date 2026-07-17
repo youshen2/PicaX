@@ -157,15 +157,24 @@ private struct FavoritePlatformFoldersPage: View {
             return
         }
 
-        isLoading = true
-        errorMessage = nil
-        do {
-            folders = try await service.loadPlatformFavoriteFolders(platform: account.platform, account: account)
-        } catch {
-            errorMessage = error.localizedDescription
-            folders = []
+        let showsLoading = folders.isEmpty
+        if showsLoading {
+            isLoading = true
         }
-        isLoading = false
+        errorMessage = nil
+        defer { isLoading = false }
+        do {
+            let nextFolders = try await service.loadPlatformFavoriteFolders(platform: account.platform, account: account)
+            try Task.checkCancellation()
+            folders = nextFolders
+        } catch where error.isTaskCancellation {
+            return
+        } catch {
+            if showsLoading {
+                errorMessage = error.localizedDescription
+                folders = []
+            }
+        }
     }
 }
 
@@ -361,7 +370,7 @@ private struct FavoritesCollectionPage: View {
             if resetVisibleCount {
                 visibleLocalComicCount = Self.localFavoriteInitialCount
             }
-        } catch is CancellationError {
+        } catch where error.isTaskCancellation {
             return
         } catch {
             filteredComics = sourceComics
@@ -377,38 +386,67 @@ private struct FavoritesCollectionPage: View {
             return
         }
 
-        isLoading = true
+        let showsLoading = comics.isEmpty
+        if showsLoading {
+            isLoading = true
+        }
         isLoadingMoreFavorites = false
         errorMessage = nil
         defer { isLoading = false }
         do {
+            let nextComics: [ComicListItem]
+            let nextHasMore: Bool
+            let followingPage: Int
             switch source {
             case .local(let folder):
-                comics = try await ComicListBackgroundProcessing.localFavorites(folderID: folder.id)
-                hasMoreRemoteFavorites = false
-                nextFavoritePage = 2
+                nextComics = try await ComicListBackgroundProcessing.localFavorites(folderID: folder.id)
+                nextHasMore = false
+                followingPage = 2
             case .platform(let account):
                 let page = try await service.loadFavoritePage(account: account)
-                comics = page.items
-                hasMoreRemoteFavorites = page.hasMore
-                nextFavoritePage = page.page + 1
+                nextComics = page.items
+                nextHasMore = page.hasMore
+                followingPage = page.page + 1
             case .platformFolder(let account, let folder):
                 let page = try await service.loadFavoritePage(account: account, folder: folder)
-                comics = page.items
-                hasMoreRemoteFavorites = page.hasMore
-                nextFavoritePage = page.page + 1
+                nextComics = page.items
+                nextHasMore = page.hasMore
+                followingPage = page.page + 1
             }
-            loadedComicIDs = try await ComicListBackgroundProcessing.loadedIDs(from: comics, identity: .readingHistoryID)
+            let nextLoadedComicIDs = try await ComicListBackgroundProcessing.loadedIDs(
+                from: nextComics,
+                identity: .readingHistoryID
+            )
+            var filterKeyword = normalizedSearchText
+            var nextFilteredComics = try await ComicListBackgroundProcessing.filteredFavorites(
+                from: nextComics,
+                keyword: filterKeyword
+            )
+            while filterKeyword != normalizedSearchText {
+                filterKeyword = normalizedSearchText
+                nextFilteredComics = try await ComicListBackgroundProcessing.filteredFavorites(
+                    from: nextComics,
+                    keyword: filterKeyword
+                )
+            }
+            try Task.checkCancellation()
             filterTask?.cancel()
-            await refreshFilteredComics(resetVisibleCount: true)
-        } catch is CancellationError {
+            comics = nextComics
+            filteredComics = nextFilteredComics
+            hasMoreRemoteFavorites = nextHasMore
+            nextFavoritePage = followingPage
+            loadedComicIDs = nextLoadedComicIDs
+            visibleLocalComicCount = Self.localFavoriteInitialCount
+        } catch where error.isTaskCancellation {
             return
         } catch {
-            errorMessage = error.localizedDescription
-            comics = []
-            filteredComics = []
-            hasMoreRemoteFavorites = false
-            loadedComicIDs = []
+            if showsLoading {
+                errorMessage = error.localizedDescription
+                comics = []
+                filteredComics = []
+                hasMoreRemoteFavorites = false
+                loadedComicIDs = []
+            }
         }
     }
 
@@ -419,7 +457,7 @@ private struct FavoritesCollectionPage: View {
         defer { isLoadingMoreFavorites = false }
         do {
             try await loadNextRemoteFavoritesPage()
-        } catch is CancellationError {
+        } catch where error.isTaskCancellation {
             return
         } catch {
             errorMessage = error.localizedDescription
@@ -468,7 +506,7 @@ private struct FavoritesCollectionPage: View {
                 title: source.title,
                 entries: filteredComics.map(ReadingListEntry.online)
             )
-        } catch is CancellationError {
+        } catch where error.isTaskCancellation {
             return
         } catch {
             errorMessage = error.localizedDescription
@@ -711,7 +749,7 @@ private struct FavoriteDownloadAllSheet: View {
             let targets = try await loadTargets()
             guard !Task.isCancelled else { return }
             loadState = .loaded(targets)
-        } catch is CancellationError {
+        } catch where error.isTaskCancellation {
             return
         } catch {
             loadState = .failed(error.localizedDescription)

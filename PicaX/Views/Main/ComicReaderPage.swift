@@ -1642,6 +1642,18 @@ struct ComicReaderPage: View {
               ) else {
             return
         }
+        guard pageIndex != images.startIndex
+                || viewModel.currentPageIndex == images.startIndex
+                || continuousScrollTracker.isUserInteracting
+                || continuousScrollTracker.wasLastUserScrollWithinFirstPage(
+                    images: images,
+                    displayWidth: displayWidth,
+                    imageSpacing: CGFloat(imageSpacing),
+                    firstImageTopPadding: CGFloat(firstImageTopPadding),
+                    lastImageBottomPadding: CGFloat(lastImageBottomPadding)
+                ) else {
+            return
+        }
         updateReadingPage(pageIndex, totalPages: images.count, targetPixelWidth: targetPixelWidth)
     }
 
@@ -1681,6 +1693,14 @@ struct ComicReaderPage: View {
             .index
 
         guard let pageIndex else { return }
+        guard pageIndex != images.startIndex
+                || viewModel.currentPageIndex == images.startIndex
+                || continuousScrollTracker.isUserInteracting
+                || continuousScrollTracker.wasLastUserScrollNearTop(
+                    maximumOffset: (pageFrames[images.startIndex]?.height ?? viewportHeight) + CGFloat(imageSpacing)
+                ) else {
+            return
+        }
         focusContinuousLoadableImage(pageIndex, images: images)
         updateReadingPage(pageIndex, totalPages: images.count, targetPixelWidth: targetPixelWidth)
     }

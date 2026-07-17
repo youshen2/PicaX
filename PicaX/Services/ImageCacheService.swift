@@ -138,7 +138,14 @@ enum ImageCacheService {
     private nonisolated static func uncachedData(for url: URL) async throws -> (Data, URLResponse) {
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 30)
         request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
-        return try await uncachedSession.data(for: request)
+        do {
+            return try await uncachedSession.data(for: request)
+        } catch {
+            guard error.isTaskCancellation else {
+                throw error
+            }
+            throw CancellationError()
+        }
     }
 
     private nonisolated static func localFileData(for fileURL: URL) async throws -> Data {

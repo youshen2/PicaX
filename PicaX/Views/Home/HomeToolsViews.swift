@@ -161,7 +161,7 @@ private final class EhentaiSubscriptionViewModel: ObservableObject {
             loadedIDs = nextLoadedIDs
             hasMore = !comics.isEmpty
             state = .loaded(comics)
-        } catch is CancellationError {
+        } catch where error.isTaskCancellation {
             return
         } catch {
             state = .failed(error.localizedDescription)
@@ -189,7 +189,7 @@ private final class EhentaiSubscriptionViewModel: ObservableObject {
             hasMore = !newComics.isEmpty && !uniqueResult.items.isEmpty
             guard !uniqueResult.items.isEmpty else { return }
             state = .loaded(comics + uniqueResult.items)
-        } catch is CancellationError {
+        } catch where error.isTaskCancellation {
             return
         } catch {
             hasMore = false

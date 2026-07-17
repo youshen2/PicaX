@@ -208,22 +208,28 @@ private final class ExploreEntryViewModel: ObservableObject {
             return
         }
 
-        state = .loading
-        currentPage = 0
-        loadedIDs.removeAll()
-        hasMore = false
+        let showsLoading: Bool
+        if case .loaded = state {
+            showsLoading = false
+        } else {
+            showsLoading = true
+            state = .loading
+        }
         isLoadingMore = false
         do {
             let items = try await service.loadExplore(platform: platform, entry: entry, account: account, page: 1)
             let nextLoadedIDs = try await ComicListBackgroundProcessing.loadedIDs(from: items, identity: .id)
+            try Task.checkCancellation()
             currentPage = 1
             loadedIDs = nextLoadedIDs
             hasMore = !items.isEmpty
             state = .loaded(items)
-        } catch is CancellationError {
+        } catch where error.isTaskCancellation {
             return
         } catch {
-            state = .failed(error.localizedDescription)
+            if showsLoading {
+                state = .failed(error.localizedDescription)
+            }
         }
     }
 
@@ -248,7 +254,7 @@ private final class ExploreEntryViewModel: ObservableObject {
             hasMore = !newItems.isEmpty && !uniqueResult.items.isEmpty
             guard !uniqueResult.items.isEmpty else { return }
             state = .loaded(items + uniqueResult.items)
-        } catch is CancellationError {
+        } catch where error.isTaskCancellation {
             return
         } catch {
             hasMore = false
