@@ -321,35 +321,41 @@ jobs:
           done
 
           SHORT_SHA="${COMMIT_SHA:0:7}"
-          ARTIFACT_INDEX=0
-          for ARTIFACT_PATH in "${ARTIFACTS[@]}"; do
-            ARTIFACT_INDEX=$((ARTIFACT_INDEX + 1))
-            ARTIFACT_NAME="$(basename "${ARTIFACT_PATH}")"
-            CAPTION="$(printf 'PicaX CI 构建完成\n\n产物：%s\n版本：%s\nCommit：%s\n构建：#%s\n仓库：%s\n详情：%s' \
-              "${ARTIFACT_NAME}" \
-              "${REF_NAME}" \
-              "${SHORT_SHA}" \
-              "${RUN_NUMBER}" \
-              "${REPOSITORY}" \
-              "${RUN_URL}")"
-            RESPONSE_FILE="${RUNNER_TEMP}/telegram-artifact-${ARTIFACT_INDEX}.json"
+          CAPTION="$(printf 'PicaX CI 构建完成\n\n产物：4 个未签名文件\n版本：%s\nCommit：%s\n构建：#%s\n仓库：%s\n详情：%s' \
+            "${REF_NAME}" \
+            "${SHORT_SHA}" \
+            "${RUN_NUMBER}" \
+            "${REPOSITORY}" \
+            "${RUN_URL}")"
+          MEDIA_JSON="$(
+            python3 -c 'import json, sys; caption = sys.argv[1]; media = [{"type": "document", "media": f"attach://artifact_{index}", **({"caption": caption} if index == 0 else {})} for index, _ in enumerate(sys.argv[2:])]; print(json.dumps(media, ensure_ascii=False))' \
+              "${CAPTION}" "${ARTIFACTS[@]}"
+          )"
 
-            if ! curl \
-                --fail-with-body \
-                --silent \
-                --show-error \
-                --connect-timeout 15 \
-                --max-time 600 \
-                --request POST \
-                "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument" \
-                --form-string "chat_id=${TELEGRAM_CHAT_ID}" \
-                --form "document=@${ARTIFACT_PATH};type=application/octet-stream" \
-                --form-string "caption=${CAPTION}" \
-                --output "${RESPONSE_FILE}"; then
-              DESCRIPTION="$(telegram_error_description "${RESPONSE_FILE}")"
-              echo "::error::Telegram API：${DESCRIPTION}"
-              exit 1
-            fi
+          MEDIA_FORMS=()
+          for ARTIFACT_INDEX in "${!ARTIFACTS[@]}"; do
+            MEDIA_FORMS+=(
+              --form
+              "artifact_${ARTIFACT_INDEX}=@${ARTIFACTS[$ARTIFACT_INDEX]};type=application/octet-stream"
+            )
           done
 
-          echo "Commit 汇总和 4 个构建产物已发送到 Telegram 频道。"
+          RESPONSE_FILE="${RUNNER_TEMP}/telegram-artifacts.json"
+          if ! curl \
+              --fail-with-body \
+              --silent \
+              --show-error \
+              --connect-timeout 15 \
+              --max-time 600 \
+              --request POST \
+              "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMediaGroup" \
+              --form-string "chat_id=${TELEGRAM_CHAT_ID}" \
+              --form-string "media=${MEDIA_JSON}" \
+              "${MEDIA_FORMS[@]}" \
+              --output "${RESPONSE_FILE}"; then
+            DESCRIPTION="$(telegram_error_description "${RESPONSE_FILE}")"
+            echo "::error::Telegram API：${DESCRIPTION}"
+            exit 1
+          fi
+
+          echo "Commit 汇总和包含 4 个构建产物的媒体组已发送到 Telegram 频道。"

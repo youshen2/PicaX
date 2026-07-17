@@ -125,7 +125,7 @@ alt="Get it on GitHub" align="center" height="80" /></a>
 
 ### Telegram CI 发布
 
-每次 CI 成功生成产物后，GitHub Actions 会先汇总上一次成功编译到本次编译之间的每条 Commit（短 SHA、标题和作者），再通过 Telegram Bot 将汇总以及以下 4 个未签名产物发送到频道：
+每次 CI 成功生成产物后，GitHub Actions 会先汇总上一次成功编译到本次编译之间的每条 Commit（短 SHA、标题和作者），再通过 Telegram Bot 将以下 4 个未签名产物合并为同一个媒体组消息发送到频道：
 
 - `PicaX-unsigned.ipa`
 - `PicaX-with-watch-unsigned.ipa`
