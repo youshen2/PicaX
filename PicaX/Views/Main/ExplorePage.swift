@@ -23,11 +23,15 @@ struct ExplorePage: View {
             }
 
             Section("发现") {
-                ForEach(availableEntries) { entry in
-                    NavigationLink {
-                        ExploreEntryPage(platform: selectedPlatform, entry: entry)
-                    } label: {
-                        ExploreEntryRow(entry: entry, accentColor: selectedPlatform.accentColor)
+                ForEach(discoveryEntries) { entry in
+                    entryLink(entry)
+                }
+            }
+
+            if !popularEntries.isEmpty {
+                Section("热门") {
+                    ForEach(popularEntries) { entry in
+                        entryLink(entry)
                     }
                 }
             }
@@ -60,6 +64,22 @@ struct ExplorePage: View {
 
     private var availableEntries: [ComicExploreEntry] {
         ComicExploreEntry.availableEntries(for: selectedPlatform)
+    }
+
+    private var discoveryEntries: [ComicExploreEntry] {
+        availableEntries.filter { !$0.isPopular }
+    }
+
+    private var popularEntries: [ComicExploreEntry] {
+        availableEntries.filter(\.isPopular)
+    }
+
+    private func entryLink(_ entry: ComicExploreEntry) -> some View {
+        NavigationLink {
+            ExploreEntryPage(platform: selectedPlatform, entry: entry)
+        } label: {
+            ExploreEntryRow(entry: entry, accentColor: selectedPlatform.accentColor)
+        }
     }
 
     private var initialPlatform: ComicPlatform {

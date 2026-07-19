@@ -917,9 +917,20 @@ private extension ComicContentService {
             let sort = PlatformFeatureSettings.picacgDefaultSort()
             let json = try await picacgJSON(path: "comics?page=\(page)&s=\(sort)", token: token)
             return try picacgItems(from: json, arrayPath: ["data", "comics", "docs"])
-        case .ranking:
+        case .popular(let period):
             guard page == 1 else { return [] }
-            let json = try await picacgJSON(path: "comics/leaderboard?tt=H24&ct=VC", token: token)
+            let leaderboardType: String
+            switch period {
+            case .today:
+                leaderboardType = "H24"
+            case .week:
+                leaderboardType = "D7"
+            case .month:
+                leaderboardType = "D30"
+            case .year, .allTime:
+                throw ComicContentError.unsupported("PicACG 没有\(period.title)接口。")
+            }
+            let json = try await picacgJSON(path: "comics/leaderboard?tt=\(leaderboardType)&ct=VC", token: token)
             return try picacgItems(from: json, arrayPath: ["data", "comics"])
         case .search:
             throw ComicContentError.unsupported("PicACG 搜索接口需要关键词和排序条件，当前入口页还没有筛选表单。")
@@ -1311,8 +1322,19 @@ private extension ComicContentService {
         switch entry {
         case .latest:
             sort = "date"
-        case .ranking:
-            sort = "popular-today"
+        case .popular(let period):
+            switch period {
+            case .today:
+                sort = "popular-today"
+            case .week:
+                sort = "popular-week"
+            case .month:
+                sort = "popular-month"
+            case .allTime:
+                sort = "popular"
+            case .year:
+                throw ComicContentError.unsupported("NHentai 没有\(period.title)接口。")
+            }
         case .random:
             throw ComicContentError.unsupported("NHentai 参考项目没有随机漫画列表接口；随机只用于收藏随机详情。")
         case .search:
@@ -1635,9 +1657,9 @@ private extension ComicContentService {
         switch entry {
         case .latest:
             urlString = pageIndex == 0 ? "\(ehentaiBaseURL)/" : "\(ehentaiBaseURL)/?page=\(pageIndex)"
-        case .ranking:
+        case .popular(.today):
             urlString = pageIndex == 0 ? "\(ehentaiBaseURL)/popular" : "\(ehentaiBaseURL)/popular?page=\(pageIndex)"
-        case .random, .search:
+        case .popular, .random, .search:
             throw ComicContentError.unsupported("E-Hentai 当前入口不可用。")
         }
         guard let url = URL(string: urlString) else { throw ComicContentError.invalidURL(urlString) }
@@ -2026,8 +2048,17 @@ private extension ComicContentService {
         let base = htMangaBaseURL
         let path: String
         switch entry {
-        case .ranking:
-            path = "/albums-favorite_ranking-type-day.html"
+        case .popular(let period):
+            switch period {
+            case .today:
+                path = "/albums-favorite_ranking-type-day.html"
+            case .week:
+                path = "/albums-favorite_ranking-type-week.html"
+            case .month:
+                path = "/albums-favorite_ranking-type-month.html"
+            case .year, .allTime:
+                throw ComicContentError.unsupported("绅士漫画没有\(period.title)接口。")
+            }
         case .latest:
             path = "/albums.html"
         case .random, .search:
@@ -2979,8 +3010,23 @@ private extension ComicContentService {
         switch entry {
         case .latest, .search:
             return try await jmComicItems(from: jmJSON(path: "latest?page=\(page)"))
-        case .ranking:
-            return try await jmComicItems(from: jmJSON(path: "categories/filter?o=mv&c=0&page=\(page)"))
+        case .popular(let period):
+            let rankingQuery: String
+            switch period {
+            case .today:
+                // JM's current ranking route separates the popularity sort and time range.
+                // The legacy mv_t / mv_w values now return an empty result.
+                rankingQuery = "o=mv&t=t"
+            case .week:
+                rankingQuery = "o=mv&t=w"
+            case .month:
+                rankingQuery = "o=mv_m"
+            case .allTime:
+                rankingQuery = "o=mv"
+            case .year:
+                throw ComicContentError.unsupported("JMComic 没有\(period.title)接口。")
+            }
+            return try await jmComicItems(from: jmJSON(path: "categories/filter?\(rankingQuery)&c=0&page=\(page)"))
         case .random:
             var items = try await jmComicItems(from: jmJSON(path: "latest?page=\(page)"))
             items.shuffle()
@@ -3548,8 +3594,19 @@ private extension ComicContentService {
         switch entry {
         case .latest:
             path = "index-all.nozomi"
-        case .ranking:
-            path = "popular/today-all.nozomi"
+        case .popular(let period):
+            switch period {
+            case .today:
+                path = "popular/today-all.nozomi"
+            case .week:
+                path = "popular/week-all.nozomi"
+            case .month:
+                path = "popular/month-all.nozomi"
+            case .year:
+                path = "popular/year-all.nozomi"
+            case .allTime:
+                throw ComicContentError.unsupported("Hitomi 没有\(period.title)接口。")
+            }
         case .random:
             path = "index-all.nozomi"
         case .search:

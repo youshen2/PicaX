@@ -327,22 +327,103 @@ struct PlatformFavoriteFolder: Identifiable, Hashable, Sendable {
     let platform: ComicPlatform
 }
 
-enum ComicExploreEntry: String, CaseIterable, Identifiable {
+enum ComicExplorePopularityPeriod: String, Hashable, Identifiable {
+    case today
+    case week
+    case month
+    case year
+    case allTime
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .today:
+            "本日热门"
+        case .week:
+            "本周热门"
+        case .month:
+            "本月热门"
+        case .year:
+            "本年热门"
+        case .allTime:
+            "总排行榜"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .today:
+            "查看最近一天的人气漫画"
+        case .week:
+            "查看最近一周的人气漫画"
+        case .month:
+            "查看最近一个月的人气漫画"
+        case .year:
+            "查看最近一年的人气漫画"
+        case .allTime:
+            "查看平台累计热门排行"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .today:
+            "flame.fill"
+        case .week:
+            "calendar"
+        case .month:
+            "calendar.circle"
+        case .year:
+            "chart.line.uptrend.xyaxis"
+        case .allTime:
+            "trophy.fill"
+        }
+    }
+}
+
+enum ComicExploreEntry: Hashable, Identifiable {
     case random
     case latest
-    case ranking
+    case popular(ComicExplorePopularityPeriod)
     case search
 
     nonisolated static func availableEntries(for platform: ComicPlatform) -> [ComicExploreEntry] {
         switch platform {
-        case .nhentai, .eHentai, .htManga:
-            [.latest, .ranking]
-        case .picacg, .jmComic, .hitomi:
-            [.random, .latest, .ranking]
+        case .picacg:
+            [.random, .latest, .popular(.today), .popular(.week), .popular(.month)]
+        case .nhentai:
+            [.latest, .popular(.today), .popular(.week), .popular(.month), .popular(.allTime)]
+        case .eHentai:
+            [.latest, .popular(.today)]
+        case .htManga:
+            [.latest, .popular(.today), .popular(.week), .popular(.month)]
+        case .jmComic:
+            [.random, .latest, .popular(.today), .popular(.week), .popular(.month), .popular(.allTime)]
+        case .hitomi:
+            [.random, .latest, .popular(.today), .popular(.week), .popular(.month), .popular(.year)]
         }
     }
 
-    var id: String { rawValue }
+    var id: String {
+        switch self {
+        case .random:
+            "random"
+        case .latest:
+            "latest"
+        case .popular(let period):
+            "popular-\(period.rawValue)"
+        case .search:
+            "search"
+        }
+    }
+
+    var isPopular: Bool {
+        if case .popular = self {
+            return true
+        }
+        return false
+    }
 
     var title: String {
         switch self {
@@ -350,8 +431,8 @@ enum ComicExploreEntry: String, CaseIterable, Identifiable {
             "随机"
         case .latest:
             "最新"
-        case .ranking:
-            "排行榜"
+        case .popular(let period):
+            period.title
         case .search:
             "高级筛选"
         }
@@ -363,8 +444,8 @@ enum ComicExploreEntry: String, CaseIterable, Identifiable {
             "打开随机推荐列表"
         case .latest:
             "查看最近更新的漫画"
-        case .ranking:
-            "按平台热度浏览"
+        case .popular(let period):
+            period.subtitle
         case .search:
             "按平台默认搜索接口浏览"
         }
@@ -376,8 +457,8 @@ enum ComicExploreEntry: String, CaseIterable, Identifiable {
             "shuffle"
         case .latest:
             "clock.arrow.circlepath"
-        case .ranking:
-            "chart.bar"
+        case .popular(let period):
+            period.systemImage
         case .search:
             "line.3.horizontal.decrease.circle"
         }
