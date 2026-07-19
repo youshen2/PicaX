@@ -280,11 +280,37 @@ enum SearchSuggestionSelectionBehavior: String, CaseIterable, Identifiable {
 }
 
 enum ComicListSettingsKey {
+    static let layoutMode = "settings.comicList.layoutMode"
     static let showsReadingProgress = "settings.comicList.showsReadingProgress"
     static let showsFavoriteState = "settings.comicList.showsFavoriteState"
     static let showsTags = "settings.comicList.showsTags"
     static let maxVisibleTags = "settings.comicList.maxVisibleTags"
     static let showsPopularity = "settings.comicList.showsPopularity"
+}
+
+enum ComicListLayoutMode: String, CaseIterable, Identifiable {
+    case list
+    case waterfall
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .waterfall:
+            "瀑布流"
+        case .list:
+            "列表"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .waterfall:
+            "rectangle.grid.2x2"
+        case .list:
+            "list.bullet"
+        }
+    }
 }
 
 enum DetailSettingsKey {

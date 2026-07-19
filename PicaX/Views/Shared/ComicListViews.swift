@@ -5,6 +5,8 @@ struct ComicListSection: View {
     @EnvironmentObject private var readingHistory: ReadingHistoryService
     @EnvironmentObject private var blockingKeywords: BlockingKeywordService
     @EnvironmentObject private var readLater: ReadLaterService
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @AppStorage(ComicListSettingsKey.layoutMode) private var layoutMode = ComicListLayoutMode.list.rawValue
     @AppStorage(ReadFilterSettingsKey.hidesReadComicsInLists) private var hidesReadComicsInLists = false
     @AppStorage(ReadFilterSettingsKey.hidesReadLaterComicsInLists) private var hidesReadLaterComicsInLists = false
     @AppStorage(ReadFilterSettingsKey.hiddenProgressThreshold) private var hiddenProgressThreshold = 100
@@ -36,6 +38,8 @@ struct ComicListSection: View {
 
     private static let initialRenderedComicCount = 48
     private static let renderedComicPageSize = 48
+    private static let waterfallSpacing: CGFloat = 12
+    private static let waterfallHorizontalPadding: CGFloat = 16
 
     var body: some View {
         Group {
@@ -77,88 +81,28 @@ struct ComicListSection: View {
         let readingListComics = readAllComics ?? (usesSnapshot ? visibleComics : [])
         let lastDisplayedComicID = displayedRows.last?.id
         let isPreparingSnapshot = !snapshotIsCurrent && !comics.isEmpty
+        let activeLayoutMode = ComicListLayoutMode(rawValue: layoutMode) ?? .list
 
-        return List {
-            Section {
-                if showsReadAll, !readingListComics.isEmpty {
-                    Button {
-                        if let readAllAction {
-                            readAllAction()
-                        } else {
-                            readingListRequest = ReadingListRequest(
-                                title: readAllTitle,
-                                entries: readingListComics.map(ReadingListEntry.online)
-                            )
-                        }
-                    } label: {
-                        if isPreparingReadAll {
-                            HStack(spacing: 10) {
-                                ProgressView()
-                                Text("正在准备阅读列表")
-                            }
-                        } else {
-                            Label("阅读全部", systemImage: "play.circle")
-                        }
-                    }
-                    .disabled(isPreparingReadAll)
-                }
-
-                if isPreparingSnapshot, displayedRows.isEmpty {
-                    PreparingComicListSnapshotRow()
-                }
-
-                if snapshotIsCurrent, totalVisibleCount == 0, !comics.isEmpty {
-                    ContentUnavailableView("已隐藏全部结果", systemImage: "eye.slash", description: Text("当前列表内容命中了屏蔽词、阅读进度或稍后再读过滤，可在设置中调整。"))
-                        .listRowBackground(Color.clear)
-                }
-
-                ForEach(displayedRows) { row in
-                    ComicListActionLink(
-                        item: row.item,
-                        service: service,
-                        hasReadingProgress: row.hasReadingProgress,
-                        readingProgressText: row.readingProgressText,
-                        displayTags: row.displayTags,
-                        showsFavoriteState: showsListFavoriteState,
-                        showsTags: showsListTags,
-                        maxVisibleTags: maxVisibleTags,
-                        showsPopularity: showsListPopularity,
-                        openDetail: { detailRequest = ComicListDetailRequest(item: $0) },
-                        openReader: { readerRequest = $0 }
-                    ) {
-                        if row.id == lastDisplayedComicID {
-                            revealOrLoadMore(totalVisibleCount: totalVisibleCount)
-                        }
-                    }
-                    .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 12))
-                }
-
-                if isPreparingSnapshot, !displayedRows.isEmpty {
-                    if isLoadingMore {
-                        LoadingMoreRow()
-                    } else {
-                        PreparingComicListSnapshotRow()
-                    }
-                } else if !snapshotIsCurrent {
-                    EmptyView()
-                } else if isLoadingMore {
-                    LoadingMoreRow()
-                } else if canRevealMoreLocalComics(totalVisibleCount: totalVisibleCount) {
-                    Color.clear
-                        .frame(height: 1)
-                        .onAppear {
-                            revealMoreLocalComics(totalVisibleCount: totalVisibleCount)
-                        }
-                } else if hasMore {
-                    Color.clear
-                        .frame(height: 1)
-                        .onAppear {
-                            loadMore?()
-                        }
-                }
+        return Group {
+            if activeLayoutMode == .waterfall {
+                waterfallList(
+                    displayedRows: displayedRows,
+                    readingListComics: readingListComics,
+                    totalVisibleCount: totalVisibleCount,
+                    isPreparingSnapshot: isPreparingSnapshot,
+                    snapshotIsCurrent: snapshotIsCurrent
+                )
+            } else {
+                standardList(
+                    displayedRows: displayedRows,
+                    readingListComics: readingListComics,
+                    lastDisplayedComicID: lastDisplayedComicID,
+                    totalVisibleCount: totalVisibleCount,
+                    isPreparingSnapshot: isPreparingSnapshot,
+                    snapshotIsCurrent: snapshotIsCurrent
+                )
             }
         }
-        .picaxInsetGroupedListStyle()
         .transaction { transaction in
             transaction.animation = nil
         }
@@ -171,6 +115,358 @@ struct ComicListSection: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .picaxEhTagTranslationsDidChange)) { _ in
             tagDisplayVersion &+= 1
+        }
+    }
+
+    private func standardList(
+        displayedRows: [ComicListDisplayedRow],
+        readingListComics: [ComicListItem],
+        lastDisplayedComicID: String?,
+        totalVisibleCount: Int,
+        isPreparingSnapshot: Bool,
+        snapshotIsCurrent: Bool
+    ) -> some View {
+        List {
+            Section {
+                if showsReadAll, !readingListComics.isEmpty {
+                    readAllButton(comics: readingListComics)
+                }
+
+                if isPreparingSnapshot, displayedRows.isEmpty {
+                    PreparingComicListSnapshotRow()
+                }
+
+                if snapshotIsCurrent, totalVisibleCount == 0, !comics.isEmpty {
+                    hiddenResultsView
+                        .listRowBackground(Color.clear)
+                }
+
+                ForEach(displayedRows) { row in
+                    comicActionLink(
+                        for: row,
+                        layoutMode: .list,
+                        lastDisplayedComicID: lastDisplayedComicID,
+                        totalVisibleCount: totalVisibleCount
+                    )
+                    .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 12))
+                }
+
+                paginationFooter(
+                    displayedRows: displayedRows,
+                    totalVisibleCount: totalVisibleCount,
+                    isPreparingSnapshot: isPreparingSnapshot,
+                    snapshotIsCurrent: snapshotIsCurrent
+                )
+            }
+        }
+        .picaxInsetGroupedListStyle()
+    }
+
+    private func waterfallList(
+        displayedRows: [ComicListDisplayedRow],
+        readingListComics: [ComicListItem],
+        totalVisibleCount: Int,
+        isPreparingSnapshot: Bool,
+        snapshotIsCurrent: Bool
+    ) -> some View {
+        GeometryReader { geometry in
+            ScrollView {
+                VStack(alignment: .leading, spacing: Self.waterfallSpacing) {
+                    if showsReadAll, !readingListComics.isEmpty {
+                        readAllButton(comics: readingListComics)
+                            .buttonStyle(.plain)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 12)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(
+                                AppColor.secondaryGroupedBackground,
+                                in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            )
+                    }
+
+                    if isPreparingSnapshot, displayedRows.isEmpty {
+                        PreparingComicListSnapshotRow()
+                    }
+
+                    if snapshotIsCurrent, totalVisibleCount == 0, !comics.isEmpty {
+                        hiddenResultsView
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 24)
+                    }
+
+                    waterfallGrid(
+                        displayedRows: displayedRows,
+                        availableWidth: max(
+                            geometry.size.width - Self.waterfallHorizontalPadding * 2,
+                            0
+                        ),
+                        totalVisibleCount: totalVisibleCount
+                    )
+
+                    paginationFooter(
+                        displayedRows: displayedRows,
+                        totalVisibleCount: totalVisibleCount,
+                        isPreparingSnapshot: isPreparingSnapshot,
+                        snapshotIsCurrent: snapshotIsCurrent
+                    )
+                }
+                .padding(.horizontal, Self.waterfallHorizontalPadding)
+                .padding(.vertical, Self.waterfallSpacing)
+            }
+            .background(AppColor.groupedBackground)
+        }
+    }
+
+    @ViewBuilder
+    private func waterfallGrid(
+        displayedRows: [ComicListDisplayedRow],
+        availableWidth: CGFloat,
+        totalVisibleCount: Int
+    ) -> some View {
+        if #available(iOS 26, macOS 26, visionOS 26, *) {
+            GlassEffectContainer(spacing: 8) {
+                waterfallGridContent(
+                    displayedRows: displayedRows,
+                    availableWidth: availableWidth,
+                    totalVisibleCount: totalVisibleCount
+                )
+            }
+        } else {
+            waterfallGridContent(
+                displayedRows: displayedRows,
+                availableWidth: availableWidth,
+                totalVisibleCount: totalVisibleCount
+            )
+        }
+    }
+
+    private func waterfallGridContent(
+        displayedRows: [ComicListDisplayedRow],
+        availableWidth: CGFloat,
+        totalVisibleCount: Int
+    ) -> some View {
+        let columnCount = waterfallColumnCount(availableWidth: availableWidth)
+        let columnWidth = waterfallColumnWidth(
+            availableWidth: availableWidth,
+            columnCount: columnCount
+        )
+        let columns = makeWaterfallColumns(
+            rows: displayedRows,
+            columnCount: columnCount,
+            columnWidth: columnWidth
+        )
+
+        return HStack(alignment: .top, spacing: Self.waterfallSpacing) {
+            ForEach(columns) { column in
+                LazyVStack(spacing: Self.waterfallSpacing) {
+                    ForEach(column.entries) { entry in
+                        comicActionLink(
+                            for: entry.row,
+                            layoutMode: .waterfall,
+                            lastDisplayedComicID: nil,
+                            totalVisibleCount: totalVisibleCount
+                        )
+                        .accessibilitySortPriority(Double(displayedRows.count - entry.sourceIndex))
+                    }
+                }
+                .frame(width: columnWidth)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func waterfallColumnCount(availableWidth: CGFloat) -> Int {
+        let minimumWidth: CGFloat = dynamicTypeSize.isAccessibilitySize ? 280 : 160
+        let fittingCount = Int(
+            (availableWidth + Self.waterfallSpacing)
+                / (minimumWidth + Self.waterfallSpacing)
+        )
+        return max(fittingCount, 1)
+    }
+
+    private func waterfallColumnWidth(availableWidth: CGFloat, columnCount: Int) -> CGFloat {
+        let spacingWidth = CGFloat(max(columnCount - 1, 0)) * Self.waterfallSpacing
+        return max((availableWidth - spacingWidth) / CGFloat(max(columnCount, 1)), 0)
+    }
+
+    private func makeWaterfallColumns(
+        rows: [ComicListDisplayedRow],
+        columnCount: Int,
+        columnWidth: CGFloat
+    ) -> [ComicWaterfallColumn] {
+        var columns = (0..<columnCount).map {
+            ComicWaterfallColumn(id: $0, entries: [])
+        }
+        var columnHeights = Array(repeating: CGFloat.zero, count: columnCount)
+
+        for (sourceIndex, row) in rows.enumerated() {
+            let targetColumn = columnHeights.indices.min {
+                columnHeights[$0] < columnHeights[$1]
+            } ?? 0
+            let hasExistingCard = !columns[targetColumn].entries.isEmpty
+            columns[targetColumn].entries.append(
+                ComicWaterfallEntry(row: row, sourceIndex: sourceIndex)
+            )
+            if hasExistingCard {
+                columnHeights[targetColumn] += Self.waterfallSpacing
+            }
+            columnHeights[targetColumn] += estimatedWaterfallCardHeight(
+                for: row,
+                columnWidth: columnWidth
+            )
+        }
+
+        return columns
+    }
+
+    private func estimatedWaterfallCardHeight(
+        for row: ComicListDisplayedRow,
+        columnWidth: CGFloat
+    ) -> CGFloat {
+        let coverHeight = columnWidth * 112 / 82
+        let contentWidth = max(columnWidth - 24, 1)
+        var contentHeight: CGFloat = 25
+        var sectionCount = 1
+
+        contentHeight += estimatedTextLineCount(
+            row.item.title,
+            availableWidth: contentWidth,
+            averageCharacterWidth: 9,
+            maximumLines: 2
+        ) * 19
+
+        if !row.item.subtitle.isEmpty {
+            sectionCount += 1
+            contentHeight += estimatedTextLineCount(
+                row.item.subtitle,
+                availableWidth: contentWidth,
+                averageCharacterWidth: 8,
+                maximumLines: 2
+            ) * 16
+        }
+
+        if hasWaterfallMetadata(for: row) {
+            sectionCount += 1
+            contentHeight += 17
+        }
+
+        let visibleTags = row.displayTags ?? row.item.tags
+        if showsListTags, !visibleTags.isEmpty {
+            sectionCount += 1
+            contentHeight += 24
+        }
+
+        contentHeight += CGFloat(sectionCount - 1) * 8
+        return coverHeight + contentHeight
+    }
+
+    private func estimatedTextLineCount(
+        _ text: String,
+        availableWidth: CGFloat,
+        averageCharacterWidth: CGFloat,
+        maximumLines: Int
+    ) -> CGFloat {
+        let charactersPerLine = max(Int(availableWidth / averageCharacterWidth), 1)
+        let estimatedLines = max(
+            (text.count + charactersPerLine - 1) / charactersPerLine,
+            1
+        )
+        return CGFloat(min(estimatedLines, maximumLines))
+    }
+
+    private func hasWaterfallMetadata(for row: ComicListDisplayedRow) -> Bool {
+        row.item.pageText != nil
+            || row.readingProgressText != nil
+            || (showsListPopularity && row.item.likesCount != nil)
+            || (showsListFavoriteState && row.item.favoriteDate != nil)
+    }
+
+    private var hiddenResultsView: some View {
+        ContentUnavailableView(
+            "已隐藏全部结果",
+            systemImage: "eye.slash",
+            description: Text("当前列表内容命中了屏蔽词、阅读进度或稍后再读过滤，可在设置中调整。")
+        )
+    }
+
+    private func readAllButton(comics: [ComicListItem]) -> some View {
+        Button {
+            if let readAllAction {
+                readAllAction()
+            } else {
+                readingListRequest = ReadingListRequest(
+                    title: readAllTitle,
+                    entries: comics.map(ReadingListEntry.online)
+                )
+            }
+        } label: {
+            if isPreparingReadAll {
+                HStack(spacing: 10) {
+                    ProgressView()
+                    Text("正在准备阅读列表")
+                }
+            } else {
+                Label("阅读全部", systemImage: "play.circle")
+            }
+        }
+        .disabled(isPreparingReadAll)
+    }
+
+    private func comicActionLink(
+        for row: ComicListDisplayedRow,
+        layoutMode: ComicListLayoutMode,
+        lastDisplayedComicID: String?,
+        totalVisibleCount: Int
+    ) -> some View {
+        ComicListActionLink(
+            item: row.item,
+            service: service,
+            layoutMode: layoutMode,
+            hasReadingProgress: row.hasReadingProgress,
+            readingProgressText: row.readingProgressText,
+            displayTags: row.displayTags,
+            showsFavoriteState: showsListFavoriteState,
+            showsTags: showsListTags,
+            maxVisibleTags: maxVisibleTags,
+            showsPopularity: showsListPopularity,
+            openDetail: { detailRequest = ComicListDetailRequest(item: $0) },
+            openReader: { readerRequest = $0 }
+        ) {
+            if row.id == lastDisplayedComicID {
+                revealOrLoadMore(totalVisibleCount: totalVisibleCount)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func paginationFooter(
+        displayedRows: [ComicListDisplayedRow],
+        totalVisibleCount: Int,
+        isPreparingSnapshot: Bool,
+        snapshotIsCurrent: Bool
+    ) -> some View {
+        if isPreparingSnapshot, !displayedRows.isEmpty {
+            if isLoadingMore {
+                LoadingMoreRow()
+            } else {
+                PreparingComicListSnapshotRow()
+            }
+        } else if !snapshotIsCurrent {
+            EmptyView()
+        } else if isLoadingMore {
+            LoadingMoreRow()
+        } else if canRevealMoreLocalComics(totalVisibleCount: totalVisibleCount) {
+            Color.clear
+                .frame(height: 1)
+                .onAppear {
+                    revealMoreLocalComics(totalVisibleCount: totalVisibleCount)
+                }
+        } else if hasMore {
+            Color.clear
+                .frame(height: 1)
+                .onAppear {
+                    loadMore?()
+                }
         }
     }
 
@@ -466,6 +762,7 @@ struct ComicListActionLink: View {
 
     let item: ComicListItem
     let service: ComicContentService
+    var layoutMode = ComicListLayoutMode.list
     var hasReadingProgress = false
     var readingProgressText: String?
     var displayTags: [String]?
@@ -482,72 +779,141 @@ struct ComicListActionLink: View {
     @State private var errorMessage: String?
 
     var body: some View {
+        contextMenuSource
+            .onAppear {
+                onAppear?()
+            }
+            .sheet(item: $favoriteContext) { context in
+                FavoriteSelectionSheet(
+                    item: context.item,
+                    service: service,
+                    account: platformAccounts.account(for: context.item.platform)
+                )
+                .picaxPresentationDetents([.medium, .large])
+            }
+            .alert("打开失败", isPresented: readerErrorBinding) {
+                Button("好", role: .cancel) {}
+            } message: {
+                Text(errorMessage ?? "")
+            }
+            .disabled(isPreparingReader)
+    }
+
+    @ViewBuilder
+    private var contextMenuSource: some View {
+        if layoutMode == .waterfall {
+            if #available(iOS 16, macOS 13, visionOS 1, *) {
+                actionButton
+                    .contextMenu {
+                        contextMenuItems
+                    } preview: {
+                        waterfallContextMenuPreview
+                    }
+            } else {
+                actionButton
+                    .contextMenu {
+                        contextMenuItems
+                    }
+            }
+        } else {
+            actionButton
+                .contextMenu {
+                    contextMenuItems
+                }
+        }
+    }
+
+    private var actionButton: some View {
         Button {
             openDetail(item)
         } label: {
-            ComicListRow(
-                item: item,
-                readingProgressText: readingProgressText,
-                displayTags: displayTags,
-                showsFavoriteState: showsFavoriteState,
-                showsTags: showsTags,
-                maxVisibleTags: maxVisibleTags,
-                showsPopularity: showsPopularity
-            )
-            .equatable()
+            Group {
+                if layoutMode == .waterfall {
+                    ComicListWaterfallCard(
+                        item: item,
+                        readingProgressText: readingProgressText,
+                        displayTags: displayTags,
+                        showsFavoriteState: showsFavoriteState,
+                        showsTags: showsTags,
+                        maxVisibleTags: maxVisibleTags,
+                        showsPopularity: showsPopularity
+                    )
+                    .equatable()
+                } else {
+                    ComicListRow(
+                        item: item,
+                        readingProgressText: readingProgressText,
+                        displayTags: displayTags,
+                        showsFavoriteState: showsFavoriteState,
+                        showsTags: showsTags,
+                        maxVisibleTags: maxVisibleTags,
+                        showsPopularity: showsPopularity
+                    )
+                    .equatable()
+                }
+            }
         }
         .buttonStyle(.plain)
         .contentShape(Rectangle())
-        .contextMenu {
-            Button {
-                openDetail(item)
-            } label: {
-                Label("查看详情", systemImage: "info.circle")
-            }
-
-            Button {
-                prepareReader(ignoresHistoryProgress: !hasReadingProgress)
-            } label: {
-                Label(readActionTitle, systemImage: "book")
-            }
-
-            if hasReadingProgress {
-                Button {
-                    prepareReader(ignoresHistoryProgress: true)
-                } label: {
-                    Label("从头阅读", systemImage: "arrow.counterclockwise")
-                }
-            }
-
-            Button {
-                favoriteContext = ComicListFavoriteContext(item: item)
-            } label: {
-                Label("收藏", systemImage: "heart")
-            }
-
-            Button {
-                readLater.toggle(item)
-            } label: {
-                Label(readLaterActionTitle, systemImage: readLaterActionImage)
-            }
-        }
-        .onAppear {
-            onAppear?()
-        }
-        .sheet(item: $favoriteContext) { context in
-            FavoriteSelectionSheet(
-                item: context.item,
-                service: service,
-                account: platformAccounts.account(for: context.item.platform)
+#if os(iOS) || os(visionOS)
+        .contentShape(
+            .contextMenuPreview,
+            RoundedRectangle(
+                cornerRadius: layoutMode == .waterfall ? 18 : 8,
+                style: .continuous
             )
-            .picaxPresentationDetents([.medium, .large])
+        )
+#endif
+    }
+
+    @ViewBuilder
+    private var contextMenuItems: some View {
+        Button {
+            openDetail(item)
+        } label: {
+            Label("查看详情", systemImage: "info.circle")
         }
-        .alert("打开失败", isPresented: readerErrorBinding) {
-            Button("好", role: .cancel) {}
-        } message: {
-            Text(errorMessage ?? "")
+
+        Button {
+            prepareReader(ignoresHistoryProgress: !hasReadingProgress)
+        } label: {
+            Label(readActionTitle, systemImage: "book")
         }
-        .disabled(isPreparingReader)
+
+        if hasReadingProgress {
+            Button {
+                prepareReader(ignoresHistoryProgress: true)
+            } label: {
+                Label("从头阅读", systemImage: "arrow.counterclockwise")
+            }
+        }
+
+        Button {
+            favoriteContext = ComicListFavoriteContext(item: item)
+        } label: {
+            Label("收藏", systemImage: "heart")
+        }
+
+        Button {
+            readLater.toggle(item)
+        } label: {
+            Label(readLaterActionTitle, systemImage: readLaterActionImage)
+        }
+    }
+
+    private var waterfallContextMenuPreview: some View {
+        ComicListWaterfallCard(
+            item: item,
+            readingProgressText: readingProgressText,
+            displayTags: displayTags,
+            showsFavoriteState: showsFavoriteState,
+            showsTags: showsTags,
+            maxVisibleTags: maxVisibleTags,
+            showsPopularity: showsPopularity,
+            usesOpaqueSurface: true
+        )
+        .equatable()
+        .frame(width: 280)
     }
 
     private var readActionTitle: String {
@@ -703,6 +1069,159 @@ struct ComicListRow: View, Equatable {
 
     private var visibleTags: [String] {
         displayTags ?? item.tags
+    }
+}
+
+private struct ComicListWaterfallCard: View, Equatable {
+    private static let cornerRadius: CGFloat = 18
+
+    let item: ComicListItem
+    var readingProgressText: String?
+    var displayTags: [String]?
+    var showsFavoriteState = true
+    var showsTags = true
+    var maxVisibleTags = 5
+    var showsPopularity = true
+    var usesOpaqueSurface = false
+    @State private var coverTint: Color?
+
+    static func == (lhs: ComicListWaterfallCard, rhs: ComicListWaterfallCard) -> Bool {
+        lhs.item == rhs.item
+            && lhs.readingProgressText == rhs.readingProgressText
+            && lhs.displayTags == rhs.displayTags
+            && lhs.showsFavoriteState == rhs.showsFavoriteState
+            && lhs.showsTags == rhs.showsTags
+            && lhs.maxVisibleTags == rhs.maxVisibleTags
+            && lhs.showsPopularity == rhs.showsPopularity
+            && lhs.usesOpaqueSurface == rhs.usesOpaqueSurface
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Color.clear
+                .aspectRatio(82.0 / 112.0, contentMode: .fit)
+                .frame(maxWidth: .infinity)
+                .overlay {
+                    ComicCoverView(
+                        url: item.coverURL,
+                        accentColor: item.accentColor,
+                        cornerRadius: 0,
+                        showsBorder: false
+                    )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+                .clipped()
+                .overlay(alignment: .bottom) {
+                    LinearGradient(
+                        colors: [.clear, .black.opacity(0.52)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    .frame(height: 72)
+                    .allowsHitTesting(false)
+                }
+                .overlay(alignment: .bottomLeading) {
+                    Text(item.platformTitle)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(.black.opacity(0.42), in: Capsule(style: .continuous))
+                        .padding(10)
+                }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text(item.title)
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if !item.subtitle.isEmpty {
+                    Text(item.subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                if hasMetadata {
+                    ComicListHorizontalContentRow {
+                        HStack(spacing: 10) {
+                            if let pageText = item.pageText {
+                                metadataLabel(pageText, systemImage: "doc.text")
+                            }
+                            if let readingProgressText {
+                                metadataLabel(readingProgressText, systemImage: "book")
+                            }
+                            if showsPopularity, item.likesCount != nil {
+                                metadataLabel(item.metadataText, systemImage: "heart")
+                            }
+                            if showsFavoriteState, item.favoriteDate != nil {
+                                metadataLabel(item.favoriteDateText, systemImage: "star.fill")
+                            }
+                        }
+                    }
+                }
+
+                if showsTags, !visibleTags.isEmpty {
+                    ComicListTagRow(tags: visibleTags, limit: visibleTagLimit, accentColor: item.accentColor)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 12)
+            .padding(.bottom, 13)
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous))
+        .background {
+            if usesOpaqueSurface {
+                RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous)
+                    .fill(AppColor.secondaryGroupedBackground)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous)
+                            .fill(resolvedTint.opacity(0.1))
+                    }
+            }
+        }
+        .glassCardIfAvailable(
+            tint: resolvedTint,
+            cornerRadius: Self.cornerRadius,
+            isEnabled: !usesOpaqueSurface
+        )
+        .contentShape(RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous))
+        .task(id: item.coverURLString) {
+            coverTint = nil
+            let sampledColor = await CoverColorSampler.averageColor(url: item.coverURL)
+            guard !Task.isCancelled else { return }
+            coverTint = sampledColor
+        }
+    }
+
+    private func metadataLabel(_ text: String, systemImage: String) -> some View {
+        Label(text, systemImage: systemImage)
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private var hasMetadata: Bool {
+        item.pageText != nil
+            || readingProgressText != nil
+            || (showsPopularity && item.likesCount != nil)
+            || (showsFavoriteState && item.favoriteDate != nil)
+    }
+
+    private var visibleTagLimit: Int {
+        min(max(maxVisibleTags, 1), 10)
+    }
+
+    private var visibleTags: [String] {
+        displayTags ?? item.tags
+    }
+
+    private var resolvedTint: Color {
+        coverTint ?? item.accentColor
     }
 }
 
@@ -1072,6 +1591,20 @@ private struct ComicListDisplayedRow: Identifiable {
     }
 }
 
+private struct ComicWaterfallColumn: Identifiable {
+    let id: Int
+    var entries: [ComicWaterfallEntry]
+}
+
+private struct ComicWaterfallEntry: Identifiable {
+    let row: ComicListDisplayedRow
+    let sourceIndex: Int
+
+    var id: String {
+        row.id
+    }
+}
+
 private enum ComicListTagDisplayResolver {
     nonisolated static func displayTagsByID(for comics: [ComicListItem]) -> [String: [String]] {
         let nhentaiCache = PicaXSQLiteStore.loadNhentaiTagNames(ids: nhentaiTagIDs(in: comics))
@@ -1240,6 +1773,8 @@ struct ComicCoverView: View {
     let accentColor: Color
     var width: CGFloat?
     var height: CGFloat?
+    var cornerRadius: CGFloat = 8
+    var showsBorder = true
     var storesInCache = true
 
     var body: some View {
@@ -1251,12 +1786,14 @@ struct ComicCoverView: View {
             )
             .clipped()
         .background(AppColor.secondaryGroupedBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(.quaternary, lineWidth: 0.5)
+            if showsBorder {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .stroke(.quaternary, lineWidth: 0.5)
+            }
         }
-        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
         .clipped()
         .picaxSensitiveImageContent(url != nil)
     }

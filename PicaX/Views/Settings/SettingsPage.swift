@@ -2075,6 +2075,7 @@ private struct SearchSettingsView: View {
 }
 
 private struct ComicListSettingsView: View {
+    @AppStorage(ComicListSettingsKey.layoutMode) private var layoutMode = ComicListLayoutMode.list.rawValue
     @AppStorage(ComicListSettingsKey.showsReadingProgress) private var showsReadingProgress = true
     @AppStorage(ComicListSettingsKey.showsFavoriteState) private var showsFavoriteState = true
     @AppStorage(ComicListSettingsKey.showsTags) private var showsTags = true
@@ -2086,6 +2087,20 @@ private struct ComicListSettingsView: View {
 
     var body: some View {
         List {
+            Section {
+                Picker("布局", selection: $layoutMode) {
+                    ForEach(ComicListLayoutMode.allCases) { mode in
+                        Label(mode.title, systemImage: mode.systemImage)
+                            .tag(mode.rawValue)
+                    }
+                }
+                .pickerStyle(.segmented)
+            } header: {
+                Text("布局")
+            } footer: {
+                Text("瀑布流会根据可用宽度自动调整每行漫画数量；辅助功能大字号下会使用更宽的卡片。")
+            }
+
             Section {
                 Toggle("显示阅读进度", isOn: $showsReadingProgress)
                 Toggle("显示收藏状态", isOn: $showsFavoriteState)
