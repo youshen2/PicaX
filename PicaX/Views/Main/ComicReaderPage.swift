@@ -833,24 +833,24 @@ struct ComicReaderPage: View {
                         }
                     }
                     .padding(.vertical, 10)
+                    .readerContinuousScrollBridge(continuousScrollBridge) { metrics in
+                        continuousScrollTracker.updateMetrics(metrics)
+                        updateContinuousLoadableImages(
+                            images: images,
+                            displayWidth: geometry.size.width,
+                            fallbackViewportHeight: metrics.visibleHeight > 0 ? metrics.visibleHeight : geometry.size.height
+                        )
+                        syncContinuousVisiblePage(
+                            images: images,
+                            displayWidth: geometry.size.width,
+                            fallbackViewportHeight: metrics.visibleHeight > 0 ? metrics.visibleHeight : geometry.size.height,
+                            targetPixelWidth: targetPixelWidth
+                        )
+                    }
                 }
                 .coordinateSpace(name: continuousReaderCoordinateSpace)
                 .background(Color.black)
                 .ignoresSafeArea(.container)
-                .readerContinuousScrollBridge(continuousScrollBridge) { metrics in
-                    continuousScrollTracker.updateMetrics(metrics)
-                    updateContinuousLoadableImages(
-                        images: images,
-                        displayWidth: geometry.size.width,
-                        fallbackViewportHeight: metrics.visibleHeight > 0 ? metrics.visibleHeight : geometry.size.height
-                    )
-                    syncContinuousVisiblePage(
-                        images: images,
-                        displayWidth: geometry.size.width,
-                        fallbackViewportHeight: metrics.visibleHeight > 0 ? metrics.visibleHeight : geometry.size.height,
-                        targetPixelWidth: targetPixelWidth
-                    )
-                }
                 .readerInteractionGesture(
                     size: geometry.size,
                     mode: readerUIToggleMode,
@@ -1227,8 +1227,9 @@ struct ComicReaderPage: View {
 
     private func scrollContinuous(toY y: CGFloat, animated: Bool) {
         let targetY = max(y, 0)
-        _ = continuousScrollBridge.scroll(toY: targetY, animated: animated)
-        continuousScrollTracker.updateScrollY(targetY)
+        if continuousScrollBridge.scroll(toY: targetY, animated: animated) {
+            continuousScrollTracker.updateScrollY(targetY)
+        }
     }
 
     private func setPagedPageIndex(_ pageIndex: Int, animated: Bool) {

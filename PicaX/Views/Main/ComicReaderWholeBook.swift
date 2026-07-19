@@ -207,13 +207,13 @@ struct ReaderWholeBookContinuousView: View {
                     chapterAppendFooter
                 }
                 .padding(.vertical, 10)
+                .readerContinuousScrollBridge(scrollBridge) { metrics in
+                    scrollTracker.updateMetrics(metrics)
+                }
             }
             .coordinateSpace(name: coordinateSpaceName)
             .background(Color.black)
             .ignoresSafeArea(.container)
-            .readerContinuousScrollBridge(scrollBridge) { metrics in
-                scrollTracker.updateMetrics(metrics)
-            }
             .readerInteractionGesture(
                 size: displaySize,
                 mode: uiToggleMode,
@@ -462,8 +462,9 @@ struct ReaderWholeBookContinuousView: View {
         let targetY = direction == .previous
             ? max(currentY - distance, 0)
             : min(currentY + distance, maxY)
-        _ = scrollBridge.scroll(toY: targetY, animated: true)
-        scrollTracker.updateScrollY(targetY)
+        if scrollBridge.scroll(toY: targetY, animated: true) {
+            scrollTracker.updateScrollY(targetY)
+        }
         if direction == .next, targetY >= maxY - 4 {
             requestNextChapter()
         }
@@ -479,8 +480,9 @@ struct ReaderWholeBookContinuousView: View {
         let maxY = scrollTracker.maxScrollY(fallbackViewportHeight: displaySize.height)
         let distance = max(displaySize.height * CGFloat(autoPagingDistancePercent) / 100, 1)
         let targetY = min(currentY + distance, maxY)
-        _ = scrollBridge.scroll(toY: targetY, animated: true)
-        scrollTracker.updateScrollY(targetY)
+        if scrollBridge.scroll(toY: targetY, animated: true) {
+            scrollTracker.updateScrollY(targetY)
+        }
 
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 280_000_000)

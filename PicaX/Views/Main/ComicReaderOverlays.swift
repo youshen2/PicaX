@@ -1,4 +1,3 @@
-import Combine
 import Foundation
 import SwiftUI
 #if os(iOS)
@@ -732,11 +731,27 @@ struct ReaderAutoPagingModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .onReceive(Timer.publish(every: interval, on: .main, in: .common).autoconnect()) { _ in
+            .task(id: ReaderAutoPagingSchedule(isEnabled: isEnabled, interval: interval)) {
                 guard isEnabled else { return }
-                onTick()
+
+                let boundedInterval = interval.isFinite ? min(max(interval, 0.1), 60) : 1
+                let delay = UInt64(boundedInterval * 1_000_000_000)
+                while !Task.isCancelled {
+                    do {
+                        try await Task.sleep(nanoseconds: delay)
+                    } catch {
+                        return
+                    }
+                    guard !Task.isCancelled else { return }
+                    onTick()
+                }
             }
     }
+}
+
+private struct ReaderAutoPagingSchedule: Equatable {
+    let isEnabled: Bool
+    let interval: Double
 }
 
 struct ReaderProgressSelectionDialog: View {
