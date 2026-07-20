@@ -159,7 +159,7 @@ private struct ReadingDurationListPage: View {
                     .listRowBackground(Color.clear)
             } else {
                 Section {
-                    LazyLocalForEach(items: readingDuration.records, initialCount: 48, pageSize: 48) { record in
+                    ForEach(readingDuration.records) { record in
                         NavigationLink {
                             ReadingDurationDetailPage(record: record, service: service)
                                 .picaxHidesTabBar()

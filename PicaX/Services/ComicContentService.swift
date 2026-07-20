@@ -2782,6 +2782,8 @@ actor EhentaiLazyImageResolver {
                     continue
                 }
                 return (data, httpResponse)
+            } catch where error.isTaskCancellation {
+                throw error
             } catch {
                 lastError = error
                 if attempt >= attempts - 1 {
@@ -3115,6 +3117,8 @@ private extension ComicContentService {
                     throw ComicContentError.invalidResponse("JMComic 登录响应缺少用户信息。")
                 }
                 return JmLoginInfo(baseURL: baseURL, userID: jmString(dict["uid"]))
+            } catch where error.isTaskCancellation {
+                throw error
             } catch {
                 lastError = error
             }
@@ -3277,6 +3281,8 @@ private extension ComicContentService {
         for baseURL in jmBaseURLs {
             do {
                 return try await jmJSON(path: path, method: method, body: body, cookies: cookies, baseURL: baseURL)
+            } catch where error.isTaskCancellation {
+                throw error
             } catch {
                 lastError = error
             }
@@ -3320,27 +3326,41 @@ private extension ComicContentService {
             }
             throw ComicContentError.invalidResponse("JMComic 响应缺少 data。")
         }
-        let decoded = try jmDecrypt(encrypted, time: time)
-        guard let decodedData = decoded.data(using: .utf8) else {
-            throw ComicContentError.invalidResponse("JMComic 解密结果无法转为 UTF-8。")
-        }
+        let decodedData = try await Self.decryptJmPayload(
+            encrypted,
+            time: time,
+            secret: jmSecret
+        )
         return try JSONSerialization.jsonObject(with: decodedData)
     }
 
-    func jmDecrypt(_ input: String, time: Int) throws -> String {
-        guard let encrypted = Data(base64Encoded: input) else {
-            throw ComicContentError.invalidResponse("JMComic data 不是有效 Base64。")
+    private nonisolated static func decryptJmPayload(
+        _ input: String,
+        time: Int,
+        secret: String
+    ) async throws -> Data {
+        let task = Task.detached(priority: .userInitiated) {
+            try Task.checkCancellation()
+            guard let encrypted = Data(base64Encoded: input) else {
+                throw ComicContentError.invalidResponse("JMComic data 不是有效 Base64。")
+            }
+            let key = Insecure.MD5.hash(data: Data("\(time)\(secret)".utf8))
+                .map { String(format: "%02x", $0) }
+                .joined()
+            let service = try AESECBService(key: Data(key.utf8), usesPKCS7Padding: false)
+            let decrypted = try service.decrypt(encrypted)
+            try Task.checkCancellation()
+            let text = String(decoding: decrypted, as: UTF8.self)
+            guard let end = text.lastIndex(where: { $0 == "}" || $0 == "]" }) else {
+                throw ComicContentError.invalidResponse("JMComic 解密结果缺少 JSON 结束符。")
+            }
+            return Data(text[...end].utf8)
         }
-        let key = Insecure.MD5.hash(data: Data("\(time)\(jmSecret)".utf8))
-            .map { String(format: "%02x", $0) }
-            .joined()
-        let service = try AESECBService(key: Data(key.utf8), usesPKCS7Padding: false)
-        let decrypted = try service.decrypt(encrypted)
-        let text = String(decoding: decrypted, as: UTF8.self)
-        guard let end = text.lastIndex(where: { $0 == "}" || $0 == "]" }) else {
-            throw ComicContentError.invalidResponse("JMComic 解密结果缺少 JSON 结束符。")
+        return try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
         }
-        return String(text[...end])
     }
 
     func jmDecrypt(_ input: String, secret: String) throws -> String {
@@ -3380,6 +3400,8 @@ private extension ComicContentService {
                 if !baseURLs.isEmpty {
                     return Array(baseURLs)
                 }
+            } catch where error.isTaskCancellation {
+                throw error
             } catch {
                 lastError = error
             }
@@ -3399,6 +3421,8 @@ private extension ComicContentService {
                     throw ComicContentError.invalidResponse("JMComic App 版本响应缺少 version。")
                 }
                 return version
+            } catch where error.isTaskCancellation {
+                throw error
             } catch {
                 lastError = error
             }
@@ -4135,6 +4159,8 @@ private extension ComicContentService {
                 }
 
                 return (data, response)
+            } catch where error.isTaskCancellation {
+                throw error
             } catch {
                 lastError = error
                 if attempt >= attempts - 1 {
@@ -4441,7 +4467,7 @@ private struct HitomiGGData {
     let initialG: Int
 }
 
-enum ComicContentError: LocalizedError {
+nonisolated enum ComicContentError: LocalizedError, Sendable {
     case invalidURL(String)
     case invalidResponse(String)
     case loginRequired(String)

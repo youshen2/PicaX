@@ -19,8 +19,9 @@ alt="Get it on GitHub" align="center" height="80" /></a>
 | 平台 / 系统 | 支持情况 |
 | --- | --- |
 | iOS 15 | 支持主应用核心功能 |
-| iOS 16.0 | 支持原生 SwiftUI 导航与界面能力 |
+| iOS 16.0 | 使用兼容导航实现，支持主应用核心功能 |
 | iOS 16.1+ | 支持下载进度 Live Activity |
+| iOS 17+ | 启用 SwiftUI `NavigationStack` 导航能力 |
 | iOS 26+ | 在上述功能基础上启用 Liquid Glass 视觉效果 |
 | watchOS 9+ | 支持配套 Apple Watch 应用。 |
 

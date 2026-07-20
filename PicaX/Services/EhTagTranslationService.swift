@@ -85,6 +85,10 @@ enum EhTagTranslationService {
         snapshotBox.value
     }
 
+    nonisolated static func prepare() {
+        _ = snapshot
+    }
+
     nonisolated static func translatedGroupTitle(_ title: String) -> String {
         let namespace = normalizedNamespace(title)
         return snapshot.translations["rows"]?[namespace] ?? fallbackRows[namespace] ?? title

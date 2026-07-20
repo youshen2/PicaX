@@ -12,6 +12,10 @@ struct DownloadSelectionSheet: View {
     @State private var didApplyDefaultOptions = false
 
     var body: some View {
+        let currentDownloadedIndexes = downloadedIndexes
+        let currentTask = activeTask
+        let currentAvailableIndexes = Set(detail.chapters.indices.filter { !currentDownloadedIndexes.contains($0) })
+
         PicaxNavigationContainer {
             List {
                 if detail.chapters.isEmpty {
@@ -20,7 +24,7 @@ struct DownloadSelectionSheet: View {
                 } else {
                     Section {
                         Toggle("一并下载评论区", isOn: $downloadsComments)
-                            .disabled(!detail.item.supportsComments || activeTask != nil)
+                            .disabled(!detail.item.supportsComments || currentTask != nil)
                     } footer: {
                         Text(detail.item.supportsComments ? "详情评论和章节评论会保存到本地。" : "当前来源不支持评论区下载。")
                     }
@@ -31,8 +35,8 @@ struct DownloadSelectionSheet: View {
                                 chapter: chapter,
                                 index: index,
                                 isSelected: selectedIndexes.contains(index),
-                                isDownloaded: downloadedIndexes.contains(index),
-                                isDisabled: isSelectionDisabled
+                                isDownloaded: currentDownloadedIndexes.contains(index),
+                                isDisabled: currentTask != nil
                             )
                             .contentShape(Rectangle())
                             .onTapGesture {
@@ -42,7 +46,7 @@ struct DownloadSelectionSheet: View {
                     } header: {
                         Text(detail.item.title)
                     } footer: {
-                        if let task = activeTask {
+                        if let task = currentTask {
                             Text(task.statusText)
                         }
                     }
@@ -66,11 +70,11 @@ struct DownloadSelectionSheet: View {
                 DownloadSelectionFooter(
                     message: message,
                     selectedCount: selectedIndexes.count,
-                    canDownloadAll: activeTask == nil && !availableIndexes.isEmpty,
-                    canDownloadSelected: activeTask == nil && !selectedIndexes.isEmpty,
-                    isActive: activeTask != nil,
+                    canDownloadAll: currentTask == nil && !currentAvailableIndexes.isEmpty,
+                    canDownloadSelected: currentTask == nil && !selectedIndexes.isEmpty,
+                    isActive: currentTask != nil,
                     downloadAll: {
-                        enqueue(Array(availableIndexes))
+                        enqueue(Array(currentAvailableIndexes))
                     },
                     downloadSelected: {
                         enqueue(Array(selectedIndexes))
@@ -83,7 +87,9 @@ struct DownloadSelectionSheet: View {
                     didApplyDefaultOptions = true
                 }
 
-                if selectedIndexes.isEmpty, availableIndexes.count == 1, let onlyIndex = availableIndexes.first {
+                if selectedIndexes.isEmpty,
+                   currentAvailableIndexes.count == 1,
+                   let onlyIndex = currentAvailableIndexes.first {
                     selectedIndexes = [onlyIndex]
                 }
             }
@@ -100,10 +106,6 @@ struct DownloadSelectionSheet: View {
 
     private var availableIndexes: Set<Int> {
         Set(detail.chapters.indices.filter { !downloadedIndexes.contains($0) })
-    }
-
-    private var isSelectionDisabled: Bool {
-        activeTask != nil
     }
 
     private func toggle(_ index: Int) {

@@ -2,7 +2,7 @@ import CryptoKit
 import Foundation
 import ImageIO
 
-struct ImageCacheUsage: Equatable {
+struct ImageCacheUsage: Equatable, Sendable {
     let memoryBytes: Int
     let diskBytes: Int
 
@@ -15,6 +15,8 @@ enum ImageCacheService {
     nonisolated static let defaultMaxDiskSizeMB = 400
     nonisolated private static let lock = NSLock()
     nonisolated(unsafe) private static var diskCapacityBytes = defaultMaxDiskSizeMB * 1024 * 1024
+    nonisolated(unsafe) private static var isStoreTrimScheduled = false
+    private static var activeTrimTask: Task<Void, Never>?
     private static let uncachedSession: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
@@ -24,7 +26,8 @@ enum ImageCacheService {
     }()
 
     @MainActor
-    static func configure(defaults: UserDefaults = .standard) {
+    @discardableResult
+    static func configure(defaults: UserDefaults = .standard) -> Task<Void, Never> {
         if defaults.object(forKey: ImageCacheSettingsKey.maxDiskSizeMB) == nil {
             defaults.set(defaultMaxDiskSizeMB, forKey: ImageCacheSettingsKey.maxDiskSizeMB)
         }
@@ -36,25 +39,37 @@ enum ImageCacheService {
         withDiskCacheLock {
             diskCapacityBytes = diskCapacity
             prepareDiskCacheDirectoryLocked()
-            trimDiskCacheIfNeededLocked()
         }
+        activeTrimTask?.cancel()
+        let trimTask = Task.detached(priority: .utility) {
+            guard !Task.isCancelled else { return }
+            withDiskCacheLock {
+                trimDiskCacheIfNeededLocked()
+            }
+        }
+        activeTrimTask = trimTask
+        return trimTask
     }
 
     @MainActor
-    static func clear() {
+    static func clear() async {
+        activeTrimTask?.cancel()
         URLCache.shared.removeAllCachedResponses()
-        withDiskCacheLock {
-            let directoryURL = cacheDirectoryURL
-            try? FileManager.default.removeItem(at: directoryURL)
-            prepareDiskCacheDirectoryLocked()
-        }
+        await Task.detached(priority: .utility) {
+            withDiskCacheLock {
+                let directoryURL = cacheDirectoryURL
+                try? FileManager.default.removeItem(at: directoryURL)
+                prepareDiskCacheDirectoryLocked()
+            }
+        }.value
     }
 
-    @MainActor
-    static var usage: ImageCacheUsage {
-        withDiskCacheLock {
-            ImageCacheUsage(memoryBytes: 0, diskBytes: Int(min(diskUsageBytesLocked(), Int64(Int.max))))
-        }
+    nonisolated static func usage() async -> ImageCacheUsage {
+        await Task.detached(priority: .utility) {
+            withDiskCacheLock {
+                ImageCacheUsage(memoryBytes: 0, diskBytes: Int(min(diskUsageBytesLocked(), Int64(Int.max))))
+            }
+        }.value
     }
 
     nonisolated static func formattedSize(_ bytes: Int) -> String {
@@ -115,13 +130,17 @@ enum ImageCacheService {
               isDecodableImageData(data) else {
             return
         }
-        withDiskCacheLock {
+        let shouldScheduleTrim = withDiskCacheLock {
             prepareDiskCacheDirectoryLocked()
             let fileURL = cacheFileURL(for: url)
             try? data.write(to: fileURL, options: [.atomic])
             touchCacheFileLocked(fileURL)
-            trimDiskCacheIfNeededLocked()
+            guard !isStoreTrimScheduled else { return false }
+            isStoreTrimScheduled = true
+            return true
         }
+        guard shouldScheduleTrim else { return }
+        scheduleStoreTrim()
     }
 
     nonisolated static func removeCachedImageData(for url: URL) {
@@ -201,6 +220,16 @@ enum ImageCacheService {
         return try body()
     }
 
+    private nonisolated static func scheduleStoreTrim() {
+        Task.detached(priority: .utility) {
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            withDiskCacheLock {
+                defer { isStoreTrimScheduled = false }
+                trimDiskCacheIfNeededLocked()
+            }
+        }
+    }
+
     private nonisolated static var cacheDirectoryURL: URL {
         let baseURL = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
@@ -226,11 +255,13 @@ enum ImageCacheService {
     }
 
     private nonisolated static func trimDiskCacheIfNeededLocked() {
+        guard !Task.isCancelled else { return }
         let files = cacheFilesLocked()
         var totalBytes = files.reduce(Int64(0)) { $0 + $1.byteCount }
         guard totalBytes > Int64(diskCapacityBytes) else { return }
 
         for file in files.sorted(by: { $0.modificationDate < $1.modificationDate }) {
+            guard !Task.isCancelled else { return }
             try? FileManager.default.removeItem(at: file.url)
             totalBytes -= file.byteCount
             if totalBytes <= Int64(diskCapacityBytes) {

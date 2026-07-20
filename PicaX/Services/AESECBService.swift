@@ -1,7 +1,7 @@
 import CryptoSwift
 import Foundation
 
-enum AESECBError: LocalizedError {
+nonisolated enum AESECBError: LocalizedError, Sendable {
     case invalidKeyLength(Int)
 
     var errorDescription: String? {
@@ -12,7 +12,7 @@ enum AESECBError: LocalizedError {
     }
 }
 
-struct AESECBService {
+nonisolated struct AESECBService {
     private let key: [UInt8]
     private let padding: Padding
 

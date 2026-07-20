@@ -573,13 +573,13 @@ struct ComicListSection: View {
 
     private func makeSnapshotRequest() -> ComicListSnapshotRequest {
         let readingRecordsByID = readingHistory.activeReadingRecordsByID
-        let readLaterIDs = Set(readLater.records.map(\.id))
+        let readLaterIDs = readLater.allRecordIDs
         let blockingMatcher = blockingKeywords.commonKeywordMatcher
         return ComicListSnapshotRequest(
             key: ComicListSnapshotKey(
                 comics: comics,
-                readingRecordsByID: readingRecordsByID,
-                readLaterIDs: readLaterIDs,
+                readingRecordsRevision: readingHistory.snapshotRevision,
+                readLaterRevision: readLater.snapshotRevision,
                 blockingMatcher: blockingMatcher,
                 appliesBlocking: appliesBlocking,
                 appliesReadProgressFilter: appliesReadProgressFilter,
@@ -1332,8 +1332,8 @@ private struct ComicListSnapshotKey: Hashable, Sendable {
     let comicsCount: Int
     let comicsHash: Int
     let sourcePrefix: [ComicListSourceItemIdentity]
-    let readingRecordsHash: Int
-    let readLaterIDsHash: Int
+    let readingRecordsRevision: Int
+    let readLaterRevision: Int
     let blockingFingerprint: Int
     let appliesBlocking: Bool
     let appliesReadProgressFilter: Bool
@@ -1347,8 +1347,8 @@ private struct ComicListSnapshotKey: Hashable, Sendable {
         comicsCount: 0,
         comicsHash: 0,
         sourcePrefix: [],
-        readingRecordsHash: 0,
-        readLaterIDsHash: 0,
+        readingRecordsRevision: 0,
+        readLaterRevision: 0,
         blockingFingerprint: 0,
         appliesBlocking: false,
         appliesReadProgressFilter: false,
@@ -1361,8 +1361,8 @@ private struct ComicListSnapshotKey: Hashable, Sendable {
 
     init(
         comics: [ComicListItem],
-        readingRecordsByID: [String: ReadingHistoryRecord],
-        readLaterIDs: Set<String>,
+        readingRecordsRevision: Int,
+        readLaterRevision: Int,
         blockingMatcher: BlockingKeywordMatcher,
         appliesBlocking: Bool,
         appliesReadProgressFilter: Bool,
@@ -1377,8 +1377,8 @@ private struct ComicListSnapshotKey: Hashable, Sendable {
         comicsCount = comics.count
         comicsHash = Self.comicsHash(comics)
         sourcePrefix = Self.sourcePrefix(for: comics)
-        readingRecordsHash = Self.readingRecordsHash(readingRecordsByID)
-        readLaterIDsHash = filtersReadLater ? Self.readLaterIDsHash(readLaterIDs) : 0
+        self.readingRecordsRevision = readingRecordsRevision
+        self.readLaterRevision = filtersReadLater ? readLaterRevision : 0
         blockingFingerprint = appliesBlocking ? blockingMatcher.fingerprint : 0
         self.appliesBlocking = appliesBlocking
         self.appliesReadProgressFilter = appliesReadProgressFilter
@@ -1393,8 +1393,8 @@ private struct ComicListSnapshotKey: Hashable, Sendable {
         comicsCount: Int,
         comicsHash: Int,
         sourcePrefix: [ComicListSourceItemIdentity],
-        readingRecordsHash: Int,
-        readLaterIDsHash: Int,
+        readingRecordsRevision: Int,
+        readLaterRevision: Int,
         blockingFingerprint: Int,
         appliesBlocking: Bool,
         appliesReadProgressFilter: Bool,
@@ -1407,8 +1407,8 @@ private struct ComicListSnapshotKey: Hashable, Sendable {
         self.comicsCount = comicsCount
         self.comicsHash = comicsHash
         self.sourcePrefix = sourcePrefix
-        self.readingRecordsHash = readingRecordsHash
-        self.readLaterIDsHash = readLaterIDsHash
+        self.readingRecordsRevision = readingRecordsRevision
+        self.readLaterRevision = readLaterRevision
         self.blockingFingerprint = blockingFingerprint
         self.appliesBlocking = appliesBlocking
         self.appliesReadProgressFilter = appliesReadProgressFilter
@@ -1437,13 +1437,13 @@ private struct ComicListSnapshotKey: Hashable, Sendable {
 
         if appliesReadProgressFilter,
            hidesReadComicsInLists,
-           readingRecordsHash != requestKey.readingRecordsHash {
+           readingRecordsRevision != requestKey.readingRecordsRevision {
             return false
         }
 
         if appliesReadLaterFilter,
            hidesReadLaterComicsInLists,
-           readLaterIDsHash != requestKey.readLaterIDsHash {
+           readLaterRevision != requestKey.readLaterRevision {
             return false
         }
 
@@ -1489,38 +1489,6 @@ private struct ComicListSnapshotKey: Hashable, Sendable {
         comics.prefix(sourcePrefixLimit).map(ComicListSourceItemIdentity.init)
     }
 
-    private nonisolated static func readingRecordsHash(_ records: [String: ReadingHistoryRecord]) -> Int {
-        var hasher = Hasher()
-        hasher.combine(records.count)
-        for id in records.keys.sorted() {
-            guard let record = records[id] else { continue }
-            hasher.combine(id)
-            hasher.combine(record.viewedAt.timeIntervalSinceReferenceDate)
-            if let progress = record.progress {
-                hasher.combine(progress.status.rawValue)
-                hasher.combine(progress.chapterIndex)
-                hasher.combine(progress.pageIndex)
-                hasher.combine(progress.totalPages)
-                hasher.combine(progress.totalChapters)
-                hasher.combine(progress.updatedAt.timeIntervalSinceReferenceDate)
-                for chapterIndex in progress.readChapterIndexes.sorted() {
-                    hasher.combine(chapterIndex)
-                }
-            } else {
-                hasher.combine("none")
-            }
-        }
-        return hasher.finalize()
-    }
-
-    private nonisolated static func readLaterIDsHash(_ ids: Set<String>) -> Int {
-        var hasher = Hasher()
-        hasher.combine(ids.count)
-        for id in ids.sorted() {
-            hasher.combine(id)
-        }
-        return hasher.finalize()
-    }
 }
 
 private struct ComicListSourceItemIdentity: Hashable, Sendable {
@@ -2516,7 +2484,7 @@ private struct SearchHistoryListView: View {
     var body: some View {
         List {
             Section("搜索历史") {
-                LazyLocalForEach(items: records, initialCount: 48, pageSize: 48) { record in
+                ForEach(records) { record in
                     Button {
                         onSelect(record)
                     } label: {

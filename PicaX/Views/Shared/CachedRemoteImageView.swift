@@ -98,7 +98,7 @@ enum CoverColorSampler {
     }
 
     private nonisolated static func sampleComponents(data: Data) async -> CoverRGBSample? {
-        await Task.detached(priority: .utility) {
+        let task = Task<CoverRGBSample?, Never>.detached(priority: .utility) {
             guard !Task.isCancelled,
                   let source = CGImageSourceCreateWithData(data as CFData, nil) else {
                 return nil
@@ -160,7 +160,12 @@ enum CoverColorSampler {
                 green: min(max(green / weight / 255.0, 0), 1),
                 blue: min(max(blue / weight / 255.0, 0), 1)
             )
-        }.value
+        }
+        return await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
     }
 
     private nonisolated static func boostedAccentComponents(from sample: CoverRGBSample) -> CachedCoverColor {
@@ -263,16 +268,20 @@ private enum CachedRemoteImageDecoder {
         var data = try await ImageCacheService.data(for: url, storesInCache: storesInCache)
         guard !Task.isCancelled else { throw CancellationError() }
         let decoded: CachedDecodedRemoteImage
+        var shouldRepairDiskCache = false
         do {
             decoded = try await decode(data: data, maxPixelSize: maxPixelSize)
+        } catch where error.isTaskCancellation {
+            throw error
         } catch {
             guard storesInCache else { throw error }
             ImageCacheService.removeCachedImageData(for: url)
             data = try await ImageCacheService.data(for: url, storesInCache: false)
             guard !Task.isCancelled else { throw CancellationError() }
             decoded = try await decode(data: data, maxPixelSize: maxPixelSize)
+            shouldRepairDiskCache = true
         }
-        if storesInCache {
+        if shouldRepairDiskCache {
             ImageCacheService.storeDecodedImageData(data, for: url)
         }
         if usesMemoryCache {
@@ -282,13 +291,19 @@ private enum CachedRemoteImageDecoder {
     }
 
     private nonisolated static func decode(data: Data, maxPixelSize: Int?) async throws -> CachedDecodedRemoteImage {
-        try await Task.detached(priority: .utility) {
+        let task = Task.detached(priority: .utility) {
+            try Task.checkCancellation()
             let image = downsampledImage(data: data, maxPixelSize: maxPixelSize) ?? PicaXPlatformImage.picaxImage(data: data)
             guard let image else {
                 throw URLError(.cannotDecodeContentData)
             }
             return CachedDecodedRemoteImage(image: image)
-        }.value
+        }
+        return try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
     }
 
     private nonisolated static func downsampledImage(data: Data, maxPixelSize: Int?) -> PicaXPlatformImage? {

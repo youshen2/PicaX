@@ -10,7 +10,9 @@ struct PicaxNavigationContainer<Content: View>: View {
     @ViewBuilder
     var body: some View {
         #if os(iOS)
-        if #available(iOS 16.0, *) {
+        // iOS 16 can enter an update cycle when this hierarchy combines
+        // NavigationStack with several nested programmatic destinations.
+        if #available(iOS 17.0, *) {
             NavigationStack {
                 content
             }

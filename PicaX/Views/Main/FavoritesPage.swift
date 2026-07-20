@@ -665,7 +665,7 @@ private struct FavoriteDownloadAllSheet: View {
                     ContentUnavailableView("暂无收藏", systemImage: context.systemImage)
                         .listRowBackground(Color.clear)
                 } else {
-                    LazyLocalForEach(items: items, initialCount: 32, pageSize: 32) { item in
+                    ForEach(items, id: \.readingHistoryID) { item in
                         FavoriteDownloadComicRow(
                             item: item,
                             statusText: statusText(for: item)
@@ -758,11 +758,10 @@ private struct FavoriteDownloadAllSheet: View {
 
     private func enqueue(_ items: [ComicListItem]) {
         var summary = FavoriteDownloadAllSummary()
-        for item in items {
-            let result = downloadService.enqueue(
-                item: item,
-                downloadsComments: downloadsComments && item.supportsComments
-            )
+        let results = downloadService.enqueue(items: items) { item in
+            downloadsComments && item.supportsComments
+        }
+        for result in results {
             summary.record(result)
         }
 

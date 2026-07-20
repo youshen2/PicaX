@@ -112,7 +112,7 @@ struct ReadLaterListPage: View {
                     .listRowBackground(Color.clear)
             } else {
                 Section {
-                    LazyLocalForEach(items: readLater.records, initialCount: 48, pageSize: 48) { record in
+                    ForEach(readLater.records) { record in
                         NavigationLink {
                             ComicDetailPage(item: record.item, service: service)
                                 .picaxHidesTabBar()
@@ -191,11 +191,11 @@ struct ReadLaterListPage: View {
 
     private func downloadAll() {
         var summary = ReadLaterDownloadSummary()
-        for record in readLater.records {
-            let result = downloadService.enqueue(
-                item: record.item,
-                downloadsComments: downloadsCommentsByDefault && record.item.supportsComments
-            )
+        let items = readLater.records.map(\.item)
+        let results = downloadService.enqueue(items: items) { item in
+            downloadsCommentsByDefault && item.supportsComments
+        }
+        for result in results {
             summary.record(result)
         }
         downloadFeedback = summary.feedback(total: readLater.records.count)

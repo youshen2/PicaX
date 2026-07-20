@@ -83,6 +83,7 @@ final class ReadingHistoryService: ObservableObject {
     private let defaults: UserDefaults
     private var recordsByID: [String: ReadingHistoryRecord] = [:]
     private var readingRecordsByID: [String: ReadingHistoryRecord] = [:]
+    private(set) var snapshotRevision = 0
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -177,25 +178,25 @@ final class ReadingHistoryService: ObservableObject {
     private func upsert(item: ComicListItem, update: (inout ReadingHistoryRecord) -> Void) {
         let id = item.readingHistoryID
         let previousIDs = Set(records.map(\.id))
-        if let index = records.firstIndex(where: { $0.id == id }) {
-            var record = records[index]
+        var nextRecords = records
+        if let index = nextRecords.firstIndex(where: { $0.id == id }) {
+            var record = nextRecords.remove(at: index)
             update(&record)
-            if index == 0 {
-                records[0] = record
-            } else {
-                records.remove(at: index)
-                records.insert(record, at: 0)
-            }
+            nextRecords.insert(record, at: 0)
         } else {
             var record = ReadingHistoryRecord(item: item, viewedAt: Date(), progress: nil)
             update(&record)
-            records.insert(record, at: 0)
+            nextRecords.insert(record, at: 0)
         }
-        trimToLimit()
-        if let record = records.first(where: { $0.id == id }) {
+        let maxRecords = max(defaults.integer(forKey: Key.maxRecords), 1)
+        if nextRecords.count > maxRecords {
+            nextRecords = Array(nextRecords.prefix(maxRecords))
+        }
+        records = nextRecords
+        if let record = nextRecords.first, record.id == id {
             PicaXSQLiteStore.upsertReadingHistory(record)
         }
-        let currentIDs = Set(records.map(\.id))
+        let currentIDs = Set(nextRecords.map(\.id))
         for removedID in previousIDs.subtracting(currentIDs) {
             PicaXSQLiteStore.deleteReadingHistory(id: removedID)
         }
@@ -225,6 +226,7 @@ final class ReadingHistoryService: ObservableObject {
     private func rebuildIndexes() {
         recordsByID = Dictionary(uniqueKeysWithValues: records.map { ($0.id, $0) })
         readingRecordsByID = recordsByID.filter { $0.value.isReadingRecord }
+        snapshotRevision &+= 1
     }
 }
 
@@ -274,6 +276,8 @@ final class ReadLaterService: ObservableObject {
 
     private let defaults: UserDefaults
     private var recordsByID: [String: ReadLaterRecord] = [:]
+    private var recordIDs: Set<String> = []
+    private(set) var snapshotRevision = 0
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -299,15 +303,31 @@ final class ReadLaterService: ObservableObject {
         record(for: item) != nil
     }
 
+    var allRecordIDs: Set<String> {
+        recordIDs
+    }
+
     func add(_ item: ComicListItem) {
         let id = item.readingHistoryID
         let record = ReadLaterRecord(item: item, addedAt: Date())
-        if let index = records.firstIndex(where: { $0.id == id }) {
-            records.remove(at: index)
+        var nextRecords = records
+        if let index = nextRecords.firstIndex(where: { $0.id == id }) {
+            nextRecords.remove(at: index)
         }
-        records.insert(record, at: 0)
-        trimToLimit()
+        nextRecords.insert(record, at: 0)
+        let maxRecords = max(defaults.integer(forKey: Key.maxRecords), 1)
+        let removedRecords: ArraySlice<ReadLaterRecord>
+        if nextRecords.count > maxRecords {
+            removedRecords = nextRecords.suffix(from: maxRecords)
+            nextRecords = Array(nextRecords.prefix(maxRecords))
+        } else {
+            removedRecords = []
+        }
+        records = nextRecords
         PicaXSQLiteStore.upsertReadLater(record)
+        for removedRecord in removedRecords {
+            PicaXSQLiteStore.deleteReadLater(id: removedRecord.id)
+        }
     }
 
     func toggle(_ item: ComicListItem) {
@@ -356,5 +376,7 @@ final class ReadLaterService: ObservableObject {
 
     private func rebuildIndexes() {
         recordsByID = Dictionary(uniqueKeysWithValues: records.map { ($0.id, $0) })
+        recordIDs = Set(recordsByID.keys)
+        snapshotRevision &+= 1
     }
 }

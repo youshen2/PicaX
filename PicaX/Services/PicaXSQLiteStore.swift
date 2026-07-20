@@ -338,9 +338,10 @@ enum PicaXSQLiteStore {
         db.transaction {
             db.execute("DELETE FROM local_favorites WHERE folder_id = ?", bindings: [.text(folderID)])
             for favorite in favorites {
-                upsertLocalFavorite(favorite, folderID: folderID)
+                upsertLocalFavorite(favorite, folderID: folderID, notify: false)
             }
         }
+        NotificationCenter.default.post(name: .picaxLocalFavoritesDidChange, object: nil)
     }
 
     static func upsertLocalFavorite(_ favorite: StoredLocalFavorite, folderID: String, notify: Bool = true) {
@@ -364,6 +365,15 @@ enum PicaXSQLiteStore {
 
     static func loadFollowUpdateRecords() -> [FollowUpdateRecord] {
         loadValues("SELECT value FROM follow_updates ORDER BY sort_date DESC")
+    }
+
+    static func upsertFollowUpdateRecord(_ record: FollowUpdateRecord) {
+        upsert(
+            table: "follow_updates",
+            id: record.id,
+            sortDate: record.lastCheckDate ?? .distantPast,
+            value: record
+        )
     }
 
     static func replaceFollowUpdateRecords(_ records: [FollowUpdateRecord]) {
@@ -432,7 +442,7 @@ enum PicaXSQLiteStore {
         }
     }
 
-    static func bytes(for table: SQLiteBackedTable) -> Int {
+    nonisolated static func bytes(for table: SQLiteBackedTable) -> Int {
         db.tableBytes(table.rawValue)
     }
 
@@ -481,7 +491,7 @@ enum PicaXSQLiteStore {
     }
 }
 
-enum SQLiteBackedTable: String {
+enum SQLiteBackedTable: String, Sendable {
     case readingHistory = "reading_history"
     case readLater = "read_later"
     case readingDuration = "reading_duration"

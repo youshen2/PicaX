@@ -868,8 +868,11 @@ enum ReaderImageDecoder {
             await onAspectRatioResolved?(aspectRatio)
         }
         let decoded: ReaderDecodedImage
+        var shouldRepairDiskCache = false
         do {
             decoded = try await decode(data: data, url: url, targetPixelWidth: targetPixelWidth, priority: decodePriority)
+        } catch where error.isTaskCancellation {
+            throw error
         } catch {
             ImageCacheService.removeCachedImageData(for: url)
             data = try await ImageCacheService.data(for: url, storesInCache: false)
@@ -878,8 +881,11 @@ enum ReaderImageDecoder {
                 await onAspectRatioResolved?(aspectRatio)
             }
             decoded = try await decode(data: data, url: url, targetPixelWidth: targetPixelWidth, priority: decodePriority)
+            shouldRepairDiskCache = true
         }
-        ImageCacheService.storeDecodedImageData(data, for: url)
+        if shouldRepairDiskCache {
+            ImageCacheService.storeDecodedImageData(data, for: url)
+        }
         if usesMemoryCache {
             ReaderImageMemoryCache.store(decoded, key: cacheKey)
         }
@@ -900,7 +906,7 @@ enum ReaderImageDecoder {
     }
 
     private nonisolated static func decode(data: Data, url: URL, targetPixelWidth: Int?, priority: TaskPriority) async throws -> ReaderDecodedImage {
-        try await Task.detached(priority: priority) {
+        let task = Task.detached(priority: priority) {
             if Task.isCancelled {
                 throw CancellationError()
             }
@@ -915,7 +921,12 @@ enum ReaderImageDecoder {
                 throw URLError(.cannotDecodeContentData)
             }
             return ReaderDecodedImage(image: image)
-        }.value
+        }
+        return try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
     }
 
     nonisolated static func downsampledImage(data: Data, targetPixelWidth: Int?) -> PicaXPlatformImage? {

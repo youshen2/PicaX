@@ -245,7 +245,7 @@ final class FollowUpdatesService: ObservableObject {
                     errors: progress.errors + 1
                 )
             }
-            persist()
+            PicaXSQLiteStore.upsertFollowUpdateRecord(records[index])
         }
         sortRecords()
         persist()

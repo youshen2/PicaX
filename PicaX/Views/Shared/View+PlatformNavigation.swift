@@ -34,7 +34,8 @@ extension View {
         @ViewBuilder destination: @escaping (Item) -> Destination
     ) -> some View {
         #if os(iOS)
-        if #available(iOS 16.0, *) {
+        // Keep the destination mechanism aligned with PicaxNavigationContainer.
+        if #available(iOS 17.0, *) {
             navigationDestination(isPresented: item.isPresent()) {
                 destinationContent(item: item, destination: destination)
             }

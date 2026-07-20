@@ -8,6 +8,10 @@ struct DownloadedComicDetailPage: View {
     @State private var commentSheet: DownloadedLocalCommentSheetContext?
 
     var body: some View {
+        let downloadedChaptersByIndex = record.chapters.reduce(into: [Int: DownloadedChapterRecord]()) { result, chapter in
+            result[chapter.index] = chapter
+        }
+
         List {
             Section {
                 DownloadedComicLocalHeader(record: record, coverURL: localCoverURL)
@@ -72,7 +76,7 @@ struct DownloadedComicDetailPage: View {
                 ForEach(Array(localChapters.enumerated()), id: \.element.id) { index, chapter in
                     DownloadedLocalChapterRow(
                         chapter: chapter,
-                        downloadedChapter: downloadedChapterRecord(for: index),
+                        downloadedChapter: downloadedChaptersByIndex[index],
                         accentColor: record.item.accentColor
                     )
                 }
@@ -129,10 +133,6 @@ struct DownloadedComicDetailPage: View {
             return chapters
         }
         return record.chapters.map(\.chapter)
-    }
-
-    private func downloadedChapterRecord(for index: Int) -> DownloadedChapterRecord? {
-        record.chapters.first { $0.index == index }
     }
 
 }

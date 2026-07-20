@@ -106,7 +106,7 @@ private struct ReadingHistoryListPage: View {
                     .listRowBackground(Color.clear)
             } else {
                 Section {
-                    LazyLocalForEach(items: readingHistory.records, initialCount: 48, pageSize: 48) { record in
+                    ForEach(readingHistory.records) { record in
                         NavigationLink {
                             ComicDetailPage(item: record.item, service: service)
                                 .picaxHidesTabBar()

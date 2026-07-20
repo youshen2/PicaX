@@ -229,7 +229,7 @@ enum DownloadEnqueueResult: Equatable {
     }
 }
 
-struct DownloadStorageUsage: Equatable {
+struct DownloadStorageUsage: Equatable, Sendable {
     let filesBytes: Int64
     let recordsBytes: Int
     let tasksBytes: Int
@@ -382,6 +382,8 @@ final class DownloadService: ObservableObject {
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
     private var workerTask: Task<Void, Never>?
+    private var lastTaskProgressPublicationDate = Date.distantPast
+    private var lastProgressPresentationRefreshDate = Date.distantPast
     private var accountProvider: ((ComicPlatform) -> PlatformAccount?)?
     #if os(iOS)
     private lazy var backgroundExecution = DownloadBackgroundExecutionController { [weak self] in
@@ -563,6 +565,43 @@ final class DownloadService: ObservableObject {
         return .queued(0)
     }
 
+    func enqueue(
+        items: [ComicListItem],
+        downloadsComments: (ComicListItem) -> Bool
+    ) -> [DownloadEnqueueResult] {
+        guard !items.isEmpty else { return [] }
+
+        var taskIDs = Set(tasks.map { downloadID(for: $0.item) })
+        let completedRecordIDs = Set(records.lazy.filter { record in
+            record.totalChapterCount > 0 && record.chapters.count >= record.totalChapterCount
+        }.map(\.id))
+        var queuedTasks: [ComicDownloadTask] = []
+        queuedTasks.reserveCapacity(items.count)
+
+        let results = items.map { item -> DownloadEnqueueResult in
+            let id = downloadID(for: item)
+            guard !taskIDs.contains(id) else {
+                return .alreadyDownloading
+            }
+            guard !completedRecordIDs.contains(id) else {
+                return .alreadyDownloaded
+            }
+
+            taskIDs.insert(id)
+            queuedTasks.append(ComicDownloadTask(
+                item: item,
+                downloadsComments: downloadsComments(item)
+            ))
+            return .queued(0)
+        }
+
+        guard !queuedTasks.isEmpty else { return results }
+        tasks.append(contentsOf: queuedTasks)
+        saveTasks()
+        startIfNeeded()
+        return results
+    }
+
     func retry(_ task: ComicDownloadTask) {
         updateTask(task.id) { value in
             value.status = .queued
@@ -659,15 +698,26 @@ final class DownloadService: ObservableObject {
 
     func refreshProgressPresentation() {
         #if os(iOS)
+        lastProgressPresentationRefreshDate = Date()
         progressPresentationService.update(tasks: tasks)
+        #endif
+    }
+
+    private func refreshProgressPresentationIfNeeded() {
+        #if os(iOS)
+        guard Date().timeIntervalSince(lastProgressPresentationRefreshDate) >= 1 else { return }
+        refreshProgressPresentation()
         #endif
     }
 
     func storageUsage() async -> DownloadStorageUsage {
         let filesBytes = await Self.downloadsDirectorySize()
+        let recordsBytes = await Task.detached(priority: .utility) {
+            PicaXSQLiteStore.bytes(for: .downloadRecords)
+        }.value
         return DownloadStorageUsage(
             filesBytes: filesBytes,
-            recordsBytes: PicaXSQLiteStore.bytes(for: .downloadRecords),
+            recordsBytes: recordsBytes,
             tasksBytes: defaults.data(forKey: DownloadSettingsKey.tasks)?.count ?? 0
         )
     }
@@ -1010,6 +1060,7 @@ final class DownloadService: ObservableObject {
         let imageConcurrency = min(maxConcurrentImageDownloads, max(images.count, 1))
         var nextPageIndex = 0
         var completedPageCount = 0
+        var pendingDownloadedBytes: Int64 = 0
 
         try await withThrowingTaskGroup(of: DownloadedImagePageResult.self) { group in
             func enqueueNextPage() {
@@ -1036,12 +1087,20 @@ final class DownloadService: ObservableObject {
             while let result = try await group.next() {
                 totalBytes += Int64(result.byteCount)
                 completedPageCount += 1
-                updateTask(taskID) { value in
-                    value.currentPageIndex = completedPageCount
-                    value.currentPageCount = images.count
-                    value.downloadedBytes += Int64(result.byteCount)
+                pendingDownloadedBytes += Int64(result.byteCount)
+                let now = Date()
+                let shouldPublishProgress = completedPageCount == images.count
+                    || now.timeIntervalSince(lastTaskProgressPublicationDate) >= 0.25
+                if shouldPublishProgress {
+                    updateTask(taskID) { value in
+                        value.currentPageIndex = completedPageCount
+                        value.currentPageCount = images.count
+                        value.downloadedBytes += pendingDownloadedBytes
+                    }
+                    pendingDownloadedBytes = 0
+                    lastTaskProgressPublicationDate = now
+                    refreshProgressPresentationIfNeeded()
                 }
-                saveTasks()
                 enqueueNextPage()
             }
         }
@@ -1071,10 +1130,12 @@ final class DownloadService: ObservableObject {
         let storageImage: JmImageScrambler.DecodedStorageImage
         if tasks.first(where: { $0.id == taskID })?.item.platform == .jmComic,
            let imageURL = URL.picaxResolved(from: urlString) {
-            storageImage = try JmImageScrambler.decodedDataForStorage(data: downloadedData, url: imageURL)
+            storageImage = try await Self.decodeJmImageForStorage(data: downloadedData, url: imageURL)
         } else {
             storageImage = JmImageScrambler.DecodedStorageImage(data: downloadedData, fileExtension: nil)
         }
+        try Task.checkCancellation()
+        try checkTaskCanContinue(taskID)
         let pageURL = directoryURL.appendingPathComponent(
             fileName(
                 for: urlString,
@@ -1171,9 +1232,11 @@ final class DownloadService: ObservableObject {
         }
         record.updatedAt = Date()
 
-        records.removeAll { $0.id == id }
-        records.insert(record, at: 0)
-        records.sort { $0.updatedAt > $1.updatedAt }
+        var nextRecords = records
+        nextRecords.removeAll { $0.id == id }
+        nextRecords.insert(record, at: 0)
+        nextRecords.sort { $0.updatedAt > $1.updatedAt }
+        records = nextRecords
         PicaXSQLiteStore.upsertDownloadRecord(record)
     }
 
@@ -1362,9 +1425,33 @@ final class DownloadService: ObservableObject {
     }
 
     private nonisolated static func write(_ data: Data, to url: URL) async throws {
-        try await Task.detached(priority: .utility) {
+        let task = Task.detached(priority: .utility) {
+            try Task.checkCancellation()
             try data.write(to: url, options: .atomic)
-        }.value
+            try Task.checkCancellation()
+        }
+        try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
+    }
+
+    private nonisolated static func decodeJmImageForStorage(
+        data: Data,
+        url: URL
+    ) async throws -> JmImageScrambler.DecodedStorageImage {
+        let task = Task.detached(priority: .utility) {
+            try Task.checkCancellation()
+            let decoded = try JmImageScrambler.decodedDataForStorage(data: data, url: url)
+            try Task.checkCancellation()
+            return decoded
+        }
+        return try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
     }
 
     private nonisolated static func makeArchiveExport(for record: DownloadRecord, fileNameTemplate: String) async throws -> DownloadArchiveExport {

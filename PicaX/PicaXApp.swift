@@ -23,6 +23,8 @@ struct PicaXApp: App {
     @StateObject private var webDAVSyncService = WebDAVSyncService()
     #if os(iOS)
     @StateObject private var phoneWatchAccountSyncService = PhoneWatchAccountSyncService()
+    @AppStorage(WatchConnectivitySettingsKey.syncsLocalFavorites) private var syncsLocalFavorites = true
+    @AppStorage(WatchConnectivitySettingsKey.syncsReadLater) private var syncsReadLater = true
     #endif
 
     var body: some Scene {
@@ -46,6 +48,10 @@ struct PicaXApp: App {
                 .environmentObject(followUpdatesService)
                 .environmentObject(webDAVSyncService)
                 .task {
+                    Task.detached(priority: .utility) {
+                        EhTagTranslationService.prepare()
+                        NhentaiTagSuggestionService.prepare()
+                    }
                     ImageCacheService.configure()
                     ComicDetailCacheService.configure()
                     downloadService.configure { platform in
@@ -96,7 +102,10 @@ struct PicaXApp: App {
                 readLaterService.reloadFromDefaults()
                 syncAccountsToWatch()
             }
-            .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)) { _ in
+            .onChange(of: syncsLocalFavorites) { _ in
+                syncAccountsToWatch()
+            }
+            .onChange(of: syncsReadLater) { _ in
                 syncAccountsToWatch()
             }
         #else
@@ -108,8 +117,8 @@ struct PicaXApp: App {
     private func syncAccountsToWatch() {
         phoneWatchAccountSyncService.sync(
             platformAccountService: platformAccountService,
-            syncsLocalFavorites: WatchConnectivitySettings.syncsLocalFavorites(),
-            syncsReadLater: WatchConnectivitySettings.syncsReadLater()
+            syncsLocalFavorites: syncsLocalFavorites,
+            syncsReadLater: syncsReadLater
         )
     }
     #endif

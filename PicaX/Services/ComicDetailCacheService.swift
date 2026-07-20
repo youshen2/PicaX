@@ -1,7 +1,7 @@
 import CryptoKit
 import Foundation
 
-struct ComicDetailCacheUsage: Equatable {
+struct ComicDetailCacheUsage: Equatable, Sendable {
     let diskBytes: Int
 }
 
@@ -11,9 +11,12 @@ enum ComicDetailCacheService {
     private nonisolated static let cacheFormatVersion = 1
     nonisolated private static let lock = NSLock()
     nonisolated(unsafe) private static var diskCapacityBytes = defaultMaxDiskSizeMB * 1024 * 1024
+    nonisolated(unsafe) private static var isStoreTrimScheduled = false
+    private static var activeTrimTask: Task<Void, Never>?
 
     @MainActor
-    static func configure(defaults: UserDefaults = .standard) {
+    @discardableResult
+    static func configure(defaults: UserDefaults = .standard) -> Task<Void, Never> {
         if defaults.object(forKey: DetailCacheSettingsKey.isEnabled) == nil {
             defaults.set(true, forKey: DetailCacheSettingsKey.isEnabled)
         }
@@ -26,24 +29,36 @@ enum ComicDetailCacheService {
         withDiskCacheLock {
             diskCapacityBytes = diskCapacity
             prepareDiskCacheDirectoryLocked()
-            trimDiskCacheIfNeededLocked()
         }
+        activeTrimTask?.cancel()
+        let trimTask = Task.detached(priority: .utility) {
+            guard !Task.isCancelled else { return }
+            withDiskCacheLock {
+                trimDiskCacheIfNeededLocked()
+            }
+        }
+        activeTrimTask = trimTask
+        return trimTask
     }
 
     @MainActor
-    static func clear() {
-        withDiskCacheLock {
-            let directoryURL = cacheDirectoryURL
-            try? FileManager.default.removeItem(at: directoryURL)
-            prepareDiskCacheDirectoryLocked()
-        }
+    static func clear() async {
+        activeTrimTask?.cancel()
+        await Task.detached(priority: .utility) {
+            withDiskCacheLock {
+                let directoryURL = cacheDirectoryURL
+                try? FileManager.default.removeItem(at: directoryURL)
+                prepareDiskCacheDirectoryLocked()
+            }
+        }.value
     }
 
-    @MainActor
-    static var usage: ComicDetailCacheUsage {
-        withDiskCacheLock {
-            ComicDetailCacheUsage(diskBytes: Int(min(diskUsageBytesLocked(), Int64(Int.max))))
-        }
+    nonisolated static func usage() async -> ComicDetailCacheUsage {
+        await Task.detached(priority: .utility) {
+            withDiskCacheLock {
+                ComicDetailCacheUsage(diskBytes: Int(min(diskUsageBytesLocked(), Int64(Int.max))))
+            }
+        }.value
     }
 
     nonisolated static func isEnabled(defaults: UserDefaults = .standard) -> Bool {
@@ -95,13 +110,17 @@ enum ComicDetailCacheService {
         guard let data = try? JSONEncoder().encode(CachedComicDetail(version: cacheFormatVersion, cachedAt: Date(), detail: detail)) else {
             return
         }
-        withDiskCacheLock {
+        let shouldScheduleTrim = withDiskCacheLock {
             prepareDiskCacheDirectoryLocked()
             let fileURL = cacheFileURL(for: detail.item, account: account)
             try? data.write(to: fileURL, options: [.atomic])
             touchCacheFileLocked(fileURL)
-            trimDiskCacheIfNeededLocked()
+            guard !isStoreTrimScheduled else { return false }
+            isStoreTrimScheduled = true
+            return true
         }
+        guard shouldScheduleTrim else { return }
+        scheduleStoreTrim()
     }
 
     private nonisolated static func cacheableDetail(_ detail: ComicDetailInfo) -> ComicDetailInfo {
@@ -121,6 +140,16 @@ enum ComicDetailCacheService {
         lock.lock()
         defer { lock.unlock() }
         return try body()
+    }
+
+    private nonisolated static func scheduleStoreTrim() {
+        Task.detached(priority: .utility) {
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            withDiskCacheLock {
+                defer { isStoreTrimScheduled = false }
+                trimDiskCacheIfNeededLocked()
+            }
+        }
     }
 
     private nonisolated static var cacheDirectoryURL: URL {
@@ -163,11 +192,13 @@ enum ComicDetailCacheService {
     }
 
     private nonisolated static func trimDiskCacheIfNeededLocked() {
+        guard !Task.isCancelled else { return }
         let files = cacheFilesLocked()
         var totalBytes = files.reduce(Int64(0)) { $0 + $1.byteCount }
         guard totalBytes > Int64(diskCapacityBytes) else { return }
 
         for file in files.sorted(by: { $0.modificationDate < $1.modificationDate }) {
+            guard !Task.isCancelled else { return }
             try? FileManager.default.removeItem(at: file.url)
             totalBytes -= file.byteCount
             if totalBytes <= Int64(diskCapacityBytes) {

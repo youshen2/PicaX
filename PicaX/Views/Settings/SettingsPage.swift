@@ -773,6 +773,8 @@ private struct StorageManagementView: View {
     @State private var usage = ImageCacheUsage(memoryBytes: 0, diskBytes: 0)
     @State private var detailCacheUsage = ComicDetailCacheUsage(diskBytes: 0)
     @State private var downloadUsage = DownloadStorageUsage(filesBytes: 0, recordsBytes: 0, tasksBytes: 0)
+    @State private var historyBytes = 0
+    @State private var durationBytes = 0
 
     var body: some View {
         List {
@@ -860,34 +862,37 @@ private struct StorageManagementView: View {
             if maxDetailCacheDiskSizeMB <= 0 {
                 maxDetailCacheDiskSizeMB = ComicDetailCacheService.defaultMaxDiskSizeMB
             }
-            ImageCacheService.configure()
-            ComicDetailCacheService.configure()
+            let imageTrimTask = ImageCacheService.configure()
+            let detailTrimTask = ComicDetailCacheService.configure()
             Task {
+                await imageTrimTask.value
+                await detailTrimTask.value
                 await refreshStorageUsage()
             }
         }
         .onChange(of: maxDiskSizeMB) { _ in
-            ImageCacheService.configure()
+            let trimTask = ImageCacheService.configure()
             Task {
+                await trimTask.value
                 await refreshStorageUsage()
             }
         }
         .onChange(of: detailCacheEnabled) { _ in
-            ComicDetailCacheService.configure()
             Task {
                 await refreshStorageUsage()
             }
         }
         .onChange(of: maxDetailCacheDiskSizeMB) { _ in
-            ComicDetailCacheService.configure()
+            let trimTask = ComicDetailCacheService.configure()
             Task {
+                await trimTask.value
                 await refreshStorageUsage()
             }
         }
         .alert("清空图片缓存？", isPresented: $showsClearCacheConfirmation) {
             Button("清空缓存", role: .destructive) {
-                ImageCacheService.clear()
                 Task {
+                    await ImageCacheService.clear()
                     await refreshStorageUsage()
                 }
             }
@@ -897,8 +902,8 @@ private struct StorageManagementView: View {
         }
         .alert("清空详情缓存？", isPresented: $showsClearDetailCacheConfirmation) {
             Button("清空缓存", role: .destructive) {
-                ComicDetailCacheService.clear()
                 Task {
+                    await ComicDetailCacheService.clear()
                     await refreshStorageUsage()
                 }
             }
@@ -919,14 +924,6 @@ private struct StorageManagementView: View {
         }
     }
 
-    private var historyBytes: Int {
-        PicaXSQLiteStore.bytes(for: .readingHistory)
-    }
-
-    private var durationBytes: Int {
-        PicaXSQLiteStore.bytes(for: .readingDuration)
-    }
-
     private var localDataBytes: Int64 {
         Int64(historyBytes + durationBytes + downloadUsage.metadataBytes)
     }
@@ -937,9 +934,26 @@ private struct StorageManagementView: View {
 
     @MainActor
     private func refreshStorageUsage() async {
-        usage = ImageCacheService.usage
-        detailCacheUsage = ComicDetailCacheService.usage
-        downloadUsage = await downloadService.storageUsage()
+        async let nextUsage = ImageCacheService.usage()
+        async let nextDetailCacheUsage = ComicDetailCacheService.usage()
+        async let nextDownloadUsage = downloadService.storageUsage()
+        async let nextLocalDatabaseBytes = Self.localDatabaseBytes()
+
+        let values = await (nextUsage, nextDetailCacheUsage, nextDownloadUsage, nextLocalDatabaseBytes)
+        usage = values.0
+        detailCacheUsage = values.1
+        downloadUsage = values.2
+        historyBytes = values.3.history
+        durationBytes = values.3.duration
+    }
+
+    private nonisolated static func localDatabaseBytes() async -> (history: Int, duration: Int) {
+        await Task.detached(priority: .utility) {
+            (
+                history: PicaXSQLiteStore.bytes(for: .readingHistory),
+                duration: PicaXSQLiteStore.bytes(for: .readingDuration)
+            )
+        }.value
     }
 }
 

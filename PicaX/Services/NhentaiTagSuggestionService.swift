@@ -47,6 +47,14 @@ enum NhentaiTagSuggestionService {
     nonisolated private static let exactTranslatedSuggestionsByGroup = buildExactTranslatedSuggestionsByGroup()
     nonisolated private static let exactTranslatedSuggestionIndex = buildExactTranslatedSuggestionIndex()
 
+    nonisolated static func prepare() {
+        _ = suggestions
+        _ = suggestionBuckets
+        _ = searchGroupAliases
+        _ = exactTranslatedSuggestionsByGroup
+        _ = exactTranslatedSuggestionIndex
+    }
+
     static func suggestions(for text: String, limit: Int = 60) -> [NhentaiTagSuggestion] {
         let fragment = normalizedFragment(from: text)
         guard !fragment.isEmpty else { return [] }
