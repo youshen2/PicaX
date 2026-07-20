@@ -95,6 +95,15 @@ final class ReaderContinuousScrollBridge {
     }
     #endif
 
+    var isUserInteracting: Bool {
+        #if os(iOS)
+        guard let scrollView else { return false }
+        return scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating
+        #else
+        return false
+        #endif
+    }
+
     func scroll(toY y: CGFloat, animated: Bool) -> Bool {
         #if os(iOS)
         guard let scrollView else {

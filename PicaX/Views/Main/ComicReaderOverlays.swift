@@ -38,6 +38,7 @@ enum ReaderSettingsKey {
     static let longPressZoomTriggerDuration = "settings.reader.longPressZoomTriggerDuration"
     static let autoPagingInterval = "settings.reader.autoPagingInterval"
     static let autoPagingDistancePercent = "settings.reader.autoPagingDistancePercent"
+    static let smoothContinuousAutoPaging = "settings.reader.smoothContinuousAutoPaging"
     static let autoPagingTurnsChapter = "settings.reader.autoPagingTurnsChapter"
     static let showsNextChapterButtonAtEnd = "settings.reader.showsNextChapterButtonAtEnd"
     static let chapterEndButtonPosition = "settings.reader.chapterEndButtonPosition"
@@ -755,6 +756,48 @@ private struct ReaderAutoPagingSchedule: Equatable {
     let interval: Double
 }
 
+struct ReaderSmoothAutoPagingModifier: ViewModifier {
+    let isEnabled: Bool
+    let pointsPerSecond: CGFloat
+    let onStep: (CGFloat) -> Void
+
+    func body(content: Content) -> some View {
+        content
+            .task(id: ReaderSmoothAutoPagingSchedule(
+                isEnabled: isEnabled,
+                pointsPerSecond: Double(pointsPerSecond)
+            )) {
+                guard isEnabled,
+                      pointsPerSecond.isFinite,
+                      pointsPerSecond > 0 else {
+                    return
+                }
+
+                let frameDelay: UInt64 = 16_666_667
+                var previousTimestamp = ProcessInfo.processInfo.systemUptime
+                while !Task.isCancelled {
+                    do {
+                        try await Task.sleep(nanoseconds: frameDelay)
+                    } catch {
+                        return
+                    }
+                    guard !Task.isCancelled else { return }
+
+                    let timestamp = ProcessInfo.processInfo.systemUptime
+                    let elapsed = min(max(timestamp - previousTimestamp, 0), 1.0 / 15.0)
+                    previousTimestamp = timestamp
+                    guard elapsed > 0 else { continue }
+                    onStep(pointsPerSecond * CGFloat(elapsed))
+                }
+            }
+    }
+}
+
+private struct ReaderSmoothAutoPagingSchedule: Equatable {
+    let isEnabled: Bool
+    let pointsPerSecond: Double
+}
+
 struct ReaderProgressSelectionDialog: View {
     @Environment(\.dismiss) private var dismiss
 
@@ -891,6 +934,18 @@ extension View {
 
     func readerAutoPaging(isEnabled: Bool, interval: Double, onTick: @escaping () -> Void) -> some View {
         modifier(ReaderAutoPagingModifier(isEnabled: isEnabled, interval: interval, onTick: onTick))
+    }
+
+    func readerSmoothAutoPaging(
+        isEnabled: Bool,
+        pointsPerSecond: CGFloat,
+        onStep: @escaping (CGFloat) -> Void
+    ) -> some View {
+        modifier(ReaderSmoothAutoPagingModifier(
+            isEnabled: isEnabled,
+            pointsPerSecond: pointsPerSecond,
+            onStep: onStep
+        ))
     }
 
     @ViewBuilder

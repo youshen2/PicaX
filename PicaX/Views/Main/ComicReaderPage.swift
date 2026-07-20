@@ -69,6 +69,7 @@ struct ComicReaderPage: View {
     @AppStorage(ReaderSettingsKey.longPressZoomTriggerDuration) private var longPressZoomTriggerDuration = ReaderZoomConfiguration.defaultLongPressTriggerDuration
     @AppStorage(ReaderSettingsKey.autoPagingInterval) private var autoPagingInterval = 6.0
     @AppStorage(ReaderSettingsKey.autoPagingDistancePercent) private var autoPagingDistancePercent = 85
+    @AppStorage(ReaderSettingsKey.smoothContinuousAutoPaging) private var smoothContinuousAutoPaging = false
     @AppStorage(ReaderSettingsKey.autoPagingTurnsChapter) private var autoPagingTurnsChapter = true
     @AppStorage(ReaderSettingsKey.showsNextChapterButtonAtEnd) private var showsNextChapterButtonAtEnd = false
     @AppStorage(ReaderSettingsKey.chapterEndButtonPosition) private var chapterEndButtonPosition = ReaderOverlayPosition.bottomTrailing.rawValue
@@ -312,6 +313,11 @@ struct ComicReaderPage: View {
                                     }
                                 }
                             }
+                        }
+                        .disabled(readerReadingMode != .topToBottomContinuous)
+
+                        Toggle(isOn: $smoothContinuousAutoPaging) {
+                            Label("平滑持续滚动", systemImage: "arrow.down")
                         }
                         .disabled(readerReadingMode != .topToBottomContinuous)
 
@@ -672,8 +678,10 @@ struct ComicReaderPage: View {
                     tapPagingDistancePercent: boundedTapPagingDistancePercent,
                     doubleTapZoomEnabled: effectiveDoubleTapZoomEnabled,
                     isAutoPaging: isAutoPaging,
+                    isAutoPagingSuspended: isChapterSheetPresented,
                     autoPagingInterval: boundedAutoPageInterval,
                     autoPagingDistancePercent: boundedAutoPageDistancePercent,
+                    smoothContinuousAutoPaging: smoothContinuousAutoPaging,
                     progressJumpRequest: $progressJumpRequest,
                     onToggleUI: { toggleReaderUI() },
                     onPositionChange: { chapterIndex, pageIndex, pageCount in
@@ -873,9 +881,22 @@ struct ComicReaderPage: View {
                         }
                     }
                 )
-                .readerAutoPaging(isEnabled: isAutoPaging, interval: boundedAutoPageInterval) {
+                .readerAutoPaging(
+                    isEnabled: isAutoPaging && !isChapterSheetPresented && !smoothContinuousAutoPaging,
+                    interval: boundedAutoPageInterval
+                ) {
                     handleContinuousAutoPageTick(
                         images: images,
+                        viewportHeight: geometry.size.height,
+                        targetPixelWidth: targetPixelWidth
+                    )
+                }
+                .readerSmoothAutoPaging(
+                    isEnabled: isAutoPaging && !isChapterSheetPresented && smoothContinuousAutoPaging,
+                    pointsPerSecond: smoothAutoPagingPointsPerSecond(viewportHeight: geometry.size.height)
+                ) { distance in
+                    handleSmoothContinuousAutoPageStep(
+                        distance: distance,
                         viewportHeight: geometry.size.height,
                         targetPixelWidth: targetPixelWidth
                     )
@@ -1383,7 +1404,12 @@ struct ComicReaderPage: View {
         viewportHeight: CGFloat,
         targetPixelWidth: Int?
     ) {
-        guard isAutoPaging, !isAutoPagingTurnInFlight, !isChapterSheetPresented else { return }
+        guard isAutoPaging,
+              !smoothContinuousAutoPaging,
+              !isAutoPagingTurnInFlight,
+              !isChapterSheetPresented else {
+            return
+        }
         guard viewportHeight.isFinite, viewportHeight > 0 else { return }
 
         isAutoPagingTurnInFlight = true
@@ -1414,6 +1440,55 @@ struct ComicReaderPage: View {
         }
     }
 
+    private func handleSmoothContinuousAutoPageStep(
+        distance: CGFloat,
+        viewportHeight: CGFloat,
+        targetPixelWidth: Int?
+    ) {
+        guard case .loaded(let images) = viewModel.state,
+              !images.isEmpty,
+              isAutoPaging,
+              smoothContinuousAutoPaging,
+              !isAutoPagingTurnInFlight,
+              !isChapterSheetPresented,
+              !continuousScrollBridge.isUserInteracting,
+              continuousScrollTracker.hasContentMetrics,
+              viewportHeight.isFinite,
+              viewportHeight > 0,
+              distance.isFinite,
+              distance > 0 else {
+            return
+        }
+
+        let maxY = continuousScrollTracker.maxScrollY(fallbackViewportHeight: viewportHeight)
+        let targetY = min(continuousScrollTracker.scrollY + distance, maxY)
+        scrollContinuous(toY: targetY, animated: false)
+
+        guard targetY >= maxY - 0.5 else { return }
+        isAutoPagingTurnInFlight = true
+        Task { @MainActor in
+            if shouldShowChapterCommentsAtEnd {
+                await finishAutoPagingAtChapterEnd(targetPixelWidth: targetPixelWidth)
+                return
+            }
+
+            let didTurn = await turnPage(
+                .next,
+                images: images,
+                targetPixelWidth: targetPixelWidth,
+                allowsChapterTurn: autoPagingTurnsChapter
+            ) { pageIndex in
+                continuousScrollTracker.reset()
+                scrollContinuous(toY: 0, animated: false)
+                updateReadingPage(pageIndex, totalPages: images.count, targetPixelWidth: targetPixelWidth)
+            }
+            isAutoPagingTurnInFlight = false
+            if !didTurn {
+                stopAutoPaging(toast: "已到最后一页")
+            }
+        }
+    }
+
     private func handleContinuousAutoPagingEnteredComments(targetPixelWidth: Int?) {
         guard isAutoPaging,
               readerReadingMode == .topToBottomContinuous,
@@ -1421,6 +1496,7 @@ struct ComicReaderPage: View {
             return
         }
         autoPagingCommentActionChapterIndex = viewModel.currentChapterIndex
+        isAutoPagingTurnInFlight = true
 
         Task { @MainActor in
             await finishAutoPagingAtChapterEnd(targetPixelWidth: targetPixelWidth)
@@ -1964,6 +2040,12 @@ struct ComicReaderPage: View {
 
     private var boundedAutoPageDistancePercent: Int {
         min(max(autoPagingDistancePercent, 10), 120)
+    }
+
+    private func smoothAutoPagingPointsPerSecond(viewportHeight: CGFloat) -> CGFloat {
+        guard viewportHeight.isFinite, viewportHeight > 0 else { return 0 }
+        let distance = viewportHeight * CGFloat(boundedAutoPageDistancePercent) / 100
+        return distance / CGFloat(boundedAutoPageInterval)
     }
 
     private var readerReadingMode: ReaderReadingMode {

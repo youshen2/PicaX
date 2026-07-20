@@ -267,7 +267,7 @@ private enum SettingsSearchItem: CaseIterable {
         case .platformAccounts:
             ComicPlatform.allCases.map(\.title) + ["登录", "账号", "cookie"]
         case .reader:
-            ["自动翻页", "点按翻页", "两指缩放", "双击缩放", "长按缩放", "触发时间", "预加载", "章节末尾", "下一章", "浮动按钮", "按钮位置", "边距", "批量阅读", "切换书籍", "状态栏", "页码", "亮度", "深色模式"]
+            ["自动翻页", "平滑持续滚动", "点按翻页", "两指缩放", "双击缩放", "长按缩放", "触发时间", "预加载", "章节末尾", "下一章", "浮动按钮", "按钮位置", "边距", "批量阅读", "切换书籍", "状态栏", "页码", "亮度", "深色模式"]
         case .home:
             ["阅读时长", "阅读历史", "稍后再读", "下载", "折叠", "首页卡片"]
         case .storage:
@@ -2396,6 +2396,7 @@ private struct ReaderSettingsView: View {
     @AppStorage(ReaderSettingsKey.longPressZoomTriggerDuration) private var longPressZoomTriggerDuration = ReaderZoomConfiguration.defaultLongPressTriggerDuration
     @AppStorage(ReaderSettingsKey.autoPagingInterval) private var autoPagingInterval = 6.0
     @AppStorage(ReaderSettingsKey.autoPagingDistancePercent) private var autoPagingDistancePercent = 85
+    @AppStorage(ReaderSettingsKey.smoothContinuousAutoPaging) private var smoothContinuousAutoPaging = false
     @AppStorage(ReaderSettingsKey.autoPagingTurnsChapter) private var autoPagingTurnsChapter = true
     @AppStorage(ReaderSettingsKey.showsNextChapterButtonAtEnd) private var showsNextChapterButtonAtEnd = false
     @AppStorage(ReaderSettingsKey.chapterEndButtonPosition) private var chapterEndButtonPosition = ReaderOverlayPosition.bottomTrailing.rawValue
@@ -2497,6 +2498,16 @@ private struct ReaderSettingsView: View {
                     Slider(value: autoPagingDistancePercentBinding, in: 10...120, step: 5)
                 }
                 .disabled(selectedReadingMode != .topToBottomContinuous)
+
+                Toggle("平滑持续滚动", isOn: $smoothContinuousAutoPaging)
+                    .disabled(selectedReadingMode != .topToBottomContinuous)
+
+                if selectedReadingMode == .topToBottomContinuous,
+                   smoothContinuousAutoPaging {
+                    Text("将翻页距离均匀分布在翻页间隔内，以恒定速度持续滚动。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
 
                 if selectedReadingMode != .topToBottomContinuous {
                     Text("当前阅读方式会按页切换，自动翻页距离只在连续滚动中生效。")

@@ -39,8 +39,10 @@ struct ReaderWholeBookContinuousView: View {
     let tapPagingDistancePercent: Int
     let doubleTapZoomEnabled: Bool
     let isAutoPaging: Bool
+    let isAutoPagingSuspended: Bool
     let autoPagingInterval: Double
     let autoPagingDistancePercent: Int
+    let smoothContinuousAutoPaging: Bool
     @Binding var progressJumpRequest: ReaderProgressJumpRequest?
     let onToggleUI: () -> Void
     let onPositionChange: (Int, Int, Int) -> Void
@@ -85,8 +87,10 @@ struct ReaderWholeBookContinuousView: View {
         tapPagingDistancePercent: Int,
         doubleTapZoomEnabled: Bool,
         isAutoPaging: Bool,
+        isAutoPagingSuspended: Bool,
         autoPagingInterval: Double,
         autoPagingDistancePercent: Int,
+        smoothContinuousAutoPaging: Bool,
         progressJumpRequest: Binding<ReaderProgressJumpRequest?>,
         onToggleUI: @escaping () -> Void,
         onPositionChange: @escaping (Int, Int, Int) -> Void,
@@ -120,8 +124,10 @@ struct ReaderWholeBookContinuousView: View {
         self.tapPagingDistancePercent = tapPagingDistancePercent
         self.doubleTapZoomEnabled = doubleTapZoomEnabled
         self.isAutoPaging = isAutoPaging
+        self.isAutoPagingSuspended = isAutoPagingSuspended
         self.autoPagingInterval = autoPagingInterval
         self.autoPagingDistancePercent = autoPagingDistancePercent
+        self.smoothContinuousAutoPaging = smoothContinuousAutoPaging
         _progressJumpRequest = progressJumpRequest
         self.onToggleUI = onToggleUI
         self.onPositionChange = onPositionChange
@@ -227,8 +233,17 @@ struct ReaderWholeBookContinuousView: View {
                     handleTapPage(direction)
                 }
             )
-            .readerAutoPaging(isEnabled: isAutoPaging, interval: autoPagingInterval) {
+            .readerAutoPaging(
+                isEnabled: isAutoPaging && !isAutoPagingSuspended && !smoothContinuousAutoPaging,
+                interval: autoPagingInterval
+            ) {
                 handleAutoPageTick()
+            }
+            .readerSmoothAutoPaging(
+                isEnabled: isAutoPaging && !isAutoPagingSuspended && smoothContinuousAutoPaging,
+                pointsPerSecond: smoothAutoPagingPointsPerSecond
+            ) { distance in
+                handleSmoothAutoPageStep(distance: distance)
             }
             .onPreferenceChange(ReaderWholeBookVisiblePageFramesPreferenceKey.self) { pageFrames in
                 syncVisiblePage(pageFrames)
@@ -286,6 +301,17 @@ struct ReaderWholeBookContinuousView: View {
     private var hasReachedBookEnd: Bool {
         guard let lastSection else { return true }
         return lastSection.chapterIndex >= chapters.count - 1
+    }
+
+    private var smoothAutoPagingPointsPerSecond: CGFloat {
+        guard displaySize.height.isFinite,
+              displaySize.height > 0,
+              autoPagingInterval.isFinite,
+              autoPagingInterval > 0 else {
+            return 0
+        }
+        let distance = displaySize.height * CGFloat(autoPagingDistancePercent) / 100
+        return distance / CGFloat(autoPagingInterval)
     }
 
     private var flattenedPages: [(id: ReaderWholeBookPageID, image: ComicChapterImage)] {
@@ -471,7 +497,10 @@ struct ReaderWholeBookContinuousView: View {
     }
 
     private func handleAutoPageTick() {
-        guard isAutoPaging, !isAutoPagingTurnInFlight,
+        guard isAutoPaging,
+              !isAutoPagingSuspended,
+              !smoothContinuousAutoPaging,
+              !isAutoPagingTurnInFlight,
               displaySize.height.isFinite, displaySize.height > 0 else {
             return
         }
@@ -493,6 +522,37 @@ struct ReaderWholeBookContinuousView: View {
             } else {
                 requestNextChapter()
             }
+        }
+    }
+
+    private func handleSmoothAutoPageStep(distance: CGFloat) {
+        guard isAutoPaging,
+              !isAutoPagingSuspended,
+              smoothContinuousAutoPaging,
+              !isAutoPagingTurnInFlight,
+              !scrollBridge.isUserInteracting,
+              !isLoadingNextChapter,
+              nextChapterError == nil,
+              scrollTracker.hasContentMetrics,
+              displaySize.height.isFinite,
+              displaySize.height > 0,
+              distance.isFinite,
+              distance > 0 else {
+            return
+        }
+
+        let currentY = scrollTracker.effectiveScrollY(fallback: nil)
+        let maxY = scrollTracker.maxScrollY(fallbackViewportHeight: displaySize.height)
+        let targetY = min(currentY + distance, maxY)
+        if scrollBridge.scroll(toY: targetY, animated: false) {
+            scrollTracker.updateScrollY(targetY)
+        }
+
+        guard targetY >= maxY - 0.5 else { return }
+        if hasReachedBookEnd {
+            onReachedBookEnd()
+        } else {
+            requestNextChapter()
         }
     }
 }
