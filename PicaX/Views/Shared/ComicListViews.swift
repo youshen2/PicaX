@@ -35,11 +35,14 @@ struct ComicListSection: View {
     @State private var renderedComicCount = Self.initialRenderedComicCount
     @State private var renderSnapshot = ComicListRenderSnapshot.empty
     @State private var tagDisplayVersion = 0
+    @State private var lastWaterfallPaginationTrigger: ComicWaterfallPaginationTrigger?
+    @Namespace private var waterfallScrollCoordinateSpace
 
     private static let initialRenderedComicCount = 48
     private static let renderedComicPageSize = 48
     private static let waterfallSpacing: CGFloat = 12
     private static let waterfallHorizontalPadding: CGFloat = 16
+    private static let waterfallBottomLoadThreshold: CGFloat = 80
 
     var body: some View {
         Group {
@@ -203,9 +206,8 @@ struct ComicListSection: View {
                         totalVisibleCount: totalVisibleCount
                     )
 
-                    paginationFooter(
+                    waterfallPaginationFooter(
                         displayedRows: displayedRows,
-                        totalVisibleCount: totalVisibleCount,
                         isPreparingSnapshot: isPreparingSnapshot,
                         snapshotIsCurrent: snapshotIsCurrent
                     )
@@ -213,7 +215,21 @@ struct ComicListSection: View {
                 .padding(.horizontal, Self.waterfallHorizontalPadding)
                 .padding(.vertical, Self.waterfallSpacing)
             }
+            .coordinateSpace(name: waterfallScrollCoordinateSpace)
             .background(AppColor.groupedBackground)
+            .onPreferenceChange(ComicWaterfallBottomPreferenceKey.self) { bottomPosition in
+                handleWaterfallBottomPosition(
+                    bottomPosition,
+                    viewportHeight: geometry.size.height,
+                    displayedRows: displayedRows,
+                    totalVisibleCount: totalVisibleCount,
+                    isPreparingSnapshot: isPreparingSnapshot,
+                    snapshotIsCurrent: snapshotIsCurrent
+                )
+            }
+            .onDisappear {
+                lastWaterfallPaginationTrigger = nil
+            }
         }
     }
 
@@ -439,6 +455,36 @@ struct ComicListSection: View {
     }
 
     @ViewBuilder
+    private func waterfallPaginationFooter(
+        displayedRows: [ComicListDisplayedRow],
+        isPreparingSnapshot: Bool,
+        snapshotIsCurrent: Bool
+    ) -> some View {
+        VStack(spacing: 0) {
+            if isPreparingSnapshot, !displayedRows.isEmpty {
+                if isLoadingMore {
+                    LoadingMoreRow()
+                } else {
+                    PreparingComicListSnapshotRow()
+                }
+            } else if snapshotIsCurrent, isLoadingMore {
+                LoadingMoreRow()
+            }
+
+            Color.clear
+                .frame(height: 1)
+                .background {
+                    GeometryReader { geometry in
+                        Color.clear.preference(
+                            key: ComicWaterfallBottomPreferenceKey.self,
+                            value: geometry.frame(in: .named(waterfallScrollCoordinateSpace)).minY
+                        )
+                    }
+                }
+        }
+    }
+
+    @ViewBuilder
     private func paginationFooter(
         displayedRows: [ComicListDisplayedRow],
         totalVisibleCount: Int,
@@ -467,6 +513,61 @@ struct ComicListSection: View {
                 .onAppear {
                     loadMore?()
                 }
+        }
+    }
+
+    private func handleWaterfallBottomPosition(
+        _ bottomPosition: CGFloat,
+        viewportHeight: CGFloat,
+        displayedRows: [ComicListDisplayedRow],
+        totalVisibleCount: Int,
+        isPreparingSnapshot: Bool,
+        snapshotIsCurrent: Bool
+    ) {
+        let isNearBottom = bottomPosition.isFinite
+            && bottomPosition <= viewportHeight + Self.waterfallBottomLoadThreshold
+
+        guard isNearBottom else {
+            if snapshotIsCurrent,
+               !isPreparingSnapshot,
+               !isLoadingMore,
+               lastWaterfallPaginationTrigger != nil {
+                lastWaterfallPaginationTrigger = nil
+            }
+            return
+        }
+
+        guard snapshotIsCurrent,
+              !isPreparingSnapshot,
+              !isLoadingMore,
+              !displayedRows.isEmpty else {
+            return
+        }
+
+        let action: ComicWaterfallPaginationTrigger.Action
+        if canRevealMoreLocalComics(totalVisibleCount: totalVisibleCount) {
+            action = .revealLocal
+        } else if hasMore {
+            action = .loadRemote
+        } else {
+            return
+        }
+
+        let trigger = ComicWaterfallPaginationTrigger(
+            action: action,
+            firstComicID: displayedRows.first?.id,
+            lastComicID: displayedRows.last?.id,
+            displayedCount: displayedRows.count,
+            totalVisibleCount: totalVisibleCount
+        )
+        guard trigger != lastWaterfallPaginationTrigger else { return }
+        lastWaterfallPaginationTrigger = trigger
+
+        switch action {
+        case .revealLocal:
+            revealMoreLocalComics(totalVisibleCount: totalVisibleCount)
+        case .loadRemote:
+            loadMore?()
         }
     }
 
@@ -1589,6 +1690,27 @@ private struct ComicListDisplayedRow: Identifiable {
     var id: String {
         item.readingHistoryID
     }
+}
+
+private struct ComicWaterfallBottomPreferenceKey: PreferenceKey {
+    static var defaultValue = CGFloat.greatestFiniteMagnitude
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
+private struct ComicWaterfallPaginationTrigger: Equatable {
+    enum Action: Equatable {
+        case revealLocal
+        case loadRemote
+    }
+
+    let action: Action
+    let firstComicID: String?
+    let lastComicID: String?
+    let displayedCount: Int
+    let totalVisibleCount: Int
 }
 
 private struct ComicWaterfallColumn: Identifiable {
