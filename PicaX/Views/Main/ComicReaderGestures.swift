@@ -2,11 +2,15 @@ import Foundation
 import SwiftUI
 
 struct ReaderZoomConfiguration: Equatable {
+    static let defaultLongPressTriggerDuration: TimeInterval = 0.3
+    static let longPressTriggerDurationRange: ClosedRange<TimeInterval> = 0.1...1.0
+
     let pinchEnabled: Bool
     let doubleTapEnabled: Bool
     let doubleTapScale: CGFloat
     let longPressEnabled: Bool
     let longPressScale: CGFloat
+    let longPressTriggerDuration: TimeInterval
 
     var normalizedDoubleTapScale: CGFloat {
         min(max(doubleTapScale, 1.2), 5)
@@ -14,6 +18,13 @@ struct ReaderZoomConfiguration: Equatable {
 
     var normalizedLongPressScale: CGFloat {
         min(max(longPressScale, 1.2), 5)
+    }
+
+    var normalizedLongPressTriggerDuration: TimeInterval {
+        min(
+            max(longPressTriggerDuration, Self.longPressTriggerDurationRange.lowerBound),
+            Self.longPressTriggerDurationRange.upperBound
+        )
     }
 
     var isZoomEnabled: Bool {
@@ -26,7 +37,8 @@ struct ReaderZoomConfiguration: Equatable {
             doubleTapEnabled: false,
             doubleTapScale: doubleTapScale,
             longPressEnabled: false,
-            longPressScale: longPressScale
+            longPressScale: longPressScale,
+            longPressTriggerDuration: longPressTriggerDuration
         )
     }
 }

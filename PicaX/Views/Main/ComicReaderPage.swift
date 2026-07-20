@@ -66,6 +66,7 @@ struct ComicReaderPage: View {
     @AppStorage(ReaderSettingsKey.doubleTapZoomScale) private var doubleTapZoomScale = 1.75
     @AppStorage(ReaderSettingsKey.longPressZoomEnabled) private var longPressZoomEnabled = true
     @AppStorage(ReaderSettingsKey.longPressZoomScale) private var longPressZoomScale = 1.75
+    @AppStorage(ReaderSettingsKey.longPressZoomTriggerDuration) private var longPressZoomTriggerDuration = ReaderZoomConfiguration.defaultLongPressTriggerDuration
     @AppStorage(ReaderSettingsKey.autoPagingInterval) private var autoPagingInterval = 6.0
     @AppStorage(ReaderSettingsKey.autoPagingDistancePercent) private var autoPagingDistancePercent = 85
     @AppStorage(ReaderSettingsKey.autoPagingTurnsChapter) private var autoPagingTurnsChapter = true
@@ -1948,7 +1949,8 @@ struct ComicReaderPage: View {
             doubleTapEnabled: effectiveDoubleTapZoomEnabled,
             doubleTapScale: CGFloat(boundedDoubleTapZoomScale),
             longPressEnabled: longPressZoomEnabled,
-            longPressScale: CGFloat(boundedLongPressZoomScale)
+            longPressScale: CGFloat(boundedLongPressZoomScale),
+            longPressTriggerDuration: longPressZoomTriggerDuration
         )
     }
 

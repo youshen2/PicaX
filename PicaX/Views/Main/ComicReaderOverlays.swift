@@ -35,6 +35,7 @@ enum ReaderSettingsKey {
     static let doubleTapZoomScale = "settings.reader.doubleTapZoomScale"
     static let longPressZoomEnabled = "settings.reader.longPressZoomEnabled"
     static let longPressZoomScale = "settings.reader.longPressZoomScale"
+    static let longPressZoomTriggerDuration = "settings.reader.longPressZoomTriggerDuration"
     static let autoPagingInterval = "settings.reader.autoPagingInterval"
     static let autoPagingDistancePercent = "settings.reader.autoPagingDistancePercent"
     static let autoPagingTurnsChapter = "settings.reader.autoPagingTurnsChapter"

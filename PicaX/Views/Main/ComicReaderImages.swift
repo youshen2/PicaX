@@ -266,7 +266,8 @@ final class ReaderContinuousZoomUIView<Content: View>: UIView, UIScrollViewDeleg
         doubleTapEnabled: true,
         doubleTapScale: 1.75,
         longPressEnabled: true,
-        longPressScale: 1.75
+        longPressScale: 1.75,
+        longPressTriggerDuration: ReaderZoomConfiguration.defaultLongPressTriggerDuration
     )
     private var longPressStartedZoom = false
 
@@ -371,7 +372,7 @@ final class ReaderContinuousZoomUIView<Content: View>: UIView, UIScrollViewDeleg
         }
         if scrollView.gestureRecognizers?.contains(where: { $0.name == "reader.continuousLongPressZoom" }) != true {
             let recognizer = UILongPressGestureRecognizer(target: self, action: #selector(handleLongPress(_:)))
-            recognizer.minimumPressDuration = 0.30
+            recognizer.minimumPressDuration = configuration.normalizedLongPressTriggerDuration
             recognizer.allowableMovement = 12
             recognizer.name = "reader.continuousLongPressZoom"
             recognizer.cancelsTouchesInView = false
@@ -383,6 +384,7 @@ final class ReaderContinuousZoomUIView<Content: View>: UIView, UIScrollViewDeleg
                 recognizer.isEnabled = configuration.doubleTapEnabled
             } else if recognizer.name == "reader.continuousLongPressZoom" {
                 recognizer.isEnabled = configuration.longPressEnabled
+                (recognizer as? UILongPressGestureRecognizer)?.minimumPressDuration = configuration.normalizedLongPressTriggerDuration
             }
         }
     }
@@ -537,7 +539,8 @@ final class ReaderPhotoZoomView: UIView, UIScrollViewDelegate, UIGestureRecogniz
         doubleTapEnabled: true,
         doubleTapScale: 1.75,
         longPressEnabled: true,
-        longPressScale: 1.75
+        longPressScale: 1.75,
+        longPressTriggerDuration: ReaderZoomConfiguration.defaultLongPressTriggerDuration
     )
     private var longPressStartedZoom = false
 
@@ -630,7 +633,7 @@ final class ReaderPhotoZoomView: UIView, UIScrollViewDelegate, UIGestureRecogniz
         }
         if scrollView.gestureRecognizers?.contains(where: { $0.name == "reader.longPressZoom" }) != true {
             let recognizer = UILongPressGestureRecognizer(target: self, action: #selector(handleLongPress(_:)))
-            recognizer.minimumPressDuration = 0.30
+            recognizer.minimumPressDuration = configuration.normalizedLongPressTriggerDuration
             recognizer.allowableMovement = 1
             recognizer.name = "reader.longPressZoom"
             recognizer.delegate = self
@@ -641,6 +644,7 @@ final class ReaderPhotoZoomView: UIView, UIScrollViewDelegate, UIGestureRecogniz
                 recognizer.isEnabled = configuration.doubleTapEnabled
             } else if recognizer.name == "reader.longPressZoom" {
                 recognizer.isEnabled = configuration.longPressEnabled
+                (recognizer as? UILongPressGestureRecognizer)?.minimumPressDuration = configuration.normalizedLongPressTriggerDuration
             }
         }
     }
