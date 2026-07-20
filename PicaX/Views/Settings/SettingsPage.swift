@@ -2548,7 +2548,7 @@ private struct ReaderSettingsView: View {
             }
 
             Section {
-                Picker("切换控制栏", selection: $uiToggleMode) {
+                Picker("切换 UI 显隐方式", selection: $uiToggleMode) {
                     ForEach(ReaderUIToggleMode.allCases) { mode in
                         Text(mode.title)
                             .tag(mode.rawValue)
@@ -2586,7 +2586,7 @@ private struct ReaderSettingsView: View {
             } header: {
                 Text("交互")
             } footer: {
-                Text("点按翻页开启后，边缘区域翻页，中间区域按“切换控制栏”设置显示或隐藏顶部控制栏。关闭跟随后，对应浮层会在控制栏隐藏时继续显示。")
+                Text("“单击切换 UI”或“双击切换 UI”只控制阅读器顶部与底部控制栏的显示或隐藏，不影响“隐藏状态栏”设置。点按翻页开启后，边缘区域翻页，中间区域按所选方式切换 UI。关闭跟随后，对应浮层会在控制栏隐藏时继续显示。")
             }
 
             Section {
@@ -2608,7 +2608,7 @@ private struct ReaderSettingsView: View {
                     .disabled(selectedUIToggleMode == .double)
 
                 if selectedUIToggleMode == .double {
-                    Text("切换控制栏使用双击时，双击缩放会暂停，避免同一手势同时承担两个动作。")
+                    Text("使用“双击切换 UI”时，双击缩放会暂停，避免同一手势同时承担两个动作。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -2640,7 +2640,7 @@ private struct ReaderSettingsView: View {
             } header: {
                 Text("缩放")
             } footer: {
-                Text("长按缩放为按住临时放大，松开恢复。双击缩放与双击切换控制栏互斥。")
+                Text("长按缩放为按住临时放大，松开恢复。双击缩放与“双击切换 UI”互斥。")
             }
 
             Section("时间与电量") {

@@ -83,9 +83,9 @@ enum ReaderUIToggleMode: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .single:
-            "单击"
+            "单击切换 UI"
         case .double:
-            "双击"
+            "双击切换 UI"
         }
     }
 }

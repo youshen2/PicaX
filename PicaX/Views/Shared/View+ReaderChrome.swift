@@ -9,11 +9,12 @@ extension View {
                 .toolbarBackground(hidesNavigationBar ? .hidden : .visible, for: .navigationBar)
                 .toolbarColorScheme(.dark, for: .navigationBar)
                 .toolbar(hidesNavigationBar ? .hidden : .visible, for: .navigationBar)
-                .statusBar(hidden: hidesStatusBar)
+                .statusBarHidden(hidesStatusBar)
+                .persistentSystemOverlays(hidesStatusBar ? .automatic : .visible)
         } else {
             self
                 .navigationBarHidden(hidesNavigationBar)
-                .statusBar(hidden: hidesStatusBar)
+                .statusBarHidden(hidesStatusBar)
         }
         #else
         self
