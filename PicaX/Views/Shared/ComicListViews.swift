@@ -2006,6 +2006,7 @@ struct ComicSearchPage: View {
     let service: ComicContentService
     private let usesConfiguredDefaultTarget: Bool
     private let recordsInitialSearchInHistory: Bool
+    private let hidesTabBar: Bool
     @StateObject private var viewModel: ComicSearchViewModel
     @State private var query: String
     @State private var selectedSearchTarget: ComicSearchTarget
@@ -2023,11 +2024,13 @@ struct ComicSearchPage: View {
         initialQuery: String = "",
         platform: ComicPlatform? = nil,
         recordsInitialSearchInHistory: Bool = true,
+        hidesTabBar: Bool = true,
         service: ComicContentService = ComicContentService()
     ) {
         self.service = service
         self.usesConfiguredDefaultTarget = platform == nil
         self.recordsInitialSearchInHistory = recordsInitialSearchInHistory
+        self.hidesTabBar = hidesTabBar
         let initialTarget = platform.map(ComicSearchTarget.platform) ?? ComicSearchTarget.configuredDefault()
         _query = State(initialValue: initialQuery)
         _selectedSearchTarget = State(initialValue: initialTarget)
@@ -2084,7 +2087,7 @@ struct ComicSearchPage: View {
         }
         .navigationTitle("搜索")
         .picaxNavigationBarTitleDisplayModeInline()
-        .picaxHidesTabBar()
+        .picaxHidesTabBar(hidesTabBar)
         .searchable(
             text: $query,
             placement: .picaxNavigationSearch,
