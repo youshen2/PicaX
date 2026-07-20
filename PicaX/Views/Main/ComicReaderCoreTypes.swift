@@ -54,6 +54,7 @@ struct ReaderScrollMetrics: Equatable {
 
 struct ReaderContinuousScrollSnapshot {
     let chapterIndex: Int
+    let sourceScrollY: CGFloat
     let scrollY: CGFloat
 }
 
@@ -86,8 +87,13 @@ final class ReaderContinuousScrollBridge {
     #if os(iOS)
     private weak var scrollView: UIScrollView?
     private var pendingScroll: (y: CGFloat, animated: Bool)?
+    private var pendingAdjustmentY: CGFloat = 0
+    private var pendingAdjustmentExpectedY: CGFloat?
 
     func attach(scrollView: UIScrollView?) {
+        if self.scrollView !== scrollView {
+            cancelPendingScrollAdjustment()
+        }
         self.scrollView = scrollView
         guard scrollView != nil, let pendingScroll else { return }
         self.pendingScroll = nil
@@ -127,6 +133,61 @@ final class ReaderContinuousScrollBridge {
         return false
         #endif
     }
+
+    func scheduleScrollAdjustment(by adjustmentY: CGFloat, expectedCurrentY: CGFloat) {
+        #if os(iOS)
+        guard adjustmentY.isFinite,
+              abs(adjustmentY) > 0.5,
+              expectedCurrentY.isFinite else {
+            return
+        }
+        guard scrollView != nil, !isUserInteracting else {
+            cancelPendingScrollAdjustment()
+            return
+        }
+
+        let expectedY = max(expectedCurrentY, 0)
+        if let pendingAdjustmentExpectedY,
+           abs(pendingAdjustmentExpectedY - expectedY) > 1 {
+            cancelPendingScrollAdjustment()
+        }
+        if pendingAdjustmentExpectedY == nil {
+            pendingAdjustmentExpectedY = expectedY
+        }
+        pendingAdjustmentY += adjustmentY
+        #endif
+    }
+
+    func applyPendingScrollAdjustmentIfNeeded() {
+        #if os(iOS)
+        guard let scrollView,
+              abs(pendingAdjustmentY) > 0.5,
+              let expectedY = pendingAdjustmentExpectedY else {
+            return
+        }
+        guard !isUserInteracting else {
+            cancelPendingScrollAdjustment()
+            return
+        }
+
+        let currentY = max(scrollView.contentOffset.y, 0)
+        guard abs(currentY - expectedY) <= 1 else {
+            cancelPendingScrollAdjustment()
+            return
+        }
+        let adjustmentY = pendingAdjustmentY
+        pendingAdjustmentY = 0
+        pendingAdjustmentExpectedY = nil
+        _ = scroll(toY: currentY + adjustmentY, animated: false)
+        #endif
+    }
+
+    func cancelPendingScrollAdjustment() {
+        #if os(iOS)
+        pendingAdjustmentY = 0
+        pendingAdjustmentExpectedY = nil
+        #endif
+    }
 }
 
 @MainActor
@@ -141,7 +202,6 @@ final class ReaderContinuousScrollTracker {
     private(set) var lastUserScrollY: CGFloat?
     private var isReady = false
     private var aspectRatios: [Int: Double] = [:]
-    private var lastReportedPageIndex: Int?
 
     var hasContentMetrics: Bool {
         contentHeight > 0 && visibleHeight > 0
@@ -155,7 +215,6 @@ final class ReaderContinuousScrollTracker {
         lastUserScrollY = nil
         isReady = false
         aspectRatios.removeAll(keepingCapacity: true)
-        lastReportedPageIndex = nil
     }
 
     func setReady() {
@@ -179,27 +238,6 @@ final class ReaderContinuousScrollTracker {
     func wasLastUserScrollNearTop(maximumOffset: CGFloat) -> Bool {
         guard let lastUserScrollY, maximumOffset.isFinite else { return false }
         return lastUserScrollY <= max(maximumOffset, 0) + 1
-    }
-
-    func wasLastUserScrollWithinFirstPage(
-        images: [ComicChapterImage],
-        displayWidth: CGFloat,
-        imageSpacing: CGFloat,
-        firstImageTopPadding: CGFloat,
-        lastImageBottomPadding: CGFloat
-    ) -> Bool {
-        guard let firstIndex = images.indices.first else { return false }
-        let firstPageHeight = pageHeight(
-            for: firstIndex,
-            imageCount: images.count,
-            displayWidth: displayWidth,
-            aspectRatio: aspectRatio(for: firstIndex, image: images[firstIndex]),
-            firstImageTopPadding: firstImageTopPadding,
-            lastImageBottomPadding: lastImageBottomPadding
-        )
-        return wasLastUserScrollNearTop(
-            maximumOffset: Self.verticalPadding + firstPageHeight + max(imageSpacing, 0)
-        )
     }
 
     func updateScrollY(_ value: CGFloat) {
@@ -289,114 +327,11 @@ final class ReaderContinuousScrollTracker {
         }
 
         guard let adjustedY else { return nil }
-        scrollY = max(adjustedY, 0)
-        return scrollY
+        return max(adjustedY, 0)
     }
 
     func maxScrollY(fallbackViewportHeight: CGFloat) -> CGFloat {
         max(contentHeight - max(visibleHeight, fallbackViewportHeight, 1), 0)
-    }
-
-    func visiblePageIndices(
-        images: [ComicChapterImage],
-        displayWidth: CGFloat,
-        imageSpacing: CGFloat,
-        firstImageTopPadding: CGFloat,
-        lastImageBottomPadding: CGFloat,
-        fallbackViewportHeight: CGFloat
-    ) -> Set<Int> {
-        guard isReady, !images.isEmpty, displayWidth.isFinite, displayWidth > 0 else {
-            return []
-        }
-
-        let viewportHeight = max(visibleHeight > 0 ? visibleHeight : fallbackViewportHeight, 0)
-        guard viewportHeight > 0 else { return [] }
-
-        let viewportPadding: CGFloat = 8
-        let viewportTop = max(scrollY - viewportPadding, 0)
-        let viewportBottom = scrollY + viewportHeight + viewportPadding
-        var visibleIndices = Set<Int>()
-        var pageTop = Self.verticalPadding
-
-        for index in images.indices {
-            let pageHeight = pageHeight(
-                for: index,
-                imageCount: images.count,
-                displayWidth: displayWidth,
-                aspectRatio: aspectRatio(for: index, image: images[index]),
-                firstImageTopPadding: firstImageTopPadding,
-                lastImageBottomPadding: lastImageBottomPadding
-            )
-            let pageBottom = pageTop + pageHeight
-            if pageBottom >= viewportTop, pageTop <= viewportBottom {
-                visibleIndices.insert(index)
-            } else if pageTop > viewportBottom {
-                break
-            }
-
-            pageTop = pageBottom
-            if index != images.index(before: images.endIndex) {
-                pageTop += max(imageSpacing, 0)
-            }
-        }
-
-        return visibleIndices
-    }
-
-    func visiblePageIndex(
-        images: [ComicChapterImage],
-        displayWidth: CGFloat,
-        imageSpacing: CGFloat,
-        firstImageTopPadding: CGFloat,
-        lastImageBottomPadding: CGFloat,
-        fallbackViewportHeight: CGFloat
-    ) -> Int? {
-        guard isReady, !images.isEmpty, displayWidth.isFinite, displayWidth > 0 else {
-            return nil
-        }
-
-        let viewportHeight = max(visibleHeight > 0 ? visibleHeight : fallbackViewportHeight, 0)
-        guard viewportHeight > 0 else { return nil }
-
-        let viewportTop = scrollY
-        let viewportBottom = viewportTop + viewportHeight
-        let viewportCenterY = viewportTop + viewportHeight / 2
-        var bestIndex: Int?
-        var bestVisibleHeight: CGFloat = 0
-        var bestDistanceFromCenter = CGFloat.greatestFiniteMagnitude
-        var pageTop = Self.verticalPadding
-
-        for index in images.indices {
-            let topPadding = index == images.startIndex ? max(firstImageTopPadding, 0) : 0
-            let bottomPadding = index == images.index(before: images.endIndex) ? max(lastImageBottomPadding, 0) : 0
-            let imageHeight = displayWidth * CGFloat(aspectRatio(for: index, image: images[index]))
-            let pageHeight = topPadding + max(imageHeight, 120) + bottomPadding
-            let pageBottom = pageTop + pageHeight
-            let visibleTop = max(pageTop, viewportTop)
-            let visibleBottom = min(pageBottom, viewportBottom)
-            let visibleHeight = max(visibleBottom - visibleTop, 0)
-
-            if visibleHeight > 1 {
-                let distanceFromCenter = abs((pageTop + pageBottom) / 2 - viewportCenterY)
-                if visibleHeight > bestVisibleHeight + 1
-                    || (abs(visibleHeight - bestVisibleHeight) <= 1 && distanceFromCenter < bestDistanceFromCenter) {
-                    bestIndex = index
-                    bestVisibleHeight = visibleHeight
-                    bestDistanceFromCenter = distanceFromCenter
-                }
-            }
-
-            pageTop = pageBottom
-            if index != images.index(before: images.endIndex) {
-                pageTop += max(imageSpacing, 0)
-            }
-        }
-
-        guard let bestIndex, bestIndex != lastReportedPageIndex else {
-            return nil
-        }
-        lastReportedPageIndex = bestIndex
-        return bestIndex
     }
 
     private func aspectRatio(for index: Int, image: ComicChapterImage) -> Double {
@@ -586,7 +521,10 @@ private final class ReaderScrollViewResolverView: UIView {
                 self?.reportScrollState()
             },
             scrollView.observe(\.contentSize, options: [.initial, .new]) { [weak self] _, _ in
-                self?.reportScrollState()
+                MainActor.assumeIsolated {
+                    self?.bridge?.applyPendingScrollAdjustmentIfNeeded()
+                    self?.reportScrollState()
+                }
             },
             scrollView.observe(\.bounds, options: [.initial, .new]) { [weak self] _, _ in
                 self?.reportScrollState()

@@ -105,7 +105,6 @@ struct ComicReaderPage: View {
     @State private var pagedPageIndex = 0
     @State private var continuousScrollBridge = ReaderContinuousScrollBridge()
     @State private var continuousScrollTracker = ReaderContinuousScrollTracker()
-    @State private var continuousScrollRestoreTask: Task<Void, Never>?
     @State private var continuousLoadableImageIDs = Set<String>()
     @State private var pagedScrollRestoreToken = UUID()
     @State private var isRestoringPagedScrollPosition = false
@@ -384,7 +383,6 @@ struct ComicReaderPage: View {
             await load()
         }
         .onDisappear {
-            continuousScrollRestoreTask?.cancel()
             viewModel.cancelNextChapterPreload(clearCachedChapter: true)
             flushPendingHistoryRecord()
             flushReadingDurationSession()
@@ -779,6 +777,7 @@ struct ComicReaderPage: View {
                                 zoomConfiguration: readerZoomConfiguration,
                                 dimsImage: dimsReaderImages,
                                 onAspectRatioResolved: { aspectRatio in
+                                    let sourceScrollY = continuousScrollTracker.scrollY
                                     if let adjustedY = continuousScrollTracker.updateAspectRatio(
                                         aspectRatio,
                                         for: index,
@@ -791,21 +790,11 @@ struct ComicReaderPage: View {
                                         restoreContinuousScrollPosition(
                                             ReaderContinuousScrollSnapshot(
                                                 chapterIndex: viewModel.currentChapterIndex,
+                                                sourceScrollY: sourceScrollY,
                                                 scrollY: adjustedY
                                             )
                                         )
                                     }
-                                    updateContinuousLoadableImages(
-                                        images: images,
-                                        displayWidth: geometry.size.width,
-                                        fallbackViewportHeight: geometry.size.height
-                                    )
-                                    syncContinuousVisiblePage(
-                                        images: images,
-                                        displayWidth: geometry.size.width,
-                                        fallbackViewportHeight: geometry.size.height,
-                                        targetPixelWidth: targetPixelWidth
-                                    )
                                 }
                             )
                                 .padding(.top, index == images.startIndex ? CGFloat(firstImageTopPadding) : 0)
@@ -844,17 +833,6 @@ struct ComicReaderPage: View {
                     .padding(.vertical, 10)
                     .readerContinuousScrollBridge(continuousScrollBridge) { metrics in
                         continuousScrollTracker.updateMetrics(metrics)
-                        updateContinuousLoadableImages(
-                            images: images,
-                            displayWidth: geometry.size.width,
-                            fallbackViewportHeight: metrics.visibleHeight > 0 ? metrics.visibleHeight : geometry.size.height
-                        )
-                        syncContinuousVisiblePage(
-                            images: images,
-                            displayWidth: geometry.size.width,
-                            fallbackViewportHeight: metrics.visibleHeight > 0 ? metrics.visibleHeight : geometry.size.height,
-                            targetPixelWidth: targetPixelWidth
-                        )
                     }
                 }
                 .coordinateSpace(name: continuousReaderCoordinateSpace)
@@ -1706,38 +1684,6 @@ struct ComicReaderPage: View {
     }
 
     private func syncContinuousVisiblePage(
-        images: [ComicChapterImage],
-        displayWidth: CGFloat,
-        fallbackViewportHeight: CGFloat,
-        targetPixelWidth: Int?
-    ) {
-        guard readerReadingMode == .topToBottomContinuous,
-              let pageIndex = continuousScrollTracker.visiblePageIndex(
-                images: images,
-                displayWidth: displayWidth,
-                imageSpacing: CGFloat(imageSpacing),
-                firstImageTopPadding: CGFloat(firstImageTopPadding),
-                lastImageBottomPadding: CGFloat(lastImageBottomPadding),
-                fallbackViewportHeight: fallbackViewportHeight
-              ) else {
-            return
-        }
-        guard pageIndex != images.startIndex
-                || viewModel.currentPageIndex == images.startIndex
-                || continuousScrollTracker.isUserInteracting
-                || continuousScrollTracker.wasLastUserScrollWithinFirstPage(
-                    images: images,
-                    displayWidth: displayWidth,
-                    imageSpacing: CGFloat(imageSpacing),
-                    firstImageTopPadding: CGFloat(firstImageTopPadding),
-                    lastImageBottomPadding: CGFloat(lastImageBottomPadding)
-                ) else {
-            return
-        }
-        updateReadingPage(pageIndex, totalPages: images.count, targetPixelWidth: targetPixelWidth)
-    }
-
-    private func syncContinuousVisiblePage(
         pageFrames: [Int: CGRect],
         viewportHeight: CGFloat,
         images: [ComicChapterImage],
@@ -1752,7 +1698,7 @@ struct ComicReaderPage: View {
 
         let viewport = CGRect(x: 0, y: 0, width: .greatestFiniteMagnitude, height: viewportHeight)
         let viewportCenterY = viewportHeight / 2
-        let pageIndex = pageFrames
+        let visiblePages = pageFrames
             .filter { images.indices.contains($0.key) }
             .compactMap { index, frame -> (index: Int, visibleHeight: CGFloat, centerDistance: CGFloat)? in
                 guard frame.minY.isFinite, frame.maxY.isFinite else { return nil }
@@ -1764,15 +1710,18 @@ struct ComicReaderPage: View {
                     centerDistance: abs(frame.midY - viewportCenterY)
                 )
             }
-            .max { lhs, rhs in
-                if abs(lhs.visibleHeight - rhs.visibleHeight) > 1 {
-                    return lhs.visibleHeight < rhs.visibleHeight
-                }
-                return lhs.centerDistance > rhs.centerDistance
-            }?
-            .index
+        let pageIndex = visiblePages.max { lhs, rhs in
+            if abs(lhs.visibleHeight - rhs.visibleHeight) > 1 {
+                return lhs.visibleHeight < rhs.visibleHeight
+            }
+            return lhs.centerDistance > rhs.centerDistance
+        }?.index
 
         guard let pageIndex else { return }
+        focusContinuousLoadableImages(
+            around: Set(visiblePages.map(\.index)),
+            images: images
+        )
         guard pageIndex != images.startIndex
                 || viewModel.currentPageIndex == images.startIndex
                 || continuousScrollTracker.isUserInteracting
@@ -1781,23 +1730,13 @@ struct ComicReaderPage: View {
                 ) else {
             return
         }
-        focusContinuousLoadableImage(pageIndex, images: images)
         updateReadingPage(pageIndex, totalPages: images.count, targetPixelWidth: targetPixelWidth)
     }
 
-    private func updateContinuousLoadableImages(
-        images: [ComicChapterImage],
-        displayWidth: CGFloat,
-        fallbackViewportHeight: CGFloat
+    private func focusContinuousLoadableImages(
+        around indices: Set<Int>,
+        images: [ComicChapterImage]
     ) {
-        let indices = continuousScrollTracker.visiblePageIndices(
-            images: images,
-            displayWidth: displayWidth,
-            imageSpacing: CGFloat(imageSpacing),
-            firstImageTopPadding: CGFloat(firstImageTopPadding),
-            lastImageBottomPadding: CGFloat(lastImageBottomPadding),
-            fallbackViewportHeight: fallbackViewportHeight
-        )
         guard !indices.isEmpty else {
             if continuousLoadableImageIDs.isEmpty {
                 focusContinuousLoadableImage(viewModel.currentPageIndex, images: images)
@@ -1856,32 +1795,21 @@ struct ComicReaderPage: View {
     }
 
     private func resetContinuousImageState() {
+        continuousScrollBridge.cancelPendingScrollAdjustment()
         continuousLoadableImageIDs.removeAll(keepingCapacity: true)
     }
 
     private func restoreContinuousScrollPosition(_ snapshot: ReaderContinuousScrollSnapshot) {
         guard readerReadingMode == .topToBottomContinuous,
-              snapshot.chapterIndex == viewModel.currentChapterIndex else {
+              snapshot.chapterIndex == viewModel.currentChapterIndex,
+              !continuousScrollBridge.isUserInteracting else {
             return
         }
 
-        let scrollY = max(snapshot.scrollY, 0)
-        continuousScrollRestoreTask?.cancel()
-        scrollContinuous(toY: scrollY, animated: false)
-        continuousScrollRestoreTask = Task { @MainActor [snapshot] in
-            let delays: [UInt64] = [70_000_000, 180_000_000, 320_000_000]
-            for delay in delays {
-                try? await Task.sleep(nanoseconds: delay)
-                guard !Task.isCancelled,
-                      readerReadingMode == .topToBottomContinuous,
-                      snapshot.chapterIndex == viewModel.currentChapterIndex else {
-                    return
-                }
-                let scrollY = max(snapshot.scrollY, 0)
-                scrollContinuous(toY: scrollY, animated: false)
-            }
-            continuousScrollRestoreTask = nil
-        }
+        continuousScrollBridge.scheduleScrollAdjustment(
+            by: snapshot.scrollY - snapshot.sourceScrollY,
+            expectedCurrentY: snapshot.sourceScrollY
+        )
     }
 
     private func readerTargetPixelWidth(for width: CGFloat) -> Int? {

@@ -23,7 +23,6 @@ struct ReaderImageView: View {
     @State private var loadState: ReaderImageLoadState = .loading
     @State private var knownAspectRatio: Double?
     @State private var layoutAspectRatio: Double?
-    @State private var reportedLayoutAspectRatio: Double?
 
     var body: some View {
         Group {
@@ -130,21 +129,26 @@ struct ReaderImageView: View {
     @MainActor
     private func receiveAspectRatio(_ aspectRatio: Double, storesInCache: Bool = true) {
         guard aspectRatio.isFinite, aspectRatio > 0 else { return }
+        guard knownAspectRatio.map({ abs($0 - aspectRatio) > 0.001 }) ?? true else {
+            if storesInCache {
+                ReaderImageAspectRatioCache.shared.store(aspectRatio, for: image.urlString)
+            }
+            return
+        }
         knownAspectRatio = aspectRatio
+        applyLayoutAspectRatio(aspectRatio)
         if storesInCache {
             ReaderImageAspectRatioCache.shared.store(aspectRatio, for: image.urlString)
         }
-        applyLayoutAspectRatio(aspectRatio)
     }
 
     @MainActor
     private func applyLayoutAspectRatio(_ aspectRatio: Double) {
         guard aspectRatio.isFinite, aspectRatio > 0 else { return }
-        layoutAspectRatio = aspectRatio
-        guard reportedLayoutAspectRatio.map({ abs($0 - aspectRatio) > 0.001 }) ?? true else {
+        guard layoutAspectRatio.map({ abs($0 - aspectRatio) > 0.001 }) ?? true else {
             return
         }
-        reportedLayoutAspectRatio = aspectRatio
+        layoutAspectRatio = aspectRatio
         onAspectRatioResolved?(aspectRatio)
     }
 
@@ -154,7 +158,6 @@ struct ReaderImageView: View {
         loadState = .loading
         knownAspectRatio = nil
         layoutAspectRatio = nil
-        reportedLayoutAspectRatio = nil
     }
 }
 
@@ -772,7 +775,7 @@ func + (lhs: CGSize, rhs: CGSize) -> CGSize {
     CGSize(width: lhs.width + rhs.width, height: lhs.height + rhs.height)
 }
 
-struct ReaderDecodedImage: @unchecked Sendable {
+nonisolated struct ReaderDecodedImage: @unchecked Sendable {
     let image: PicaXPlatformImage
 
     var aspectRatio: Double {
@@ -824,7 +827,7 @@ enum ReaderImageMemoryCache {
     }
 }
 
-final class ReaderImageAspectRatioCache: @unchecked Sendable {
+nonisolated final class ReaderImageAspectRatioCache: @unchecked Sendable {
     static let shared = ReaderImageAspectRatioCache()
 
     private let lock = NSLock()
@@ -901,7 +904,13 @@ enum ReaderImageDecoder {
                 continue
             }
 
-            _ = try? await image(url: url, targetPixelWidth: targetPixelWidth, decodePriority: .utility)
+            if let decodedImage = try? await image(
+                url: url,
+                targetPixelWidth: targetPixelWidth,
+                decodePriority: .utility
+            ) {
+                ReaderImageAspectRatioCache.shared.store(decodedImage.aspectRatio, for: urlString)
+            }
         }
     }
 
@@ -968,7 +977,11 @@ enum ReaderImageDecoder {
               heightNumber.doubleValue > 0 else {
             return nil
         }
-        let aspectRatio = heightNumber.doubleValue / widthNumber.doubleValue
+        let orientation = (properties[kCGImagePropertyOrientation] as? NSNumber)?.intValue ?? 1
+        let swapsDimensions = (5...8).contains(orientation)
+        let width = swapsDimensions ? heightNumber.doubleValue : widthNumber.doubleValue
+        let height = swapsDimensions ? widthNumber.doubleValue : heightNumber.doubleValue
+        let aspectRatio = height / width
         return aspectRatio.isFinite && aspectRatio > 0 ? aspectRatio : nil
     }
 

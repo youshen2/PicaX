@@ -57,6 +57,7 @@ struct ReaderWholeBookContinuousView: View {
     @State private var scrollBridge = ReaderContinuousScrollBridge()
     @State private var scrollTracker = ReaderContinuousScrollTracker()
     @State private var isAutoPagingTurnInFlight = false
+    @State private var visiblePageIDs = Set<ReaderWholeBookPageID>()
 
     init(
         item: ComicListItem,
@@ -405,8 +406,13 @@ struct ReaderWholeBookContinuousView: View {
             return
         }
 
+        let newVisiblePageIDs = Set(visiblePages.map(\.0))
+        if newVisiblePageIDs != visiblePageIDs {
+            visiblePageIDs = newVisiblePageIDs
+            focusLoadableImages(around: visiblePage, visiblePageIDs: newVisiblePageIDs)
+        }
+        guard visiblePage != currentVisiblePage else { return }
         currentVisiblePage = visiblePage
-        focusLoadableImages(around: visiblePage, visiblePageIDs: Set(visiblePages.map(\.0)))
         onPositionChange(visiblePage.chapterIndex, visiblePage.pageIndex, section.images.count)
         requestNextChapterIfNeeded(visiblePage: visiblePage)
     }
@@ -420,7 +426,7 @@ struct ReaderWholeBookContinuousView: View {
             loadableImageIDs.removeAll(keepingCapacity: true)
             return
         }
-        var centers = visiblePageIDs.compactMap { id in pages.firstIndex(where: { $0.id == id }) }
+        var centers = pages.indices.filter { visiblePageIDs.contains(pages[$0].id) }
         if centers.isEmpty, let index = pages.firstIndex(where: { $0.id == pageID }) {
             centers = [index]
         }

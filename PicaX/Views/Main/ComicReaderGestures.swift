@@ -43,6 +43,12 @@ struct ReaderZoomConfiguration: Equatable {
     }
 }
 
+@MainActor
+private final class ReaderInteractionGestureState {
+    var delayedTapTask: Task<Void, Never>?
+    var tapSuppressionUntil = Date.distantPast
+}
+
 struct ReaderInteractionGestureModifier: ViewModifier {
     private static let delayedSingleTapNanoseconds: UInt64 = 230_000_000
     private static let doubleTapSuppressionDuration: TimeInterval = 0.45
@@ -57,8 +63,7 @@ struct ReaderInteractionGestureModifier: ViewModifier {
     let readingMode: ReaderReadingMode
     let toggleUI: () -> Void
     let turnPage: (ReaderPageTurnDirection) -> Void
-    @State private var delayedTapTask: Task<Void, Never>?
-    @State private var tapSuppressionUntil = Date.distantPast
+    @State private var interactionState = ReaderInteractionGestureState()
 
     func body(content: Content) -> some View {
         let baseContent = content
@@ -155,18 +160,18 @@ struct ReaderInteractionGestureModifier: ViewModifier {
     }
 
     private func scheduleDelayedTap(at location: CGPoint) {
-        delayedTapTask?.cancel()
-        delayedTapTask = Task { @MainActor in
+        interactionState.delayedTapTask?.cancel()
+        interactionState.delayedTapTask = Task { @MainActor [interactionState] in
             try? await Task.sleep(nanoseconds: Self.delayedSingleTapNanoseconds)
             guard !Task.isCancelled else { return }
             handleTap(at: location)
-            delayedTapTask = nil
+            interactionState.delayedTapTask = nil
         }
     }
 
     private func handleTap(at location: CGPoint) {
         guard !ReaderZoomTapSuppressor.shouldSuppressTap,
-              Date() >= tapSuppressionUntil else {
+              Date() >= interactionState.tapSuppressionUntil else {
             return
         }
 
@@ -205,15 +210,15 @@ struct ReaderInteractionGestureModifier: ViewModifier {
     }
 
     private func suppressTapForCurrentMovement() {
-        delayedTapTask?.cancel()
-        delayedTapTask = nil
-        tapSuppressionUntil = Date().addingTimeInterval(Self.movementTapSuppressionDuration)
+        interactionState.delayedTapTask?.cancel()
+        interactionState.delayedTapTask = nil
+        interactionState.tapSuppressionUntil = Date().addingTimeInterval(Self.movementTapSuppressionDuration)
     }
 
     private func suppressTapAfterDoubleTap() {
-        delayedTapTask?.cancel()
-        delayedTapTask = nil
-        tapSuppressionUntil = Date().addingTimeInterval(Self.doubleTapSuppressionDuration)
+        interactionState.delayedTapTask?.cancel()
+        interactionState.delayedTapTask = nil
+        interactionState.tapSuppressionUntil = Date().addingTimeInterval(Self.doubleTapSuppressionDuration)
         ReaderZoomTapSuppressor.suppressTap(for: Self.doubleTapSuppressionDuration)
     }
 }
