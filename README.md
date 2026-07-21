@@ -126,14 +126,16 @@ alt="Get it on GitHub" align="center" height="80" /></a>
 
 ### Telegram CI 发布
 
-每次 CI 成功生成产物后，GitHub Actions 会先汇总上一次成功编译到本次编译之间的每条 Commit（短 SHA、标题和作者），再通过 Telegram Bot 将以下 4 个未签名产物合并为同一个媒体组消息发送到频道：
+每次 CI 成功生成产物后，GitHub Actions 会将上一次成功编译到本次编译之间的 Commit 汇总作为 Caption，并通过 Telegram Bot 将以下 4 个未签名产物合并为同一个媒体组消息发送到频道：
 
 - `PicaX-unsigned.ipa`
 - `PicaX-with-watch-unsigned.ipa`
 - `PicaX-WatchApp-unsigned.zip`
 - `PicaX.dmg`
 
-Commit 较多时会自动拆分为多条 Telegram 消息。外部 Fork 发起的 Pull Request 不会读取仓库 Secrets，因此只构建和保存产物，不会发送到频道。
+Caption 超过 Telegram 长度限制时会保留可容纳的 Commit，并注明省略数量及 Actions 链接，不会拆分成第二条消息。外部 Fork 发起的 Pull Request 不会读取仓库 Secrets，因此只构建和保存产物，不会发送到频道。
+
+版本标签会在 GitHub Release 上传完成后以非静默方式发送版本更新消息和全部产物，并自动置顶。机器人还需要频道的置顶消息权限；标签构建不会重复发送普通 CI 消息。Telegram 不会因频道置顶额外通知所有成员，最终通知仍受订阅者的频道通知设置影响。
 
 配置方式：
 

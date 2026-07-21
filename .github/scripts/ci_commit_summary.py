@@ -19,7 +19,7 @@ from urllib.request import Request, urlopen
 
 BUILD_JOB_NAME = "Build unsigned artifacts"
 DEFAULT_API_URL = "https://api.github.com"
-MESSAGE_LIMIT = 1800
+CAPTION_LIMIT = 1024
 PAGE_SIZE = 100
 MAX_PAGES = 5
 SHA_PATTERN = re.compile(r"^[0-9a-fA-F]{40}$")
@@ -193,11 +193,12 @@ def format_summary(
     previous_run_number: int | None,
     current_sha: str,
     current_run_number: int,
+    repository: str,
+    run_url: str,
 ) -> str:
-    lines = ["PicaX CI Commit 汇总", ""]
-
+    lines = ["PicaX CI 构建完成"]
     if previous_sha is None:
-        lines.append("未找到上一次成功编译的 CI 基线，本次仅列出当前 Commit。")
+        lines.append(f"范围：首次 CI → CI #{current_run_number} ({current_sha[:7]})")
     else:
         previous_run = (
             f"CI #{previous_run_number}" if previous_run_number else "上一次成功 CI"
@@ -207,58 +208,64 @@ def format_summary(
             f"CI #{current_run_number} ({current_sha[:7]})"
         )
 
-    lines.extend([f"共 {len(commits)} 条 Commit", ""])
+    lines.append(f"共 {len(commits)} 条 Commit")
+    commit_lines: list[str]
     if commits:
-        lines.extend(
+        commit_lines = [
             f"• {commit_sha[:7]} {subject} — {author}"
             for commit_sha, subject, author in commits
-        )
+        ]
     else:
-        lines.append("从上一次成功 CI 到本次没有新增 Commit。")
+        commit_lines = ["• 本次没有新增 Commit"]
 
-    return "\n".join(lines)
+    footer = [f"仓库：{repository}", f"详情：{run_url}"]
+    return fit_caption(lines, commit_lines, footer)
 
 
-def split_message(message: str, limit: int = MESSAGE_LIMIT) -> list[str]:
-    chunks: list[str] = []
-    current = ""
+def telegram_length(text: str) -> int:
+    return len(text.encode("utf-16-le")) // 2
 
-    for line in message.splitlines(keepends=True):
-        while len(line) > limit:
-            if current:
-                chunks.append(current.rstrip())
-                current = ""
-            chunks.append(line[:limit].rstrip())
-            line = line[limit:]
 
-        if current and len(current) + len(line) > limit:
-            chunks.append(current.rstrip())
-            current = ""
-        current += line
+def compose_caption(
+    header: list[str],
+    commit_lines: list[str],
+    footer: list[str],
+) -> str:
+    return "\n".join([*header, "", *commit_lines, "", *footer])
 
-    if current or not chunks:
-        chunks.append(current.rstrip())
-    return chunks
+
+def fit_caption(
+    header: list[str],
+    commit_lines: list[str],
+    footer: list[str],
+) -> str:
+    full_caption = compose_caption(header, commit_lines, footer)
+    if telegram_length(full_caption) <= CAPTION_LIMIT:
+        return full_caption
+
+    visible_commits: list[str] = []
+    for commit_line in commit_lines:
+        candidate_commits = [*visible_commits, commit_line]
+        omitted_count = len(commit_lines) - len(candidate_commits)
+        if omitted_count:
+            candidate_commits.append(f"• ……另有 {omitted_count} 条 Commit，详见 Actions")
+        candidate = compose_caption(header, candidate_commits, footer)
+        if telegram_length(candidate) > CAPTION_LIMIT:
+            break
+        visible_commits.append(commit_line)
+
+    omitted_count = len(commit_lines) - len(visible_commits)
+    if omitted_count:
+        visible_commits.append(f"• ……另有 {omitted_count} 条 Commit，详见 Actions")
+    return compose_caption(header, visible_commits, footer)
 
 
 def write_summary(
     summary: str,
     output_path: Path,
-    chunks_directory: Path,
 ) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(f"{summary}\n", encoding="utf-8")
-
-    chunks_directory.mkdir(parents=True, exist_ok=True)
-    for existing_chunk in chunks_directory.glob("message-*.txt"):
-        existing_chunk.unlink()
-
-    chunks = split_message(summary)
-    for index, chunk in enumerate(chunks, start=1):
-        if index > 1:
-            chunk = f"PicaX CI Commit 汇总（续 {index}/{len(chunks)}）\n\n{chunk}"
-        chunk_path = chunks_directory / f"message-{index:03d}.txt"
-        chunk_path.write_text(f"{chunk}\n", encoding="utf-8")
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -270,8 +277,8 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--workflow", default="build-unsigned.yml")
     parser.add_argument("--fallback-sha", default="")
     parser.add_argument("--previous-sha")
+    parser.add_argument("--run-url", required=True)
     parser.add_argument("--output", required=True, type=Path)
-    parser.add_argument("--chunks-directory", required=True, type=Path)
     return parser.parse_args()
 
 
@@ -317,8 +324,10 @@ def main() -> int:
         previous_run_number,
         current_sha,
         arguments.current_run_number,
+        arguments.repository,
+        arguments.run_url,
     )
-    write_summary(summary, arguments.output, arguments.chunks_directory)
+    write_summary(summary, arguments.output)
     print(summary)
     return 0
 
