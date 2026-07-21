@@ -1,5 +1,8 @@
 import Foundation
 import SwiftUI
+#if os(iOS)
+import UIKit
+#endif
 
 struct ReaderZoomConfiguration: Equatable {
     static let defaultLongPressTriggerDuration: TimeInterval = 0.3
@@ -107,7 +110,11 @@ struct ReaderInteractionGestureModifier: ViewModifier {
         if #available(iOS 16.0, *) {
             content.simultaneousGesture(singleTapGesture)
         } else {
-            content.simultaneousGesture(legacySingleTapGesture)
+            content.background {
+                ReaderLegacyTapGestureInstaller { location in
+                    handleSingleTap(at: location)
+                }
+            }
         }
         #else
         content.simultaneousGesture(singleTapGesture)
@@ -132,24 +139,16 @@ struct ReaderInteractionGestureModifier: ViewModifier {
     private var singleTapGesture: some Gesture {
         SpatialTapGesture(count: 1, coordinateSpace: .local)
             .onEnded { value in
-                if doubleTapZoomEnabled {
-                    scheduleDelayedTap(at: value.location)
-                } else {
-                    handleTap(at: value.location)
-                }
+                handleSingleTap(at: value.location)
             }
     }
 
-    private var legacySingleTapGesture: some Gesture {
-        DragGesture(minimumDistance: 0, coordinateSpace: .local)
-            .onEnded { value in
-                guard !shouldSuppressTap(for: value.translation) else { return }
-                if doubleTapZoomEnabled {
-                    scheduleDelayedTap(at: value.location)
-                } else {
-                    handleTap(at: value.location)
-                }
-            }
+    private func handleSingleTap(at location: CGPoint) {
+        if doubleTapZoomEnabled {
+            scheduleDelayedTap(at: location)
+        } else {
+            handleTap(at: location)
+        }
     }
 
     private var doubleTapCancellationGesture: some Gesture {
@@ -222,3 +221,105 @@ struct ReaderInteractionGestureModifier: ViewModifier {
         ReaderZoomTapSuppressor.suppressTap(for: Self.doubleTapSuppressionDuration)
     }
 }
+
+#if os(iOS)
+private struct ReaderLegacyTapGestureInstaller: UIViewRepresentable {
+    let onTap: (CGPoint) -> Void
+
+    func makeUIView(context: Context) -> ReaderLegacyTapGestureAttachmentView {
+        let view = ReaderLegacyTapGestureAttachmentView()
+        view.update(onTap: onTap)
+        return view
+    }
+
+    func updateUIView(_ uiView: ReaderLegacyTapGestureAttachmentView, context: Context) {
+        uiView.update(onTap: onTap)
+        uiView.attachRecognizerIfNeeded()
+    }
+
+    static func dismantleUIView(_ uiView: ReaderLegacyTapGestureAttachmentView, coordinator: ()) {
+        uiView.detachRecognizer()
+    }
+}
+
+private final class ReaderLegacyTapGestureAttachmentView: UIView, UIGestureRecognizerDelegate {
+    private weak var recognitionView: UIView?
+    private var onTap: ((CGPoint) -> Void)?
+
+    private lazy var tapRecognizer: UITapGestureRecognizer = {
+        let recognizer = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
+        recognizer.cancelsTouchesInView = false
+        recognizer.delaysTouchesBegan = false
+        recognizer.delaysTouchesEnded = false
+        recognizer.delegate = self
+        return recognizer
+    }()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isUserInteractionEnabled = false
+        backgroundColor = .clear
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        isUserInteractionEnabled = false
+        backgroundColor = .clear
+    }
+
+    override func didMoveToSuperview() {
+        super.didMoveToSuperview()
+        attachRecognizerIfNeeded()
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        attachRecognizerIfNeeded()
+    }
+
+    func update(onTap: @escaping (CGPoint) -> Void) {
+        self.onTap = onTap
+    }
+
+    func attachRecognizerIfNeeded() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, window != nil else { return }
+            let targetView = nearestScrollView() ?? superview
+            guard recognitionView !== targetView else { return }
+            detachRecognizer()
+            targetView?.addGestureRecognizer(tapRecognizer)
+            recognitionView = targetView
+        }
+    }
+
+    func detachRecognizer() {
+        recognitionView?.removeGestureRecognizer(tapRecognizer)
+        recognitionView = nil
+    }
+
+    @objc private func handleTap(_ recognizer: UITapGestureRecognizer) {
+        guard recognizer.state == .ended else { return }
+        let location = recognizer.location(in: self)
+        guard bounds.contains(location) else { return }
+        onTap?(location)
+    }
+
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+    ) -> Bool {
+        true
+    }
+
+    private func nearestScrollView() -> UIScrollView? {
+        var view = superview
+        while let current = view {
+            if let scrollView = current as? UIScrollView {
+                return scrollView
+            }
+            view = current.superview
+        }
+        return nil
+    }
+}
+#endif
