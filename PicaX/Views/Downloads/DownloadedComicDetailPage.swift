@@ -29,10 +29,7 @@ struct DownloadedComicDetailPage: View {
             }
 
             Section("操作") {
-                NavigationLink {
-                    ComicDetailPage(item: record.item, service: service)
-                        .picaxHidesTabBar()
-                } label: {
+                ComicDetailNavigationLink(item: record.item, service: service) {
                     Label("打开联网详情页", systemImage: "network")
                 }
 

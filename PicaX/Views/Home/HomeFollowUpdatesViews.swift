@@ -119,10 +119,7 @@ struct FollowUpdatesPage: View {
     }
 
     private func comicLink(_ record: FollowUpdateRecord) -> some View {
-        NavigationLink {
-            ComicDetailPage(item: record.item, service: service)
-                .picaxHidesTabBar()
-        } label: {
+        ComicDetailNavigationLink(item: record.item, service: service) {
             VStack(alignment: .leading, spacing: 5) {
                 HStack {
                     Text(record.item.title)

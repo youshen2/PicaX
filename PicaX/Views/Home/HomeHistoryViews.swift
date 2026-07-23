@@ -39,10 +39,7 @@ struct HomeHistoryCard: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     LazyHStack(spacing: 12) {
                         ForEach(records) { record in
-                            NavigationLink {
-                                ComicDetailPage(item: record.item, service: service)
-                                    .picaxHidesTabBar()
-                            } label: {
+                            ComicDetailNavigationLink(item: record.item, service: service) {
                                 HistoryCardItem(record: record)
                             }
                             .buttonStyle(.plain)
@@ -107,10 +104,7 @@ private struct ReadingHistoryListPage: View {
             } else {
                 Section {
                     ForEach(readingHistory.records) { record in
-                        NavigationLink {
-                            ComicDetailPage(item: record.item, service: service)
-                                .picaxHidesTabBar()
-                        } label: {
+                        ComicDetailNavigationLink(item: record.item, service: service) {
                             ReadingHistoryRow(record: record)
                         }
                         .swipeActions(edge: .trailing) {

@@ -250,7 +250,7 @@ private enum SettingsSearchItem: CaseIterable {
         case .backup:
             "本地文件与 WebDAV 备份、同步和恢复"
         case .appDisplay:
-            "显示模式"
+            "显示模式与页面过渡"
         case .appBehavior:
             "剪贴板检测与启动检查"
         case .watchConnectivity:
@@ -281,7 +281,7 @@ private enum SettingsSearchItem: CaseIterable {
         case .downloads:
             ["下载评论", "同时下载", "限速", "队列", "ZIP", "导出", "文件名", "章节屏蔽", "章节名"]
         case .appDisplay:
-            ["深色", "浅色"]
+            ["深色", "浅色", "动画", "平滑过渡", "页面过渡", "缩放"]
         case .appBehavior:
             ["剪贴板", "启动", "更新", "敏感", "隐私", "截图", "录屏", "封面"]
         case .watchConnectivity:
@@ -304,6 +304,7 @@ private enum SettingsSearchItem: CaseIterable {
 
 private struct AppDisplaySettingsView: View {
     @AppStorage(AppAppearanceSettingsKey.colorScheme) private var colorScheme = AppAppearanceMode.system.rawValue
+    @AppStorage(AppAppearanceSettingsKey.usesSmoothComicDetailTransitions) private var usesSmoothComicDetailTransitions = true
 
     var body: some View {
         List {
@@ -318,11 +319,32 @@ private struct AppDisplaySettingsView: View {
             } footer: {
                 Text("选择后会应用到整个应用。")
             }
+
+            #if os(iOS)
+            Section {
+                Toggle("漫画详情平滑过渡", isOn: $usesSmoothComicDetailTransitions)
+                    .disabled(!supportsSmoothComicDetailTransitions)
+            } header: {
+                Text("页面过渡")
+            } footer: {
+                Text("开启后，打开漫画详情时会从所选内容平滑缩放。此设置仅影响漫画详情，且需要 iOS 18 或更高版本。")
+            }
+            #endif
         }
         .picaxInsetGroupedListStyle()
         .navigationTitle("显示")
         .picaxHidesTabBar()
     }
+
+    #if os(iOS)
+    private var supportsSmoothComicDetailTransitions: Bool {
+        if #available(iOS 18.0, *) {
+            true
+        } else {
+            false
+        }
+    }
+    #endif
 }
 
 private struct AppBehaviorSettingsView: View {

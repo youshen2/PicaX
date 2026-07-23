@@ -211,6 +211,7 @@ private struct ComicDetailContent: View {
     @State private var selectedTag: ComicTagReference?
     @State private var relatedDetailRequest: ComicListDetailRequest?
     @State private var relatedReaderRequest: ComicListReaderRequest?
+    @Namespace private var navigationTransitionNamespace
     let onRefresh: () async -> Void
 
     var body: some View {
@@ -272,9 +273,11 @@ private struct ComicDetailContent: View {
         .picaxNavigationDestination(item: $selectedTag) { tag in
             ComicTagComicsPage(tag: tag, service: service)
         }
-        .picaxNavigationDestination(item: $relatedDetailRequest) { request in
-            ComicDetailPage(item: request.item, service: service)
-        }
+        .picaxComicDetailDestination(
+            item: $relatedDetailRequest,
+            in: navigationTransitionNamespace,
+            service: service
+        )
         .picaxNavigationDestination(item: $relatedReaderRequest) { request in
             ComicReaderPage(
                 detail: request.detail,
@@ -451,6 +454,7 @@ private struct ComicDetailContent: View {
                             item: comic,
                             service: service,
                             hasReadingProgress: hasReadingProgress(for: comic),
+                            comicDetailTransitionNamespace: navigationTransitionNamespace,
                             openDetail: { relatedDetailRequest = ComicListDetailRequest(item: $0) },
                             openReader: { relatedReaderRequest = $0 }
                         )

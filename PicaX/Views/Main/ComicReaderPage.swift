@@ -121,6 +121,7 @@ struct ComicReaderPage: View {
     @State private var detailRequest: ComicListDetailRequest?
     @State private var readingDurationSessionStart: Date?
     @State private var didShowInitialToast = false
+    @Namespace private var navigationTransitionNamespace
 
     init(
         detail: ComicDetailInfo,
@@ -346,12 +347,18 @@ struct ComicReaderPage: View {
                 } label: {
                     Image(systemName: "ellipsis")
                 }
+                .picaxComicDetailTransitionSource(
+                    id: ComicDetailTransitionID(detail.item),
+                    in: navigationTransitionNamespace
+                )
                 .accessibilityLabel("更多")
             }
         }
-        .picaxNavigationDestination(item: $detailRequest) { request in
-            ComicDetailPage(item: request.item, service: service)
-        }
+        .picaxComicDetailDestination(
+            item: $detailRequest,
+            in: navigationTransitionNamespace,
+            service: service
+        )
         .sheet(item: $presentedChapterSheetTab) { tab in
             ReaderChapterPickerSheet(
                 chapters: detail.chapters,

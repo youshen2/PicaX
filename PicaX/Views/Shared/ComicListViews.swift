@@ -37,6 +37,7 @@ struct ComicListSection: View {
     @State private var tagDisplayVersion = 0
     @State private var lastWaterfallPaginationTrigger: ComicWaterfallPaginationTrigger?
     @Namespace private var waterfallScrollCoordinateSpace
+    @Namespace private var navigationTransitionNamespace
 
     private static let initialRenderedComicCount = 48
     private static let renderedComicPageSize = 48
@@ -48,9 +49,11 @@ struct ComicListSection: View {
         Group {
             comicList
         }
-        .picaxNavigationDestination(item: $detailRequest) { request in
-            ComicDetailPage(item: request.item, service: service)
-        }
+        .picaxComicDetailDestination(
+            item: $detailRequest,
+            in: navigationTransitionNamespace,
+            service: service
+        )
         .picaxNavigationDestination(item: $readerRequest) { request in
             ComicReaderPage(
                 detail: request.detail,
@@ -445,6 +448,7 @@ struct ComicListSection: View {
             showsTags: showsListTags,
             maxVisibleTags: maxVisibleTags,
             showsPopularity: showsListPopularity,
+            comicDetailTransitionNamespace: navigationTransitionNamespace,
             openDetail: { detailRequest = ComicListDetailRequest(item: $0) },
             openReader: { readerRequest = $0 }
         ) {
@@ -871,6 +875,7 @@ struct ComicListActionLink: View {
     var showsTags = true
     var maxVisibleTags = 5
     var showsPopularity = true
+    let comicDetailTransitionNamespace: Namespace.ID
     let openDetail: (ComicListItem) -> Void
     let openReader: (ComicListReaderRequest) -> Void
     var onAppear: (() -> Void)?
@@ -928,31 +933,7 @@ struct ComicListActionLink: View {
         Button {
             openDetail(item)
         } label: {
-            Group {
-                if layoutMode == .waterfall {
-                    ComicListWaterfallCard(
-                        item: item,
-                        readingProgressText: readingProgressText,
-                        displayTags: displayTags,
-                        showsFavoriteState: showsFavoriteState,
-                        showsTags: showsTags,
-                        maxVisibleTags: maxVisibleTags,
-                        showsPopularity: showsPopularity
-                    )
-                    .equatable()
-                } else {
-                    ComicListRow(
-                        item: item,
-                        readingProgressText: readingProgressText,
-                        displayTags: displayTags,
-                        showsFavoriteState: showsFavoriteState,
-                        showsTags: showsTags,
-                        maxVisibleTags: maxVisibleTags,
-                        showsPopularity: showsPopularity
-                    )
-                    .equatable()
-                }
-            }
+            actionLabel
         }
         .buttonStyle(.plain)
         .contentShape(Rectangle())
@@ -965,6 +946,41 @@ struct ComicListActionLink: View {
             )
         )
 #endif
+    }
+
+    @ViewBuilder
+    private var actionLabel: some View {
+        if layoutMode == .waterfall {
+            ComicListWaterfallCard(
+                item: item,
+                readingProgressText: readingProgressText,
+                displayTags: displayTags,
+                showsFavoriteState: showsFavoriteState,
+                showsTags: showsTags,
+                maxVisibleTags: maxVisibleTags,
+                showsPopularity: showsPopularity,
+                coverTransitionSource: ComicDetailTransitionSource(
+                    item: item,
+                    namespace: comicDetailTransitionNamespace
+                )
+            )
+            .equatable()
+        } else {
+            ComicListRow(
+                item: item,
+                readingProgressText: readingProgressText,
+                displayTags: displayTags,
+                showsFavoriteState: showsFavoriteState,
+                showsTags: showsTags,
+                maxVisibleTags: maxVisibleTags,
+                showsPopularity: showsPopularity
+            )
+            .equatable()
+            .picaxComicDetailTransitionSource(
+                id: ComicDetailTransitionID(item),
+                in: comicDetailTransitionNamespace
+            )
+        }
     }
 
     @ViewBuilder
@@ -1184,6 +1200,7 @@ private struct ComicListWaterfallCard: View, Equatable {
     var maxVisibleTags = 5
     var showsPopularity = true
     var usesOpaqueSurface = false
+    var coverTransitionSource: ComicDetailTransitionSource? = nil
     @State private var coverTint: Color?
 
     static func == (lhs: ComicListWaterfallCard, rhs: ComicListWaterfallCard) -> Bool {
@@ -1203,13 +1220,7 @@ private struct ComicListWaterfallCard: View, Equatable {
                 .aspectRatio(82.0 / 112.0, contentMode: .fit)
                 .frame(maxWidth: .infinity)
                 .overlay {
-                    ComicCoverView(
-                        url: item.coverURL,
-                        accentColor: item.accentColor,
-                        cornerRadius: 0,
-                        showsBorder: false
-                    )
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    transitionCover
                 }
                 .clipped()
                 .overlay(alignment: .bottom) {
@@ -1295,6 +1306,26 @@ private struct ComicListWaterfallCard: View, Equatable {
             let sampledColor = await CoverColorSampler.averageColor(url: item.coverURL)
             guard !Task.isCancelled else { return }
             coverTint = sampledColor
+        }
+    }
+
+    @ViewBuilder
+    private var transitionCover: some View {
+        let cover = ComicCoverView(
+            url: item.coverURL,
+            accentColor: item.accentColor,
+            cornerRadius: 0,
+            showsBorder: false
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+        if let coverTransitionSource {
+            cover.picaxComicDetailTransitionSource(
+                id: coverTransitionSource.id,
+                in: coverTransitionSource.namespace
+            )
+        } else {
+            cover
         }
     }
 

@@ -39,10 +39,7 @@ struct HomeReadLaterCard: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     LazyHStack(spacing: 12) {
                         ForEach(records) { record in
-                            NavigationLink {
-                                ComicDetailPage(item: record.item, service: service)
-                                    .picaxHidesTabBar()
-                            } label: {
+                            ComicDetailNavigationLink(item: record.item, service: service) {
                                 ReadLaterCardItem(record: record)
                             }
                             .buttonStyle(.plain)
@@ -113,10 +110,7 @@ struct ReadLaterListPage: View {
             } else {
                 Section {
                     ForEach(readLater.records) { record in
-                        NavigationLink {
-                            ComicDetailPage(item: record.item, service: service)
-                                .picaxHidesTabBar()
-                        } label: {
+                        ComicDetailNavigationLink(item: record.item, service: service) {
                             ReadLaterRow(record: record, downloadStatusText: downloadStatusText(for: record.item))
                         }
                         .swipeActions(edge: .trailing) {

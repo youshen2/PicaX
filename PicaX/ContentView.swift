@@ -8,6 +8,7 @@ struct ContentView: View {
     @EnvironmentObject private var appSettings: AppSettings
     @EnvironmentObject private var accountService: AccountService
     @AppStorage(AppAppearanceSettingsKey.colorScheme) private var colorScheme = AppAppearanceMode.system.rawValue
+    @AppStorage(AppAppearanceSettingsKey.usesSmoothComicDetailTransitions) private var usesSmoothComicDetailTransitions = true
     @AppStorage(AppBehaviorSettingsKey.checksUpdatesOnLaunch) private var checksUpdatesOnLaunch = true
     @State private var didHandleLaunch = false
     @State private var showsRecommendationDialog = false
@@ -29,6 +30,7 @@ struct ContentView: View {
             }
         }
         .preferredColorScheme(selectedAppearanceMode.colorScheme)
+        .environment(\.picaxUsesSmoothComicDetailTransitions, usesSmoothComicDetailTransitions)
         .task {
             await handleLaunch()
         }

@@ -306,10 +306,7 @@ private struct DownloadedComicInfoFooter: View {
             buttonLabel("查看详情")
         }
         .contextMenu {
-            NavigationLink {
-                ComicDetailPage(item: record.item, service: service)
-                    .picaxHidesTabBar()
-            } label: {
+            ComicDetailNavigationLink(item: record.item, service: service) {
                 Label("联网详情", systemImage: "network")
             }
         }

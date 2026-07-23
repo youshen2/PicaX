@@ -85,6 +85,7 @@ enum HomeSectionKind: String, CaseIterable, Identifiable {
 
 enum AppAppearanceSettingsKey {
     static let colorScheme = "settings.appAppearance.colorScheme"
+    static let usesSmoothComicDetailTransitions = "settings.appAppearance.usesSmoothNavigationTransitions"
 }
 
 enum AppBehaviorSettingsKey {

@@ -969,10 +969,7 @@ private struct PicacgUserCommentsPage: View {
                         .foregroundStyle(.secondary)
                 } else {
                     ForEach(comments) { comment in
-                        NavigationLink {
-                            ComicDetailPage(item: comment.comicItem, service: service)
-                                .picaxHidesTabBar()
-                        } label: {
+                        ComicDetailNavigationLink(item: comment.comicItem, service: service) {
                             PicacgUserCommentRow(comment: comment)
                         }
                     }
