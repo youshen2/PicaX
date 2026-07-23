@@ -24,7 +24,7 @@ struct HomeReadingDurationCard: View {
     let todayKey: String
     let todayDurationText: String
     let totalDurationText: String
-    let service: ComicContentService
+    let openDetail: (ReadingDurationRecord) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -42,9 +42,8 @@ struct HomeReadingDurationCard: View {
             } else {
                 VStack(spacing: 0) {
                     ForEach(Array(records.enumerated()), id: \.element.id) { index, record in
-                        NavigationLink {
-                            ReadingDurationDetailPage(record: record, service: service)
-                                .picaxHidesTabBar()
+                        Button {
+                            openDetail(record)
                         } label: {
                             ReadingDurationCardItem(record: record, todayKey: todayKey)
                         }

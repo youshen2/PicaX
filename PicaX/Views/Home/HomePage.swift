@@ -31,6 +31,7 @@ struct HomePage: View {
     @State private var downloadedReaderRequest: DownloadedComicReaderRequest?
     @State private var downloadedSearchRequest: DownloadedComicSearchRequest?
     @State private var toolDetailRequest: HomeToolDetailRequest?
+    @State private var readingDurationDetailRecord: ReadingDurationRecord?
     @State private var toolInputTarget: HomeToolInputTarget?
     @State private var toolInputText = ""
     @State private var toolErrorMessage: String?
@@ -70,6 +71,10 @@ struct HomePage: View {
         }
         .picaxNavigationDestination(item: $toolDetailRequest) { request in
             ComicDetailPage(item: request.item, service: contentService)
+                .picaxHidesTabBar()
+        }
+        .picaxNavigationDestination(item: $readingDurationDetailRecord) { record in
+            ReadingDurationDetailPage(record: record, service: contentService)
                 .picaxHidesTabBar()
         }
         .alert(toolInputTarget?.title ?? "", isPresented: toolInputDialogBinding) {
@@ -247,7 +252,7 @@ struct HomePage: View {
                         todayKey: readingDuration.todayKey,
                         todayDurationText: readingDuration.todayDurationText,
                         totalDurationText: readingDuration.totalDurationText,
-                        service: contentService
+                        openDetail: { readingDurationDetailRecord = $0 }
                     )
                 } header: {
                     HomeReadingDurationHeader(service: contentService)
