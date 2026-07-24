@@ -7,6 +7,7 @@ final class AppSettings: ObservableObject {
         static let hasConfirmedAdultAge = "picax.hasConfirmedAdultAge"
         static let hasCompletedOnboarding = "picax.hasCompletedOnboarding"
         static let hasAcceptedTerms = "picax.hasAcceptedTerms"
+        static let hasAcceptedDisclaimer = "picax.hasAcceptedDisclaimer"
     }
 
     @Published var hasConfirmedAdultAge: Bool {
@@ -27,6 +28,12 @@ final class AppSettings: ObservableObject {
         }
     }
 
+    @Published var hasAcceptedDisclaimer: Bool {
+        didSet {
+            defaults.set(hasAcceptedDisclaimer, forKey: Key.hasAcceptedDisclaimer)
+        }
+    }
+
     private let defaults: UserDefaults
 
     init(defaults: UserDefaults = .standard) {
@@ -34,20 +41,26 @@ final class AppSettings: ObservableObject {
         hasConfirmedAdultAge = defaults.bool(forKey: Key.hasConfirmedAdultAge)
         hasCompletedOnboarding = defaults.bool(forKey: Key.hasCompletedOnboarding)
         hasAcceptedTerms = defaults.bool(forKey: Key.hasAcceptedTerms)
+        hasAcceptedDisclaimer = defaults.bool(forKey: Key.hasAcceptedDisclaimer)
     }
 
     func confirmAdultAge() {
         hasConfirmedAdultAge = true
     }
 
-    func completeOnboarding() {
+    func acceptTerms() {
         hasAcceptedTerms = true
+    }
+
+    func acceptDisclaimerAndCompleteOnboarding() {
         hasCompletedOnboarding = true
+        hasAcceptedDisclaimer = true
     }
 
     func reloadFromDefaults() {
         hasConfirmedAdultAge = defaults.bool(forKey: Key.hasConfirmedAdultAge)
         hasCompletedOnboarding = defaults.bool(forKey: Key.hasCompletedOnboarding)
         hasAcceptedTerms = defaults.bool(forKey: Key.hasAcceptedTerms)
+        hasAcceptedDisclaimer = defaults.bool(forKey: Key.hasAcceptedDisclaimer)
     }
 }

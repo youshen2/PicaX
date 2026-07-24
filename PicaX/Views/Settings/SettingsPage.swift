@@ -258,7 +258,7 @@ private enum SettingsSearchItem: CaseIterable {
         case .network:
             "连接与重试"
         case .about:
-            "版本、平台与声明"
+            "版本、协议与声明"
         }
     }
 
@@ -290,6 +290,8 @@ private enum SettingsSearchItem: CaseIterable {
             ["阅读进度", "清空", "记录"]
         case .readingDuration:
             ["阅读时长", "统计", "趋势", "清空", "记录", "单次", "低于"]
+        case .about:
+            ["用户协议", "隐私政策", "免责声明", "开源许可", "版本", "声明"]
         default:
             []
         }
@@ -3270,13 +3272,31 @@ private struct AboutSettingsView: View {
                 .disabled(isCheckingUpdate)
             }
 
-            Section("开源") {
-                Link(destination: AppUpdateService.repositoryURL) {
-                    Label("开源地址", systemImage: "chevron.left.forwardslash.chevron.right")
+            Section("协议与声明") {
+                ForEach(LegalDocument.all) { document in
+                    NavigationLink {
+                        LegalDocumentView(document: document)
+                    } label: {
+                        SettingsActionRow(
+                            title: document.title,
+                            subtitle: document.summary,
+                            systemImage: document.systemImage
+                        )
+                    }
                 }
 
                 Link(destination: URL(string: "https://www.mozilla.org/MPL/2.0/")!) {
-                    Label("MPL-2.0 开源协议", systemImage: "doc.text")
+                    SettingsActionRow(
+                        title: "MPL-2.0 开源许可",
+                        subtitle: "查看 PicaX 使用的开源许可证",
+                        systemImage: "doc.text"
+                    )
+                }
+            }
+
+            Section("开源") {
+                Link(destination: AppUpdateService.repositoryURL) {
+                    Label("开源地址", systemImage: "chevron.left.forwardslash.chevron.right")
                 }
             }
 
@@ -3304,12 +3324,6 @@ private struct AboutSettingsView: View {
                 }
             }
 
-            Section("平台") {
-                SettingsValueRow(title: "支持漫画源", value: "\(ComicPlatform.allCases.count)")
-                ForEach(ComicPlatform.allCases) { platform in
-                    Label(platform.title, systemImage: platform.systemImage)
-                }
-            }
         }
         .picaxInsetGroupedListStyle()
         .navigationTitle("关于")

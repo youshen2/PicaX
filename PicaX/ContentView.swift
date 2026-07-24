@@ -25,7 +25,9 @@ struct ContentView: View {
         Group {
             if !appSettings.hasConfirmedAdultAge {
                 AgeRequirementView()
-            } else if !appSettings.hasCompletedOnboarding || !appSettings.hasAcceptedTerms {
+            } else if !appSettings.hasCompletedOnboarding
+                        || !appSettings.hasAcceptedTerms
+                        || !appSettings.hasAcceptedDisclaimer {
                 OnboardingView()
             } else {
                 MainTabView()
@@ -91,6 +93,7 @@ struct ContentView: View {
         appSettings.hasConfirmedAdultAge
             && appSettings.hasCompletedOnboarding
             && appSettings.hasAcceptedTerms
+            && appSettings.hasAcceptedDisclaimer
     }
 
     @MainActor
