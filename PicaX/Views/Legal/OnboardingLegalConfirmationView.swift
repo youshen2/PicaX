@@ -28,7 +28,7 @@ struct OnboardingLegalConfirmationView: View {
     var body: some View {
         PicaxNavigationContainer {
             ZStack {
-                AppColor.groupedBackground
+                AppColor.systemBackground
                     .ignoresSafeArea()
 
                 documentScrollView
@@ -56,8 +56,10 @@ struct OnboardingLegalConfirmationView: View {
     private var documentScrollView: some View {
         ScrollView {
             LegalDocumentContent(document: step.document)
-                .padding(.horizontal, 20)
-                .padding(.vertical, 20)
+                .frame(maxWidth: 720)
+                .padding(.horizontal, 24)
+                .padding(.vertical, 32)
+                .frame(maxWidth: .infinity)
         }
     }
 

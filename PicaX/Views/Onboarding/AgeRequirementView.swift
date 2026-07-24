@@ -6,90 +6,45 @@ struct AgeRequirementView: View {
 
     var body: some View {
         GeometryReader { proxy in
-            ZStack {
-                background
-                
-                VStack(spacing: 0) {
-                    Spacer(minLength: max(32, proxy.size.height * 0.08))
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("18+")
+                        .font(.system(size: 56, weight: .bold, design: .rounded))
+                        .foregroundStyle(.red)
+                        .accessibilityLabel("仅限已满 18 周岁的用户")
 
-                    VStack(spacing: 14) {
-                        Text("年龄确认")
-                            .font(.system(size: 32, weight: .bold))
+                    Text("年龄确认")
+                        .font(.title.bold())
+                        .padding(.top, 24)
 
-                        Text("PicaX 提供的部分内容可能不适合未成年人。使用本应用前，请确认你已年满 18 周岁。")
-                            .font(.body)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
-                            .lineSpacing(4)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .padding(.bottom, 28)
-
-                    requirementCard
-
-                    Spacer(minLength: 40)
-
-                    actionButtons
+                    Text("PicaX 仅面向已满 18 周岁的用户。应用可能展示来自第三方平台的成人题材内容。")
+                        .font(.body)
+                        .foregroundStyle(.secondary)
+                        .lineSpacing(4)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: 420, alignment: .leading)
+                        .padding(.top, 12)
                 }
-                .frame(minHeight: proxy.size.height)
-                .padding(.horizontal, 30)
-                .padding(.bottom, 18)
+                .padding(.horizontal, 28)
+                .padding(.top, max(72, proxy.size.height * 0.12))
+                .padding(.bottom, 32)
+                .frame(maxWidth: 520, alignment: .leading)
+                .frame(minHeight: proxy.size.height, alignment: .topLeading)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
             }
         }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            confirmationBar
+        }
+        .background(AppColor.systemBackground.ignoresSafeArea())
         .alert("无法继续", isPresented: $showsUnderageMessage) {
             Button("知道了", role: .cancel) {}
         } message: {
-            Text("本应用仅面向已满 18 周岁的用户。请关闭应用。")
+            Text("PicaX 仅向已满 18 周岁的用户开放。请关闭应用，并在满足年龄要求后再使用。")
         }
     }
 
-    private var background: some View {
-        ZStack {
-            AppColor.systemBackground
-
-            RadialGradient(
-                colors: [
-                    Color.red.opacity(0.16),
-                    Color.orange.opacity(0.06),
-                    .clear
-                ],
-                center: .top,
-                startRadius: 20,
-                endRadius: 420
-            )
-        }
-        .ignoresSafeArea()
-    }
-
-    private var requirementCard: some View {
-        HStack(alignment: .top, spacing: 14) {
-            Image(systemName: "exclamationmark.shield.fill")
-                .font(.system(size: 22, weight: .semibold))
-                .foregroundStyle(.red)
-                .frame(width: 28)
-                .accessibilityHidden(true)
-
-            VStack(alignment: .leading, spacing: 5) {
-                Text("仅限成年人")
-                    .font(.headline)
-
-                Text("继续即表示你确认自己已满 18 周岁，并会遵守所在地区适用的法律法规。")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Spacer(minLength: 0)
-        }
-        .padding(18)
-        .background(
-            AppColor.secondaryGroupedBackground,
-            in: RoundedRectangle(cornerRadius: 18, style: .continuous)
-        )
-        .accessibilityElement(children: .combine)
-    }
-
-    private var actionButtons: some View {
+    private var confirmationBar: some View {
         VStack(spacing: 12) {
             Button {
                 appSettings.confirmAdultAge()
@@ -102,22 +57,34 @@ struct AgeRequirementView: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(.white)
-            .background(.red, in: Capsule())
-            .glassProminentIfAvailable(tint: .red)
-            .accessibilityHint("确认后进入应用引导")
+            .background(.blue, in: Capsule())
+            .glassProminentIfAvailable()
+            .accessibilityHint("确认年龄并进入应用引导")
 
-            Button {
+            Button("我未满 18 周岁") {
                 showsUnderageMessage = true
-            } label: {
-                Text("我未满 18 周岁")
-                    .font(.headline)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 48)
-                    .contentShape(Capsule())
             }
             .buttonStyle(.plain)
+            .font(.headline)
             .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity)
+            .frame(height: 44)
             .accessibilityHint("未满 18 周岁无法使用本应用")
+        }
+        .padding(.horizontal, 30)
+        .padding(.top, 22)
+        .padding(.bottom, 14)
+        .background {
+            LinearGradient(
+                colors: [
+                    .clear,
+                    AppColor.systemBackground.opacity(0.96),
+                    AppColor.systemBackground
+                ],
+                startPoint: .top,
+                endPoint: .center
+            )
+            .ignoresSafeArea()
         }
     }
 }

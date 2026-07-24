@@ -6,10 +6,12 @@ struct LegalDocumentView: View {
     var body: some View {
         ScrollView {
             LegalDocumentContent(document: document)
-                .padding(.horizontal, 20)
-                .padding(.vertical, 24)
+                .frame(maxWidth: 720)
+                .padding(.horizontal, 24)
+                .padding(.vertical, 32)
+                .frame(maxWidth: .infinity)
         }
-        .background(AppColor.groupedBackground.ignoresSafeArea())
+        .background(AppColor.systemBackground.ignoresSafeArea())
         .navigationTitle(document.title)
         .picaxNavigationBarTitleDisplayModeInline()
         .picaxHidesTabBar()
@@ -20,47 +22,49 @@ struct LegalDocumentContent: View {
     let document: LegalDocument
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            VStack(alignment: .leading, spacing: 12) {
-                Label(document.title, systemImage: document.systemImage)
-                    .font(.title2.bold())
-                    .foregroundStyle(.primary)
+        VStack(alignment: .leading, spacing: 0) {
+            documentHeader
 
-                Text(document.introduction)
-                    .font(.body)
-                    .foregroundStyle(.secondary)
-                    .lineSpacing(4)
+            Divider()
+                .padding(.vertical, 28)
 
-                Text("更新日期：2026 年 7 月 24 日")
-                    .font(.footnote)
-                    .foregroundStyle(.tertiary)
-            }
-            .padding(20)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                AppColor.secondaryGroupedBackground,
-                in: RoundedRectangle(cornerRadius: 18, style: .continuous)
-            )
-
-            ForEach(document.sections) { section in
+            ForEach(Array(document.sections.enumerated()), id: \.element.id) { index, section in
                 VStack(alignment: .leading, spacing: 8) {
                     Text(section.title)
-                        .font(.headline)
+                        .font(.title3.weight(.semibold))
 
                     Text(section.body)
-                        .font(.subheadline)
+                        .font(.body)
                         .foregroundStyle(.secondary)
-                        .lineSpacing(4)
+                        .lineSpacing(5)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                .padding(18)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    AppColor.secondaryGroupedBackground,
-                    in: RoundedRectangle(cornerRadius: 16, style: .continuous)
-                )
+
+                if index < document.sections.count - 1 {
+                    Divider()
+                        .padding(.vertical, 24)
+                }
             }
         }
         .textSelection(.enabled)
+    }
+
+    private var documentHeader: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(document.title)
+                .font(.largeTitle.bold())
+
+            Text(document.introduction)
+                .font(.body)
+                .foregroundStyle(.secondary)
+                .lineSpacing(5)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Text("更新日期：2026 年 7 月 24 日")
+                .font(.footnote)
+                .foregroundStyle(.tertiary)
+        }
     }
 }
 

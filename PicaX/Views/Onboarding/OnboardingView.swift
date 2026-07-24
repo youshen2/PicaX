@@ -173,23 +173,11 @@ private struct OnboardingIconView: View {
             } else {
                 Image(systemName: page.icon)
                     .font(.system(size: 48, weight: .semibold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(.blue)
             }
         }
         .frame(width: 84, height: 84)
-        .background(
-            LinearGradient(
-                colors: [.pink, .cyan, .blue],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            ),
-            in: RoundedRectangle(cornerRadius: 20)
-        )
         .clipShape(RoundedRectangle(cornerRadius: 20))
-        .overlay {
-            RoundedRectangle(cornerRadius: 20)
-                .stroke(.white.opacity(0.45), lineWidth: 1)
-        }
         .shadow(color: .black.opacity(0.08), radius: 18, y: 10)
     }
 }
