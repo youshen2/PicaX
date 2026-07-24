@@ -4,8 +4,15 @@ import Foundation
 @MainActor
 final class AppSettings: ObservableObject {
     private enum Key {
+        static let hasConfirmedAdultAge = "picax.hasConfirmedAdultAge"
         static let hasCompletedOnboarding = "picax.hasCompletedOnboarding"
         static let hasAcceptedTerms = "picax.hasAcceptedTerms"
+    }
+
+    @Published var hasConfirmedAdultAge: Bool {
+        didSet {
+            defaults.set(hasConfirmedAdultAge, forKey: Key.hasConfirmedAdultAge)
+        }
     }
 
     @Published var hasCompletedOnboarding: Bool {
@@ -24,8 +31,13 @@ final class AppSettings: ObservableObject {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        hasConfirmedAdultAge = defaults.bool(forKey: Key.hasConfirmedAdultAge)
         hasCompletedOnboarding = defaults.bool(forKey: Key.hasCompletedOnboarding)
         hasAcceptedTerms = defaults.bool(forKey: Key.hasAcceptedTerms)
+    }
+
+    func confirmAdultAge() {
+        hasConfirmedAdultAge = true
     }
 
     func completeOnboarding() {
@@ -34,6 +46,7 @@ final class AppSettings: ObservableObject {
     }
 
     func reloadFromDefaults() {
+        hasConfirmedAdultAge = defaults.bool(forKey: Key.hasConfirmedAdultAge)
         hasCompletedOnboarding = defaults.bool(forKey: Key.hasCompletedOnboarding)
         hasAcceptedTerms = defaults.bool(forKey: Key.hasAcceptedTerms)
     }

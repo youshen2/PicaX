@@ -23,7 +23,9 @@ struct ContentView: View {
 
     var body: some View {
         Group {
-            if !appSettings.hasCompletedOnboarding || !appSettings.hasAcceptedTerms {
+            if !appSettings.hasConfirmedAdultAge {
+                AgeRequirementView()
+            } else if !appSettings.hasCompletedOnboarding || !appSettings.hasAcceptedTerms {
                 OnboardingView()
             } else {
                 MainTabView()
@@ -31,7 +33,8 @@ struct ContentView: View {
         }
         .preferredColorScheme(selectedAppearanceMode.colorScheme)
         .environment(\.picaxUsesSmoothComicDetailTransitions, usesSmoothComicDetailTransitions)
-        .task {
+        .task(id: hasFinishedInitialSetup) {
+            guard hasFinishedInitialSetup else { return }
             await handleLaunch()
         }
         .confirmationDialog(
@@ -82,6 +85,12 @@ struct ContentView: View {
 
     private var selectedAppearanceMode: AppAppearanceMode {
         AppAppearanceMode(rawValue: colorScheme) ?? .system
+    }
+
+    private var hasFinishedInitialSetup: Bool {
+        appSettings.hasConfirmedAdultAge
+            && appSettings.hasCompletedOnboarding
+            && appSettings.hasAcceptedTerms
     }
 
     @MainActor
