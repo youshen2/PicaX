@@ -8,10 +8,14 @@ extension View {
     @ViewBuilder
     func picaxHidesTabBar(_ hidden: Bool = true) -> some View {
         #if os(iOS)
-        if #available(iOS 17.0, *) {
-            toolbar(hidden ? .hidden : .visible, for: .tabBar)
+        if hidden {
+            if #available(iOS 17.0, *) {
+                toolbar(.hidden, for: .tabBar)
+            } else {
+                modifier(PicaxLegacyTabBarVisibilityModifier(hidden: true))
+            }
         } else {
-            modifier(PicaxLegacyTabBarVisibilityModifier(hidden: hidden))
+            self
         }
         #else
         self
