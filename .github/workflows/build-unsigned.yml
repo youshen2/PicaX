@@ -198,8 +198,6 @@ jobs:
             exit 1
           fi
 
-          cp "${RELEASE_NOTES_PATH}" release_notes.md
-
           cat > release_body.md <<EOF
           这是由 GitHub Actions 自动构建的发行版本。
 
@@ -230,7 +228,7 @@ jobs:
 
           EOF
 
-          cat release_notes.md >> release_body.md
+          cat "${RELEASE_NOTES_PATH}" >> release_body.md
 
           echo "" >> release_body.md
           echo "" >> release_body.md
@@ -245,7 +243,7 @@ jobs:
           name: PicaX-release-metadata-${{ github.run_number }}
           path: |
             release_body.md
-            release_notes.md
+            RELEASE_NOTES.md
           if-no-files-found: error
           retention-days: 14
 
@@ -450,7 +448,7 @@ jobs:
           python3 .github/scripts/release_telegram_caption.py \
             --project "PicaX" \
             --version "${GITHUB_REF_NAME}" \
-            --details-file "release-metadata/release_notes.md" \
+            --details-file "release-metadata/RELEASE_NOTES.md" \
             --release-url "${RELEASE_URL}" \
             --output "${RUNNER_TEMP}/telegram-release-caption.txt"
 
