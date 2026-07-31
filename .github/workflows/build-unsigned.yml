@@ -70,14 +70,29 @@ jobs:
         run: |
           set -euo pipefail
 
-          for xcode_app in /Applications/Xcode_26.5.app /Applications/Xcode.app; do
-            if [ -d "$xcode_app" ]; then
-              sudo xcode-select -s "$xcode_app/Contents/Developer"
+          SELECTED_XCODE=""
+          for candidate in /Applications/Xcode_26.6.app /Applications/Xcode_26.6.0.app; do
+            if [ -d "$candidate" ]; then
+              SELECTED_XCODE="$candidate"
               break
             fi
           done
 
-          xcodebuild -version
+          if [ -z "$SELECTED_XCODE" ]; then
+            echo "::error::Xcode 26.6 is required because Swift 6.3.2 in Xcode 26.5 crashes while optimizing the iOS Release build."
+            exit 1
+          fi
+
+          sudo xcode-select -s "$SELECTED_XCODE/Contents/Developer"
+
+          XCODE_VERSION="$(xcodebuild -version)"
+          if [[ "$XCODE_VERSION" != Xcode\ 26.6* ]]; then
+            echo "::error::Expected Xcode 26.6, but selected: ${XCODE_VERSION//$'\n'/ }"
+            exit 1
+          fi
+
+          echo "$XCODE_VERSION"
+          swiftc --version
           xcodebuild -showsdks
 
       - name: Run unit tests
