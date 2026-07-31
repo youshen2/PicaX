@@ -535,17 +535,20 @@ struct ComicSearchAdvancedOptions: Equatable, Sendable {
     var nhentaiSort = "date"
     var jmComicSort = "mr"
     var nhentaiLanguage: ComicSearchLanguage?
+    var ehentaiLanguage: ComicSearchLanguage?
 
     nonisolated init(
         picacgSort: String = "dd",
         nhentaiSort: String = "date",
         jmComicSort: String = "mr",
-        nhentaiLanguage: ComicSearchLanguage? = nil
+        nhentaiLanguage: ComicSearchLanguage? = nil,
+        ehentaiLanguage: ComicSearchLanguage? = nil
     ) {
         self.picacgSort = picacgSort
         self.nhentaiSort = nhentaiSort
         self.jmComicSort = jmComicSort
         self.nhentaiLanguage = nhentaiLanguage
+        self.ehentaiLanguage = ehentaiLanguage
     }
 
     nonisolated func sortValue(for platform: ComicPlatform) -> String {
@@ -575,12 +578,35 @@ struct ComicSearchAdvancedOptions: Equatable, Sendable {
     }
 
     nonisolated func keyword(_ keyword: String, for platform: ComicPlatform) -> String {
-        guard platform == .nhentai, let nhentaiLanguage else { return keyword }
+        guard let language = language(for: platform) else { return keyword }
         let tokens = keyword
             .split(whereSeparator: \.isWhitespace)
             .filter { !$0.lowercased().hasPrefix("language:") }
         let cleaned = tokens.joined(separator: " ")
-        return "\(cleaned) language:\(nhentaiLanguage.rawValue)"
+        let languageFilter = "language:\(language.rawValue)"
+        return cleaned.isEmpty ? languageFilter : "\(cleaned) \(languageFilter)"
+    }
+
+    nonisolated func language(for platform: ComicPlatform) -> ComicSearchLanguage? {
+        switch platform {
+        case .nhentai:
+            nhentaiLanguage
+        case .eHentai:
+            ehentaiLanguage
+        case .picacg, .jmComic, .htManga, .hitomi:
+            nil
+        }
+    }
+
+    nonisolated mutating func setLanguage(_ language: ComicSearchLanguage?, for platform: ComicPlatform) {
+        switch platform {
+        case .nhentai:
+            nhentaiLanguage = language
+        case .eHentai:
+            ehentaiLanguage = language
+        case .picacg, .jmComic, .htManga, .hitomi:
+            break
+        }
     }
 
     nonisolated func isCustomized(for platform: ComicPlatform) -> Bool {
@@ -591,7 +617,9 @@ struct ComicSearchAdvancedOptions: Equatable, Sendable {
             nhentaiSort != "date" || nhentaiLanguage != nil
         case .jmComic:
             jmComicSort != "mr"
-        case .eHentai, .htManga, .hitomi:
+        case .eHentai:
+            ehentaiLanguage != nil
+        case .htManga, .hitomi:
             false
         }
     }
@@ -624,6 +652,10 @@ struct ComicSearchSortChoice: Identifiable {
 }
 
 extension ComicPlatform {
+    var supportsSearchLanguageFilter: Bool {
+        self == .nhentai || self == .eHentai
+    }
+
     var searchSortChoices: [ComicSearchSortChoice] {
         switch self {
         case .picacg:

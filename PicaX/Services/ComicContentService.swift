@@ -365,7 +365,8 @@ struct ComicContentService: Sendable {
             let translatedKeyword = searchKeywordByTranslatingChineseTerms(trimmed, for: platform)
             return try await searchNhentai(query: resolvedOptions.keyword(translatedKeyword, for: platform), page: page, sort: resolvedOptions.sortValue(for: platform))
         case .eHentai:
-            return try await searchEhentai(query: searchKeywordByTranslatingChineseTerms(trimmed, for: platform), page: page)
+            let translatedKeyword = searchKeywordByTranslatingChineseTerms(trimmed, for: platform)
+            return try await searchEhentai(query: resolvedOptions.keyword(translatedKeyword, for: platform), page: page)
         case .htManga:
             let tag = ComicTagReference(title: trimmed, query: trimmed, platform: platform, urlString: nil)
             return try await searchHtManga(tag: tag, page: page)

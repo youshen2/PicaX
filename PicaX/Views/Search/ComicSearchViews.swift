@@ -702,29 +702,55 @@ private struct ComicSearchAdvancedOptionsSheet: View {
     }
 
     private var configurablePlatforms: [ComicPlatform] {
-        target.platforms.filter { !$0.searchSortChoices.isEmpty || $0 == .nhentai }
+        target.platforms.filter { !$0.searchSortChoices.isEmpty || $0.supportsSearchLanguageFilter }
     }
 
     private func searchOptionsSection(for platform: ComicPlatform) -> some View {
-        Section(platform.title) {
+        Section {
             if !platform.searchSortChoices.isEmpty {
-                Picker("排序", selection: sortSelection(for: platform)) {
+                Picker(selection: sortSelection(for: platform)) {
                     ForEach(platform.searchSortChoices) { choice in
                         Text(choice.title).tag(choice.value)
                     }
+                } label: {
+                    Label("排序方式", systemImage: "arrow.up.arrow.down")
                 }
-                .pickerStyle(.inline)
+                .pickerStyle(.menu)
             }
 
-            if platform == .nhentai {
-                Picker("语言", selection: $options.nhentaiLanguage) {
-                    Text("不限").tag(ComicSearchLanguage?.none)
-                    ForEach(ComicSearchLanguage.allCases) { language in
-                        Text(language.title).tag(Optional(language))
+            if platform.supportsSearchLanguageFilter {
+                VStack(alignment: .leading, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Label("语言筛选", systemImage: "globe")
+                            .font(.subheadline.weight(.semibold))
+
+                        Text("仅筛选 \(platform.title) 的搜索结果")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
+
+                    Picker("语言筛选", selection: languageSelection(for: platform)) {
+                        Text("不限").tag(ComicSearchLanguage?.none)
+                        ForEach(ComicSearchLanguage.allCases) { language in
+                            Text(language.title).tag(Optional(language))
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
                 }
-                .pickerStyle(.inline)
+                .padding(.vertical, 4)
             }
+        } header: {
+            Label("\(platform.title) 搜索选项", systemImage: platform.systemImage)
+                .foregroundStyle(platform.accentColor)
+        }
+    }
+
+    private func languageSelection(for platform: ComicPlatform) -> Binding<ComicSearchLanguage?> {
+        Binding {
+            options.language(for: platform)
+        } set: { language in
+            options.setLanguage(language, for: platform)
         }
     }
 
@@ -751,7 +777,9 @@ private struct ComicSearchAdvancedOptionsSheet: View {
             options.nhentaiLanguage = nil
         case .jmComic:
             options.jmComicSort = "mr"
-        case .eHentai, .htManga, .hitomi:
+        case .eHentai:
+            options.ehentaiLanguage = nil
+        case .htManga, .hitomi:
             break
         }
     }
