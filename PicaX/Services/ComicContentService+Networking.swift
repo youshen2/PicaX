@@ -239,13 +239,29 @@ extension ComicContentService {
         values
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
-            .map { ComicTagReference(title: $0, query: "\(prefix)\($0)", platform: platform, urlString: nil) }
+            .map { value in
+                let displayValue = MarkdownImageTagContent(value).plainText
+                return ComicTagReference(
+                    title: value,
+                    query: "\(prefix)\(displayValue.isEmpty ? value : displayValue)",
+                    platform: platform,
+                    urlString: nil
+                )
+            }
     }
 
     func picacgScopedTagRefs(_ values: [String], prefix: String) -> [ComicTagReference] {
         values
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
-            .map { ComicTagReference(title: $0, query: "\(prefix)\($0)", platform: .picacg, urlString: nil) }
+            .map { value in
+                let displayValue = MarkdownImageTagContent(value).plainText
+                return ComicTagReference(
+                    title: value,
+                    query: "\(prefix)\(displayValue.isEmpty ? value : displayValue)",
+                    platform: .picacg,
+                    urlString: nil
+                )
+            }
     }
 }

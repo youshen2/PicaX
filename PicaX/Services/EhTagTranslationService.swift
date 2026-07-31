@@ -11,13 +11,16 @@ struct EhTagSuggestion: Identifiable, Hashable, Sendable {
 
     nonisolated init(namespace: String, namespaceTitle: String, tag: String, translatedTitle: String) {
         let normalizedTag = EhTagTranslationService.normalizedTag(tag)
+        let displayTitle = MarkdownImageTagContent(translatedTitle).plainText
         self.namespace = namespace
         self.namespaceTitle = namespaceTitle
         self.tag = tag
         self.translatedTitle = translatedTitle
         self.normalizedTag = normalizedTag
         self.normalizedLastTagWord = normalizedTag.split(separator: " ").last.map(String.init) ?? normalizedTag
-        self.normalizedTranslatedTitle = EhTagTranslationService.normalizedTag(translatedTitle)
+        self.normalizedTranslatedTitle = EhTagTranslationService.normalizedTag(
+            displayTitle.isEmpty ? translatedTitle : displayTitle
+        )
     }
 
     var id: String { "\(namespace):\(tag)" }
@@ -25,6 +28,11 @@ struct EhTagSuggestion: Identifiable, Hashable, Sendable {
 
     var categoryQuery: String {
         query
+    }
+
+    var displayTitle: String {
+        let value = MarkdownImageTagContent(translatedTitle).plainText
+        return value.isEmpty ? translatedTitle : value
     }
 
     private var quotedTagIfNeeded: String {
@@ -265,7 +273,8 @@ enum EhTagTranslationService {
         for namespace in suggestionNamespaces {
             for (tag, translatedTitle) in translations[namespace] ?? [:] {
                 guard SearchQueryTagTermTranslator.containsTranslatedText(translatedTitle) else { continue }
-                let normalizedTitle = normalizedTag(translatedTitle)
+                let displayTitle = MarkdownImageTagContent(translatedTitle).plainText
+                let normalizedTitle = normalizedTag(displayTitle.isEmpty ? translatedTitle : displayTitle)
                 guard !normalizedTitle.isEmpty else { continue }
                 if result[namespace]?[normalizedTitle] != nil { continue }
                 result[namespace, default: [:]][normalizedTitle] = tag
@@ -280,7 +289,7 @@ enum EhTagTranslationService {
         var result: [String: EhTagSuggestion] = [:]
         for suggestion in suggestionIndex {
             guard SearchQueryTagTermTranslator.containsTranslatedText(suggestion.translatedTitle) else { continue }
-            let normalizedTitle = normalizedTag(suggestion.translatedTitle)
+            let normalizedTitle = suggestion.normalizedTranslatedTitle
             guard !normalizedTitle.isEmpty else { continue }
             if result[normalizedTitle] != nil { continue }
             result[normalizedTitle] = suggestion
@@ -364,7 +373,23 @@ enum EhTagTranslationService {
               let value = try? JSONDecoder().decode([String: [String: String]].self, from: data) else {
             return [:]
         }
-        return value
+        return applyingBundledRichTitles(to: value)
+    }
+
+    private nonisolated static func applyingBundledRichTitles(
+        to translations: [String: [String: String]]
+    ) -> [String: [String: String]] {
+        guard let url = Bundle.main.url(forResource: "EhTagRichTranslations", withExtension: "json"),
+              let data = try? Data(contentsOf: url),
+              let richTitles = try? JSONDecoder().decode([String: [String: String]].self, from: data) else {
+            return translations
+        }
+
+        var result = translations
+        for (namespace, titles) in richTitles {
+            result[namespace, default: [:]].merge(titles) { _, richTitle in richTitle }
+        }
+        return result
     }
 
     nonisolated static var databaseInfo: DatabaseInfo {

@@ -423,7 +423,7 @@ struct ComicSearchPage: View {
                         } label: {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(suggestion.query)
-                                Text("\(suggestion.translatedTitle) · \(suggestion.namespaceTitle)")
+                                Text("\(suggestion.displayTitle) · \(suggestion.namespaceTitle)")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
@@ -447,7 +447,7 @@ struct ComicSearchPage: View {
                         } label: {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(suggestion.query)
-                                Text("\(suggestion.translatedTitle) · \(suggestion.groupTitle)")
+                                Text("\(suggestion.displayTitle) · \(suggestion.groupTitle)")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
@@ -803,7 +803,7 @@ struct ComicTagComicsPage: View {
                 }
             }
         }
-        .navigationTitle(tag.title)
+        .navigationTitle(tag.displayTitle)
         .picaxNavigationBarTitleDisplayModeInline()
         .picaxHidesTabBar()
         .toolbar {

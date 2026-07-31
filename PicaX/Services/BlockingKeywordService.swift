@@ -79,9 +79,9 @@ final class BlockingKeywordService: ObservableObject {
     func add(tag: ComicTagReference) -> BlockingKeywordFeedback {
         switch tag.platform {
         case .jmComic:
-            add(tag.title, scope: .jmComic)
+            add(tag.displayTitle, scope: .jmComic)
         default:
-            add("tag:\(tag.title)", scope: .common)
+            add("tag:\(tag.displayTitle)", scope: .common)
         }
     }
 

@@ -994,7 +994,7 @@ struct FlowTagLinks: View {
             }
             Button("取消", role: .cancel) {}
         } message: {
-            Text(selectedBlockingTag?.title ?? "")
+            Text(selectedBlockingTag?.displayTitle ?? "")
         }
         .alert(item: $blockingFeedback) { feedback in
             Alert(
@@ -1023,10 +1023,12 @@ private struct FlowTagLinkButton: View {
     let onBlock: () -> Void
 
     var body: some View {
-        Text(tag.title)
-            .font(.caption.weight(.medium))
-            .foregroundStyle(color)
-            .lineLimit(1)
+        ComicTagContentLabel(
+            tag.title,
+            color: color,
+            font: .caption.weight(.medium),
+            imageSize: 18
+        )
             .frame(maxWidth: .infinity)
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
@@ -1043,7 +1045,7 @@ private struct FlowTagLinkButton: View {
                         }
                     }
             )
-            .accessibilityLabel(tag.title)
+            .accessibilityLabel(tag.displayTitle)
             .accessibilityAddTraits(.isButton)
             .accessibilityAction {
                 onSelect()

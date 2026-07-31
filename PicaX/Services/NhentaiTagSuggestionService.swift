@@ -11,19 +11,27 @@ struct NhentaiTagSuggestion: Identifiable, Hashable, Sendable {
 
     nonisolated init(group: String, groupTitle: String, tag: String, translatedTitle: String) {
         let normalizedTag = NhentaiTagSuggestionService.normalizedTag(tag)
+        let displayTitle = MarkdownImageTagContent(translatedTitle).plainText
         self.group = group
         self.groupTitle = groupTitle
         self.tag = tag
         self.translatedTitle = translatedTitle
         self.normalizedTag = normalizedTag
         self.normalizedLastTagWord = normalizedTag.split(separator: " ").last.map(String.init) ?? normalizedTag
-        self.normalizedTranslatedTitle = NhentaiTagSuggestionService.normalizedTag(translatedTitle)
+        self.normalizedTranslatedTitle = NhentaiTagSuggestionService.normalizedTag(
+            displayTitle.isEmpty ? translatedTitle : displayTitle
+        )
     }
 
     var id: String { "\(group):\(tag)" }
 
     var query: String {
         group == "language" ? "language:\(tag)" : quotedTagIfNeeded
+    }
+
+    var displayTitle: String {
+        let value = MarkdownImageTagContent(translatedTitle).plainText
+        return value.isEmpty ? translatedTitle : value
     }
 
     private var quotedTagIfNeeded: String {
@@ -161,7 +169,7 @@ enum NhentaiTagSuggestionService {
         var result: [String: [String: NhentaiTagSuggestion]] = [:]
         for suggestion in suggestions {
             guard SearchQueryTagTermTranslator.containsTranslatedText(suggestion.translatedTitle) else { continue }
-            let normalizedTitle = normalizedTag(suggestion.translatedTitle)
+            let normalizedTitle = suggestion.normalizedTranslatedTitle
             guard !normalizedTitle.isEmpty else { continue }
             if result[suggestion.group]?[normalizedTitle] != nil { continue }
             result[suggestion.group, default: [:]][normalizedTitle] = suggestion
@@ -173,7 +181,7 @@ enum NhentaiTagSuggestionService {
         var result: [String: NhentaiTagSuggestion] = [:]
         for suggestion in suggestions {
             guard SearchQueryTagTermTranslator.containsTranslatedText(suggestion.translatedTitle) else { continue }
-            let normalizedTitle = normalizedTag(suggestion.translatedTitle)
+            let normalizedTitle = suggestion.normalizedTranslatedTitle
             guard !normalizedTitle.isEmpty else { continue }
             if result[normalizedTitle] != nil { continue }
             result[normalizedTitle] = suggestion

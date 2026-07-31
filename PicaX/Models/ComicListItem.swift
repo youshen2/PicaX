@@ -309,6 +309,11 @@ struct ComicTagReference: Identifiable, Hashable, Codable {
         guard let urlString else { return nil }
         return URL(string: urlString)
     }
+
+    var displayTitle: String {
+        let value = MarkdownImageTagContent(title).plainText
+        return value.isEmpty ? title : value
+    }
 }
 
 struct ComicCategoryItem: Identifiable, Hashable {

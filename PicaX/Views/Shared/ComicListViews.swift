@@ -1853,11 +1853,7 @@ private struct ComicListTagRow: View {
     private func tagRow(limit: Int) -> some View {
         HStack(spacing: 6) {
             ForEach(0..<min(tags.count, limit), id: \.self) { index in
-                Text(tags[index])
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(accentColor)
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
+                ComicTagContentLabel(tags[index], color: accentColor)
                     .padding(.horizontal, 7)
                     .padding(.vertical, 4)
                     .background(accentColor.opacity(0.12), in: Capsule())
