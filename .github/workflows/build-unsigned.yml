@@ -95,6 +95,24 @@ jobs:
           swiftc --version
           xcodebuild -showsdks
 
+      - name: Resolve previous release
+        id: release_range
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          RELEASE_TAGS="$(
+            gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+              --jq '.[] | select(.draft == false) | .tag_name'
+          )"
+          PREVIOUS_TAG="$(
+            awk -v current="${GITHUB_REF_NAME}" '$0 != current { print; exit }' <<< "${RELEASE_TAGS}"
+          )"
+          echo "previous_tag=${PREVIOUS_TAG}" >> "${GITHUB_OUTPUT}"
+
       - name: Run unit tests
         run: |
           set -euo pipefail
@@ -110,13 +128,19 @@ jobs:
             test
 
       - name: Build unsigned artifacts
+        env:
+          RELEASE_NOTES_CURRENT_REF: ${{ github.sha }}
+          RELEASE_NOTES_PREVIOUS_REF: ${{ steps.release_range.outputs.previous_tag }}
         run: bash build_all_unsigned.sh
 
       - name: Upload iOS unsigned IPA
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: PicaX-iOS-unsigned-${{ github.run_number }}
-          path: build/PicaX-unsigned.ipa
+          path: |
+            build/PicaX-unsigned.ipa
+            build/ReleaseNotes.json
+            build/ReleaseNotes.md
           if-no-files-found: error
           retention-days: 14
 
@@ -147,40 +171,34 @@ jobs:
       - name: Generate release body
         if: startsWith(github.ref, 'refs/tags/')
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
 
           TAG_NAME="${GITHUB_REF_NAME}"
-          RELEASE_TAGS="$(
-            gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
-              --jq '.[] | select(.draft == false) | .tag_name'
-          )"
-          PREVIOUS_TAG="$(
-            awk -v current="${TAG_NAME}" '$0 != current { print; exit }' <<< "${RELEASE_TAGS}"
-          )"
+          RELEASE_METADATA_PATH="build/ReleaseNotes.json"
+          RELEASE_NOTES_PATH="RELEASE_NOTES.md"
+          BUNDLED_RELEASE_NOTES_PATH="build/ReleaseNotes.md"
 
-          append_release_commits() {
-            awk '
-              !/^[[:space:]]*\[X\]/ {
-                print "- " $0
-                found = 1
-              }
-              END {
-                if (!found) {
-                  print "- 本次没有需要公开展示的提交记录。"
-                }
-              }
-            '
-          }
-
-          if [ -n "$PREVIOUS_TAG" ]; then
-            git log "${PREVIOUS_TAG}..${TAG_NAME}" --pretty=format:"%s" \
-              | append_release_commits > release_commits.txt
-          else
-            : > release_commits.txt
+          if [[ ! -f "${RELEASE_METADATA_PATH}" ]]; then
+            echo "::error::构建产物中缺少 ReleaseNotes.json"
+            exit 1
           fi
+          if [[ ! -s "${RELEASE_NOTES_PATH}" || ! -s "${BUNDLED_RELEASE_NOTES_PATH}" ]]; then
+            echo "::error::项目或构建产物中缺少 ReleaseNotes.md"
+            exit 1
+          fi
+          if ! cmp --silent "${RELEASE_NOTES_PATH}" "${BUNDLED_RELEASE_NOTES_PATH}"; then
+            echo "::error::构建产物中的更新日志与项目根目录不一致"
+            exit 1
+          fi
+
+          BUNDLED_VERSION="$(jq -r '.version' "${RELEASE_METADATA_PATH}")"
+          if [[ "${TAG_NAME#v}" != "${BUNDLED_VERSION#v}" ]]; then
+            echo "::error::标签 ${TAG_NAME} 与 App 版本 ${BUNDLED_VERSION} 不一致"
+            exit 1
+          fi
+
+          cp "${RELEASE_NOTES_PATH}" release_notes.md
 
           cat > release_body.md <<EOF
           这是由 GitHub Actions 自动构建的发行版本。
@@ -207,16 +225,12 @@ jobs:
           - 版本：\`${TAG_NAME}\`
           - Commit：\`${GITHUB_SHA}\`
           - 构建编号：\`${GITHUB_RUN_NUMBER}\`
+
+          ## 更新内容
+
           EOF
 
-          if [ -n "$PREVIOUS_TAG" ]; then
-            echo "" >> release_body.md
-            echo "## 更新内容" >> release_body.md
-            echo "" >> release_body.md
-            echo "从 \`${PREVIOUS_TAG}\` 到 \`${TAG_NAME}\` 的提交：" >> release_body.md
-            echo "" >> release_body.md
-            cat release_commits.txt >> release_body.md
-          fi
+          cat release_notes.md >> release_body.md
 
           echo "" >> release_body.md
           echo "" >> release_body.md
@@ -231,7 +245,7 @@ jobs:
           name: PicaX-release-metadata-${{ github.run_number }}
           path: |
             release_body.md
-            release_commits.txt
+            release_notes.md
           if-no-files-found: error
           retention-days: 14
 
@@ -436,7 +450,7 @@ jobs:
           python3 .github/scripts/release_telegram_caption.py \
             --project "PicaX" \
             --version "${GITHUB_REF_NAME}" \
-            --details-file "release-metadata/release_commits.txt" \
+            --details-file "release-metadata/release_notes.md" \
             --release-url "${RELEASE_URL}" \
             --output "${RUNNER_TEMP}/telegram-release-caption.txt"
 

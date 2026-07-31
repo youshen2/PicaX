@@ -8,31 +8,7 @@ struct AppUpdateResult: Equatable, Sendable {
     let publishedAt: Date?
 
     var hasUpdate: Bool {
-        Self.compareVersion(latestVersion, to: currentVersion) == .orderedDescending
-    }
-
-    private static func compareVersion(_ lhs: String, to rhs: String) -> ComparisonResult {
-        let lhsParts = normalizedVersionParts(lhs)
-        let rhsParts = normalizedVersionParts(rhs)
-        let count = max(lhsParts.count, rhsParts.count)
-
-        for index in 0..<count {
-            let lhsValue = index < lhsParts.count ? lhsParts[index] : 0
-            let rhsValue = index < rhsParts.count ? rhsParts[index] : 0
-            if lhsValue < rhsValue { return .orderedAscending }
-            if lhsValue > rhsValue { return .orderedDescending }
-        }
-
-        return .orderedSame
-    }
-
-    private static func normalizedVersionParts(_ version: String) -> [Int] {
-        version
-            .lowercased()
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .trimmingCharacters(in: CharacterSet(charactersIn: "v"))
-            .split { !$0.isNumber }
-            .compactMap { Int($0) }
+        AppVersion.compare(latestVersion, to: currentVersion) == .orderedDescending
     }
 }
 

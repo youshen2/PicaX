@@ -44,6 +44,13 @@ final class AppSettings: ObservableObject {
         hasAcceptedDisclaimer = defaults.bool(forKey: Key.hasAcceptedDisclaimer)
     }
 
+    var hasCompletedInitialSetup: Bool {
+        hasConfirmedAdultAge
+            && hasCompletedOnboarding
+            && hasAcceptedTerms
+            && hasAcceptedDisclaimer
+    }
+
     func confirmAdultAge() {
         hasConfirmedAdultAge = true
     }

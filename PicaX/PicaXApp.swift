@@ -11,7 +11,8 @@ import SwiftUI
 struct PicaXApp: App {
     private let appDataMigrationCoordinator = AppDataMigrationCoordinator()
     @Environment(\.scenePhase) private var scenePhase
-    @StateObject private var appSettings = AppSettings()
+    @StateObject private var appSettings: AppSettings
+    @StateObject private var releaseNotes: AppReleaseNotesStore
     @StateObject private var platformAccountService = PlatformAccountService()
     @StateObject private var readingHistoryService = ReadingHistoryService()
     @StateObject private var readLaterService = ReadLaterService()
@@ -30,6 +31,16 @@ struct PicaXApp: App {
 
     init() {
         ReaderPreferencesMigration.apply()
+
+        let appSettings = AppSettings()
+        _appSettings = StateObject(wrappedValue: appSettings)
+        _releaseNotes = StateObject(
+            wrappedValue: AppReleaseNotesStore(
+                currentVersion: Bundle.main.appVersion,
+                hadCompletedOnboarding: appSettings.hasCompletedOnboarding,
+                currentReleaseNotes: AppReleaseNotesLoader.load()
+            )
+        )
     }
 
     var body: some Scene {
@@ -42,6 +53,7 @@ struct PicaXApp: App {
     private var rootContent: some View {
         let baseContent = ContentView()
                 .environmentObject(appSettings)
+                .environmentObject(releaseNotes)
                 .environmentObject(platformAccountService)
                 .environmentObject(readingHistoryService)
                 .environmentObject(readLaterService)

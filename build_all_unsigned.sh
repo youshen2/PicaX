@@ -18,6 +18,8 @@ IOS_IPA="$BUILD/PicaX-unsigned.ipa"
 WITH_WATCH_IPA="$BUILD/PicaX-with-watch-unsigned.ipa"
 WATCH_ZIP="$BUILD/PicaX-WatchApp-unsigned.zip"
 DMG_PATH="$BUILD/PicaX.dmg"
+RELEASE_NOTES_PATH="$BUILD/ReleaseNotes.json"
+RELEASE_NOTES_MARKDOWN_PATH="$BUILD/ReleaseNotes.md"
 
 cd "$ROOT"
 mkdir -p "$BUILD"
@@ -67,6 +69,8 @@ rm -f "$IOS_IPA"
 rm -f "$WITH_WATCH_IPA"
 rm -f "$WATCH_ZIP"
 rm -f "$DMG_PATH"
+rm -f "$RELEASE_NOTES_PATH"
+rm -f "$RELEASE_NOTES_MARKDOWN_PATH"
 
 echo "========== 1/4 构建 iOS App =========="
 
@@ -95,6 +99,14 @@ if [ -z "$IOS_APP_PATH" ]; then
 fi
 
 echo "✅ iOS App：$IOS_APP_PATH"
+
+if [ ! -f "$IOS_APP_PATH/ReleaseNotes.json" ] || [ ! -f "$IOS_APP_PATH/ReleaseNotes.md" ]; then
+  echo "❌ iOS App 中缺少更新日志元数据或 Markdown"
+  exit 1
+fi
+
+ditto --norsrc "$IOS_APP_PATH/ReleaseNotes.json" "$RELEASE_NOTES_PATH"
+ditto --norsrc "$IOS_APP_PATH/ReleaseNotes.md" "$RELEASE_NOTES_MARKDOWN_PATH"
 
 echo "========== 2/4 构建 Watch App =========="
 
@@ -283,7 +295,9 @@ ls -lh \
   "$IOS_IPA" \
   "$WITH_WATCH_IPA" \
   "$WATCH_ZIP" \
-  "$DMG_PATH"
+  "$DMG_PATH" \
+  "$RELEASE_NOTES_PATH" \
+  "$RELEASE_NOTES_MARKDOWN_PATH"
 
 echo "========== 验证 IPA/ZIP 内容 =========="
 

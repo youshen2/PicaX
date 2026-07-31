@@ -170,6 +170,7 @@
 				6D9FF22F2FEEA844008AA850 /* Sources */,
 				6D9FF2302FEEA844008AA850 /* Frameworks */,
 				6D9FF2312FEEA844008AA850 /* Resources */,
+				6D9FF3542FF05000008AA850 /* Generate Release Notes */,
 				6D9FF3042FF01000008AA850 /* Embed App Extensions */,
 				6D9FF26B2FEEB200008AA850 /* Embed Watch Content */,
 				6D9FF2532FEEB102008AA850 /* Generate Build Environment */,
@@ -371,6 +372,31 @@
 			shellPath = /bin/sh;
 			shellScript = "/bin/sh \"${SRCROOT}/BuildScripts/generate-build-environment.sh\"\n";
 		};
+		6D9FF3542FF05000008AA850 /* Generate Release Notes */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/.github/scripts/generate_release_notes.py",
+				"$(SRCROOT)/RELEASE_NOTES.md",
+				"$(SRCROOT)/.git",
+			);
+			name = "Generate Release Notes";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/ReleaseNotes.json",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/ReleaseNotes.md",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "set -euo pipefail\n\nRELEASE_NOTES_DIRECTORY=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}\"\nRELEASE_NOTES_SOURCE=\"${SRCROOT}/RELEASE_NOTES.md\"\nCURRENT_REFERENCE=\"${RELEASE_NOTES_CURRENT_REF:-HEAD}\"\nMETADATA_OUTPUT_PATH=\"${RELEASE_NOTES_DIRECTORY}/ReleaseNotes.json\"\nMARKDOWN_OUTPUT_PATH=\"${RELEASE_NOTES_DIRECTORY}/ReleaseNotes.md\"\n\nmkdir -p \"${RELEASE_NOTES_DIRECTORY}\"\nexport GIT_CONFIG_NOSYSTEM=1\nexport GIT_CONFIG_GLOBAL=/dev/null\n\nif [[ -n \"${RELEASE_NOTES_PREVIOUS_REF:-}\" ]]; then\n    /usr/bin/python3 \"${SRCROOT}/.github/scripts/generate_release_notes.py\" --current-ref \"${CURRENT_REFERENCE}\" --previous-ref \"${RELEASE_NOTES_PREVIOUS_REF}\" --version \"${MARKETING_VERSION}\" --notes \"${RELEASE_NOTES_SOURCE}\" --output \"${METADATA_OUTPUT_PATH}\"\nelse\n    /usr/bin/python3 \"${SRCROOT}/.github/scripts/generate_release_notes.py\" --current-ref \"${CURRENT_REFERENCE}\" --version \"${MARKETING_VERSION}\" --notes \"${RELEASE_NOTES_SOURCE}\" --output \"${METADATA_OUTPUT_PATH}\"\nfi\n\n/bin/cp \"${RELEASE_NOTES_SOURCE}\" \"${MARKDOWN_OUTPUT_PATH}\"\n";
+			showEnvVarsInLog = 0;
+		};
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -553,6 +579,7 @@
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "BuildSupport/PicaX-Info.plist";
@@ -605,6 +632,7 @@
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "BuildSupport/PicaX-Info.plist";

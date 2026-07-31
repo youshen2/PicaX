@@ -1695,6 +1695,7 @@ private struct ReadingDurationSettingsView: View {
 
 private struct AboutSettingsView: View {
     @Environment(\.openURL) private var openURL
+    @EnvironmentObject private var releaseNotes: AppReleaseNotesStore
     @State private var isCheckingUpdate = false
     @State private var updateAlert: AppUpdateAlert?
 
@@ -1703,11 +1704,11 @@ private struct AboutSettingsView: View {
     }
 
     private var appVersion: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
+        Bundle.main.appVersion
     }
 
     private var buildNumber: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "1"
+        Bundle.main.appBuildNumber
     }
 
     private static let buildEnvironment: [String: String] = {
@@ -1753,6 +1754,23 @@ private struct AboutSettingsView: View {
             }
 
             Section("更新") {
+                NavigationLink {
+                    ReleaseNotesView(
+                        releaseNotes: releaseNotes.currentReleaseNotes,
+                        currentVersion: releaseNotes.currentVersion
+                    )
+                } label: {
+                    HStack {
+                        Label("更新日志", systemImage: "doc.text")
+
+                        Spacer()
+
+                        Text("PicaX \(appVersion)")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
                 Button {
                     Task {
                         await checkForUpdates()
