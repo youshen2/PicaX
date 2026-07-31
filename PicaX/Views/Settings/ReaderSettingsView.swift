@@ -79,7 +79,7 @@ struct ReaderSettingsView: View {
                 Toggle("隐藏状态栏", isOn: $hidesStatusBar)
             }
 
-            Section("阅读") {
+            Section {
                 Picker("阅读方式", selection: $readingMode) {
                     ForEach(ReaderReadingMode.allCases) { mode in
                         Text(mode.title)
@@ -87,19 +87,12 @@ struct ReaderSettingsView: View {
                     }
                 }
 
-                Text(selectedReadingMode.description)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
                 Toggle("整卷连续阅读", isOn: $wholeBookContinuousReading)
-
-                if wholeBookContinuousReading {
-                    Text("下一章会提前追加到当前章节末尾；连续滚动和分页阅读都会无缝进入下一章，直到全书结束。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
                 Toggle("深色模式下降低图片亮度", isOn: $reducesImageBrightnessInDarkMode)
+            } header: {
+                Text("阅读")
+            } footer: {
+                Text(readingFooter)
             }
 
             Section {
@@ -108,8 +101,7 @@ struct ReaderSettingsView: View {
                     value: $preloadImageCount,
                     unit: "张",
                     lowerBound: 0,
-                    upperBound: 15,
-                    detail: preloadImageCount == 0 ? "关闭图片预加载" : nil
+                    upperBound: 15
                 )
 
                 VStack(alignment: .leading, spacing: 8) {
@@ -121,10 +113,10 @@ struct ReaderSettingsView: View {
             } header: {
                 Text("预加载")
             } footer: {
-                Text("开启下一章预加载后，会按照“章节末尾”分区设置的范围提前获取下一章图片列表，并按“预加载图片”数量加载开头图片。")
+                Text("将预加载图片设为 0 可关闭图片预加载。开启下一章预加载后，会按照“章节末尾”分区设置的范围提前获取下一章图片列表，并按设置数量加载开头图片。")
             }
 
-            Section("自动翻页") {
+            Section {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("翻页间隔 \(autoPagingInterval, specifier: "%.0f") 秒")
                     Slider(value: $autoPagingInterval, in: 1...30, step: 1)
@@ -139,21 +131,12 @@ struct ReaderSettingsView: View {
                 Toggle("平滑持续滚动", isOn: $smoothContinuousAutoPaging)
                     .disabled(selectedReadingMode != .topToBottomContinuous)
 
-                if selectedReadingMode == .topToBottomContinuous,
-                   smoothContinuousAutoPaging {
-                    Text("将翻页距离均匀分布在翻页间隔内，以恒定速度持续滚动。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                if selectedReadingMode != .topToBottomContinuous {
-                    Text("当前阅读方式会按页切换，自动翻页距离只在连续滚动中生效。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
                 Toggle("自动进入下一章", isOn: $autoPagingTurnsChapter)
                     .disabled(wholeBookContinuousReading)
+            } header: {
+                Text("自动翻页")
+            } footer: {
+                Text(autoPagingFooter)
             }
 
             Section {
@@ -218,12 +201,6 @@ struct ReaderSettingsView: View {
                     }
                     .disabled(selectedReadingMode != .topToBottomContinuous)
 
-                    if selectedReadingMode != .topToBottomContinuous {
-                        Text("当前阅读方式会直接切页，点按翻页距离只在连续滚动中生效。")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-
                     Toggle("反转点按翻页", isOn: $tapPagingInverted)
                 }
 
@@ -234,7 +211,7 @@ struct ReaderSettingsView: View {
             } header: {
                 Text("交互")
             } footer: {
-                Text("“单击切换 UI”或“双击切换 UI”只控制阅读器顶部与底部控制栏的显示或隐藏，不影响“隐藏状态栏”设置。点按翻页开启后，边缘区域翻页，中间区域按所选方式切换 UI。关闭跟随后，对应浮层会在控制栏隐藏时继续显示。")
+                Text(interactionFooter)
             }
 
             Section {
@@ -254,12 +231,6 @@ struct ReaderSettingsView: View {
 
                 Toggle("双击缩放", isOn: $doubleTapZoomEnabled)
                     .disabled(selectedUIToggleMode == .double)
-
-                if selectedUIToggleMode == .double {
-                    Text("使用“双击切换 UI”时，双击缩放会暂停，避免同一手势同时承担两个动作。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
 
                 if doubleTapZoomEnabled && selectedUIToggleMode != .double {
                     VStack(alignment: .leading, spacing: 8) {
@@ -392,6 +363,32 @@ struct ReaderSettingsView: View {
 
     private var selectedStyle: ReaderProgressStyle {
         ReaderProgressStyle(rawValue: progressStyle) ?? .circular
+    }
+
+    private var readingFooter: String {
+        var descriptions = [selectedReadingMode.description]
+        if wholeBookContinuousReading {
+            descriptions.append("下一章会提前追加到当前章节末尾，直到全书结束。")
+        }
+        return descriptions.joined(separator: "\n")
+    }
+
+    private var autoPagingFooter: String {
+        guard selectedReadingMode == .topToBottomContinuous else {
+            return "当前阅读方式会按页切换；自动翻页距离和平滑持续滚动只在连续滚动中生效。"
+        }
+        guard smoothContinuousAutoPaging else {
+            return "翻页距离决定每次自动滚动的距离。"
+        }
+        return "翻页距离会均匀分布在翻页间隔内，以恒定速度持续滚动。"
+    }
+
+    private var interactionFooter: String {
+        var description = "“单击切换 UI”或“双击切换 UI”只控制阅读器顶部与底部控制栏的显示或隐藏，不影响“隐藏状态栏”设置。点按翻页开启后，边缘区域翻页，中间区域按所选方式切换 UI。关闭跟随后，对应浮层会在控制栏隐藏时继续显示。"
+        if tapPagingEnabled, selectedReadingMode != .topToBottomContinuous {
+            description += " 当前阅读方式会直接切页，点按翻页距离不生效。"
+        }
+        return description
     }
 
     private var boundedChapterEndPageThreshold: Int {

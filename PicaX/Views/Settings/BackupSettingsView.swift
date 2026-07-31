@@ -24,9 +24,8 @@ struct BackupSettingsView: View {
                 NavigationLink {
                     WebDAVSettingsView()
                 } label: {
-                    SettingsActionRow(
-                        title: "WebDAV 备份与同步",
-                        subtitle: "自动同步、远端备份和恢复",
+                    Label(
+                        "WebDAV 备份与同步",
                         systemImage: "externaldrive.connected.to.line.below"
                     )
                 }
@@ -36,19 +35,12 @@ struct BackupSettingsView: View {
 
             Section {
                 ForEach(BackupContentKind.allCases) { content in
-                    Toggle(isOn: backupContentBinding(for: content)) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(content.title)
-                            Text(content.summary)
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
+                    Toggle(content.title, isOn: backupContentBinding(for: content))
                 }
             } header: {
                 Text("导出内容")
             } footer: {
-                Text("选择要放进备份的内容。未选择的内容不会导出，也不会在覆盖导入时被清空。")
+                Text("选择要放进备份的内容。账号资料不包含密码、令牌或 Cookie；已下载漫画包含下载记录和本地文件。未选择的内容不会导出，也不会在覆盖导入时被清空。")
             }
 
             Section {
@@ -382,14 +374,7 @@ private struct WebDAVSettingsView: View {
             Toggle("App 激活时自动同步", isOn: $automaticSyncEnabled)
 
             ForEach(BackupContentKind.allCases) { content in
-                Toggle(isOn: syncContentBinding(for: content)) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(content.title)
-                        Text(content.summary)
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-                }
+                Toggle(content.title, isOn: syncContentBinding(for: content))
                 .disabled(isBusy)
             }
 
@@ -412,17 +397,18 @@ private struct WebDAVSettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            if let error = webDAVSync.lastAutomaticSyncError {
-                Label(error, systemImage: "exclamationmark.triangle")
-                    .font(.footnote)
-                    .foregroundStyle(.orange)
-            }
         } header: {
             Text("同步内容")
         } footer: {
-            Text(syncContentSelection.isEmpty
-                ? "至少选择一项内容后才能备份或同步。"
-                : "同步会先合并服务器上的 PicaX-Sync.picax，再上传合并后的数据。已下载漫画可能产生较大流量。")
+            VStack(alignment: .leading, spacing: 4) {
+                if let error = webDAVSync.lastAutomaticSyncError {
+                    Label(error, systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.orange)
+                }
+                Text(syncContentSelection.isEmpty
+                    ? "至少选择一项内容后才能备份或同步。"
+                    : "同步会先合并服务器上的 PicaX-Sync.picax，再上传合并后的数据。已下载漫画可能产生较大流量。")
+            }
         }
     }
 
@@ -844,14 +830,7 @@ private struct BackupImportPreviewSheet: View {
                     }
 
                     ForEach(includedContent) { content in
-                        Toggle(isOn: importContentBinding(for: content)) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(content.title)
-                                Text(content.summary)
-                                    .font(.footnote)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
+                        Toggle(content.title, isOn: importContentBinding(for: content))
                         .disabled(isImporting)
                     }
                 } header: {

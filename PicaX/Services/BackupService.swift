@@ -150,29 +150,6 @@ nonisolated enum BackupContentKind: String, Codable, CaseIterable, Identifiable,
         }
     }
 
-    var summary: String {
-        switch self {
-        case .accounts:
-            "账号名称和来源（不含密码、令牌或 Cookie）"
-        case .settings:
-            "外观、首页、搜索、来源等设置"
-        case .favorites:
-            "本地收藏夹内容"
-        case .readingHistory:
-            "阅读记录和进度"
-        case .readLater:
-            "稍后再读列表"
-        case .readingDuration:
-            "阅读时长统计"
-        case .searchHistory:
-            "搜索记录"
-        case .blockingKeywords:
-            "通用和平台屏蔽词"
-        case .downloads:
-            "下载记录和本地文件"
-        }
-    }
-
     static var defaultSelection: Set<BackupContentKind> {
         Set(allCases.filter { $0 != .accounts && $0 != .downloads })
     }
