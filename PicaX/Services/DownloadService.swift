@@ -721,6 +721,17 @@ final class DownloadService: ObservableObject {
         Self.removeDownloadDirectories([directoryURL].compactMap { $0 })
     }
 
+    func removeRecords(withIDs ids: Set<String>) {
+        guard !ids.isEmpty else { return }
+        let removingRecords = records.filter { ids.contains($0.id) }
+        guard !removingRecords.isEmpty else { return }
+        let removingIDs = Set(removingRecords.map(\.id))
+        let directoryURLs = removingRecords.compactMap { comicDirectoryURLIfAvailable(for: $0.item) }
+        records.removeAll { removingIDs.contains($0.id) }
+        PicaXSQLiteStore.deleteDownloadRecords(ids: removingIDs)
+        Self.removeDownloadDirectories(directoryURLs)
+    }
+
     func clearFinishedDownloads() {
         let directoryURLs = records.compactMap { comicDirectoryURLIfAvailable(for: $0.item) }
         records.removeAll()

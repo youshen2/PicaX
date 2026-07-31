@@ -79,6 +79,9 @@ struct ComicReaderPage: View {
     let historyChapterIndexResolver: (Int) -> Int
     let listContext: ComicReaderListContext?
     let initialToastMessage: String?
+    let deletesLocalDownloadOnExit: Binding<Bool>?
+    let shouldHandleReaderExit: () -> Bool
+    let onReaderExit: (() -> Void)?
     @StateObject private var viewModel: ComicReaderViewModel
     @State private var presentedChapterSheetTab: ReaderChapterSheetTab?
     @State private var hidesReaderUI = false
@@ -99,6 +102,7 @@ struct ComicReaderPage: View {
     @State private var progressSelectionContext: ReaderProgressSelectionContext?
     @State private var progressJumpRequest: ReaderProgressJumpRequest?
     @State private var detailRequest: ComicListDetailRequest?
+    @State private var showsBurnAfterReadingConfirmation = false
     @State private var readingDurationSessionStart: Date?
     @State private var didShowInitialToast = false
     @Namespace private var navigationTransitionNamespace
@@ -114,7 +118,10 @@ struct ComicReaderPage: View {
         localChapterCommentsProvider: ((ComicChapter, Int) async -> [ComicComment])? = nil,
         historyChapterIndexResolver: @escaping (Int) -> Int = { $0 },
         listContext: ComicReaderListContext? = nil,
-        initialToastMessage: String? = nil
+        initialToastMessage: String? = nil,
+        deletesLocalDownloadOnExit: Binding<Bool>? = nil,
+        shouldHandleReaderExit: @escaping () -> Bool = { true },
+        onReaderExit: (() -> Void)? = nil
     ) {
         self.detail = detail
         self.initialChapterIndex = initialChapterIndex
@@ -127,6 +134,9 @@ struct ComicReaderPage: View {
         self.historyChapterIndexResolver = historyChapterIndexResolver
         self.listContext = listContext
         self.initialToastMessage = initialToastMessage
+        self.deletesLocalDownloadOnExit = deletesLocalDownloadOnExit
+        self.shouldHandleReaderExit = shouldHandleReaderExit
+        self.onReaderExit = onReaderExit
         _viewModel = StateObject(wrappedValue: ComicReaderViewModel(
             detail: detail,
             initialChapterIndex: initialChapterIndex,
@@ -185,6 +195,14 @@ struct ComicReaderPage: View {
                 }
                 .picaxPresentationDetents([.height(280), .medium])
             }
+            .alert("开启“阅后即焚”？", isPresented: $showsBurnAfterReadingConfirmation) {
+                Button("开启", role: .destructive) {
+                    deletesLocalDownloadOnExit?.wrappedValue = true
+                }
+                Button("取消", role: .cancel) {}
+            } message: {
+                Text("退出当前阅读器后，将删除这本漫画的本地下载文件和下载记录。收藏与阅读历史会保留。")
+            }
     }
 
     private var readerToolbarContent: some View {
@@ -210,7 +228,9 @@ struct ComicReaderPage: View {
                         smoothContinuousAutoPaging: $smoothContinuousAutoPaging,
                         autoPagingTurnsChapter: $autoPagingTurnsChapter,
                         wholeBookContinuousReading: $wholeBookContinuousReading,
+                        deletesLocalDownloadOnExit: deletesLocalDownloadOnExit?.wrappedValue,
                         onToggleAutoPaging: toggleAutoPaging,
+                        onToggleBurnAfterReading: toggleBurnAfterReading,
                         onOpenDetail: openDetail,
                         onSelectProgress: selectProgressFromMenu
                     )
@@ -303,6 +323,18 @@ struct ComicReaderPage: View {
         isAutoPaging = false
         isAutoPagingTurnInFlight = false
         autoPagingCommentActionChapterIndex = nil
+        if detailRequest == nil, shouldHandleReaderExit() {
+            onReaderExit?()
+        }
+    }
+
+    private func toggleBurnAfterReading() {
+        guard let deletesLocalDownloadOnExit else { return }
+        if deletesLocalDownloadOnExit.wrappedValue {
+            deletesLocalDownloadOnExit.wrappedValue = false
+        } else {
+            showsBurnAfterReadingConfirmation = true
+        }
     }
 
     private func handleScenePhaseChange(_ newValue: ScenePhase) {

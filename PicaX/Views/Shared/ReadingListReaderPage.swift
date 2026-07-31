@@ -126,6 +126,7 @@ struct ReadingListReaderPage: View {
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var pendingBookToastTitle: String?
+    @State private var burnAfterReadingRecordIDs = Set<String>()
 
     init(request: ReadingListRequest, service: ComicContentService) {
         self.request = request
@@ -178,6 +179,7 @@ struct ReadingListReaderPage: View {
         let imageProvider: ((ComicChapter, Int) async -> [ComicChapterImage])?
         let commentsProvider: ((ComicChapter, Int) async -> [ComicComment])?
         let historyChapterIndexResolver: (Int) -> Int
+        let deletesLocalDownloadOnExit: Binding<Bool>?
         if let record = entry.downloadedRecord {
             imageProvider = { _, chapterIndex in
                 guard let localChapterIndexes = entry.localChapterIndexes,
@@ -196,10 +198,12 @@ struct ReadingListReaderPage: View {
                       localChapterIndexes.indices.contains(chapterIndex) else { return chapterIndex }
                 return localChapterIndexes[chapterIndex]
             }
+            deletesLocalDownloadOnExit = burnAfterReadingBinding(for: record.id)
         } else {
             imageProvider = nil
             commentsProvider = nil
             historyChapterIndexResolver = { $0 }
+            deletesLocalDownloadOnExit = nil
         }
 
         return ComicReaderPage(
@@ -212,9 +216,33 @@ struct ReadingListReaderPage: View {
             localChapterCommentsProvider: commentsProvider,
             historyChapterIndexResolver: historyChapterIndexResolver,
             listContext: listContext(for: loadedEntry.entryID),
-            initialToastMessage: pendingBookToastTitle
+            initialToastMessage: pendingBookToastTitle,
+            deletesLocalDownloadOnExit: deletesLocalDownloadOnExit,
+            shouldHandleReaderExit: {
+                currentEntryID == loadedEntry.entryID || currentEntryID == nil
+            },
+            onReaderExit: removeBurnAfterReadingDownloads
         )
         .id(loadedEntry.entryID)
+    }
+
+    private func burnAfterReadingBinding(for recordID: String) -> Binding<Bool> {
+        Binding {
+            burnAfterReadingRecordIDs.contains(recordID)
+        } set: { isEnabled in
+            if isEnabled {
+                burnAfterReadingRecordIDs.insert(recordID)
+            } else {
+                burnAfterReadingRecordIDs.remove(recordID)
+            }
+        }
+    }
+
+    private func removeBurnAfterReadingDownloads() {
+        guard !burnAfterReadingRecordIDs.isEmpty else { return }
+        let removingIDs = burnAfterReadingRecordIDs
+        burnAfterReadingRecordIDs.removeAll()
+        downloadService.removeRecords(withIDs: removingIDs)
     }
 
     private var showsLoadingToast: Bool {

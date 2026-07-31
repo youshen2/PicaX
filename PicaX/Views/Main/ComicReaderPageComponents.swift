@@ -112,7 +112,9 @@ struct ReaderOptionsMenu: View {
     @Binding var smoothContinuousAutoPaging: Bool
     @Binding var autoPagingTurnsChapter: Bool
     @Binding var wholeBookContinuousReading: Bool
+    let deletesLocalDownloadOnExit: Bool?
     let onToggleAutoPaging: () -> Void
+    let onToggleBurnAfterReading: () -> Void
     let onOpenDetail: () -> Void
     let onSelectProgress: () -> Void
 
@@ -164,6 +166,17 @@ struct ReaderOptionsMenu: View {
                     Label("自动进入下一章", systemImage: "arrow.down.doc")
                 }
                 .disabled(wholeBookContinuousReading)
+            }
+
+            if let deletesLocalDownloadOnExit {
+                Section("本地下载") {
+                    Button(action: onToggleBurnAfterReading) {
+                        Label(
+                            deletesLocalDownloadOnExit ? "关闭阅后即焚" : "开启阅后即焚",
+                            systemImage: deletesLocalDownloadOnExit ? "flame.fill" : "flame"
+                        )
+                    }
+                }
             }
 
             Section {

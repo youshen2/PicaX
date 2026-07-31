@@ -460,6 +460,10 @@ enum PicaXSQLiteStore {
         delete(table: "download_records", id: id)
     }
 
+    static func deleteDownloadRecords(ids: Set<String>) {
+        delete(table: "download_records", ids: ids)
+    }
+
     static func clearDownloadRecords() {
         clear(table: "download_records")
     }

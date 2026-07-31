@@ -99,26 +99,7 @@ struct DownloadListPage: View {
                 .picaxPresentationDetents([.medium, .large])
         }
         .picaxNavigationDestination(item: $readerRequest) { request in
-            ComicReaderPage(
-                detail: request.detail,
-                initialChapterIndex: request.initialChapterIndex,
-                initialPageIndex: request.initialPageIndex,
-                ignoresHistoryProgress: request.ignoresHistoryProgress,
-                recordsReadingHistory: request.recordsReadingHistory,
-                service: service,
-                localChapterImageProvider: { _, chapterIndex in
-                    guard request.localChapterIndexes.indices.contains(chapterIndex) else { return [] }
-                    return await downloadService.localChapterImages(for: request.record, chapterIndex: request.localChapterIndexes[chapterIndex])
-                },
-                localChapterCommentsProvider: { _, chapterIndex in
-                    guard request.localChapterIndexes.indices.contains(chapterIndex) else { return [] }
-                    return await downloadService.localChapterComments(for: request.record, chapterIndex: request.localChapterIndexes[chapterIndex])
-                },
-                historyChapterIndexResolver: { chapterIndex in
-                    guard request.localChapterIndexes.indices.contains(chapterIndex) else { return chapterIndex }
-                    return request.localChapterIndexes[chapterIndex]
-                }
-            )
+            DownloadedComicReaderPage(request: request, service: service)
         }
         .picaxNavigationDestination(item: $readingListRequest) { request in
             ReadingListReaderPage(request: request, service: service)
