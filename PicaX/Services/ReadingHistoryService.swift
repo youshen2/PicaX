@@ -402,6 +402,13 @@ final class ReadLaterService: ObservableObject {
         PicaXSQLiteStore.deleteReadLater(id: id)
     }
 
+    func removeAll(withIDs ids: Set<String>) {
+        let removedIDs = recordIDs.intersection(ids)
+        guard !removedIDs.isEmpty else { return }
+        records.removeAll { removedIDs.contains($0.id) }
+        PicaXSQLiteStore.deleteReadLater(ids: removedIDs)
+    }
+
     func clear() {
         records.removeAll()
         PicaXSQLiteStore.clearReadLater()

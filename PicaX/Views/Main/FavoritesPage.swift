@@ -778,9 +778,7 @@ private struct FavoriteDownloadAllSheet: View {
         if downloadService.task(for: item) != nil {
             return "已在下载队列"
         }
-        if let record = downloadService.record(for: item),
-           record.totalChapterCount > 0,
-           record.chapters.count >= record.totalChapterCount {
+        if let record = downloadService.record(for: item), record.isFullyDownloaded {
             return "已下载完成"
         }
         return nil

@@ -271,6 +271,12 @@ enum PicaXSQLiteStore {
         NotificationCenter.default.post(name: .picaxReadLaterDidChange, object: nil)
     }
 
+    static func deleteReadLater(ids: Set<String>) {
+        guard !ids.isEmpty else { return }
+        delete(table: "read_later", ids: ids)
+        NotificationCenter.default.post(name: .picaxReadLaterDidChange, object: nil)
+    }
+
     static func clearReadLater() {
         clear(table: "read_later")
         NotificationCenter.default.post(name: .picaxReadLaterDidChange, object: nil)
@@ -539,6 +545,18 @@ enum PicaXSQLiteStore {
     private static func delete(table: String, id: String) {
         perform("delete from \(table)") {
             try db.execute("DELETE FROM \(table) WHERE id = ?", bindings: [.text(id)])
+        }
+    }
+
+    private static func delete(table: String, ids: Set<String>) {
+        let sortedIDs = ids.sorted()
+        guard !sortedIDs.isEmpty else { return }
+        let placeholders = Array(repeating: "?", count: sortedIDs.count).joined(separator: ", ")
+        perform("delete from \(table)") {
+            try db.execute(
+                "DELETE FROM \(table) WHERE id IN (\(placeholders))",
+                bindings: sortedIDs.map(SQLiteBinding.text)
+            )
         }
     }
 

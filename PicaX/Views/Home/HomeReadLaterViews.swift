@@ -99,7 +99,7 @@ struct ReadLaterListPage: View {
 
     let service: ComicContentService
     @State private var readingListRequest: ReadingListRequest?
-    @State private var showsClearConfirmation = false
+    @State private var clearSelection: ReadLaterClearSelection?
     @State private var downloadFeedback: ReadLaterDownloadFeedback?
 
     var body: some View {
@@ -151,22 +151,35 @@ struct ReadLaterListPage: View {
                 .accessibilityLabel("下载全部稍后再读")
                 .disabled(readLater.records.isEmpty)
 
-                Button(role: .destructive) {
-                    showsClearConfirmation = true
+                Menu {
+                    Button(role: .destructive) {
+                        clearSelection = .downloaded(fullyDownloadedReadLaterIDs)
+                    } label: {
+                        Label("仅清空已下载", systemImage: "checkmark.circle")
+                    }
+                    .disabled(fullyDownloadedReadLaterIDs.isEmpty)
+
+                    Button(role: .destructive) {
+                        clearSelection = .all
+                    } label: {
+                        Label("清空全部", systemImage: "trash")
+                    }
                 } label: {
                     Image(systemName: "trash")
                 }
-                .accessibilityLabel("清空稍后再读")
+                .accessibilityLabel("清理稍后再读")
                 .disabled(readLater.records.isEmpty)
             }
         }
-        .alert("清空稍后再读？", isPresented: $showsClearConfirmation) {
-            Button("清空", role: .destructive) {
-                readLater.clear()
-            }
-            Button("取消", role: .cancel) {}
-        } message: {
-            Text("此操作只会清空稍后再读列表，不会影响历史记录、收藏或下载。")
+        .alert(item: $clearSelection) { selection in
+            Alert(
+                title: Text(selection.title),
+                message: Text(selection.message),
+                primaryButton: .destructive(Text(selection.confirmationTitle)) {
+                    clear(selection)
+                },
+                secondaryButton: .cancel(Text("取消"))
+            )
         }
         .alert(item: $downloadFeedback) { feedback in
             Alert(
@@ -195,16 +208,73 @@ struct ReadLaterListPage: View {
         downloadFeedback = summary.feedback(total: readLater.records.count)
     }
 
+    private var fullyDownloadedReadLaterIDs: Set<String> {
+        let downloadedIDs = Set(
+            downloadService.records.lazy
+                .filter(\.isFullyDownloaded)
+                .map { $0.item.readingHistoryID }
+        )
+        return readLater.allRecordIDs.intersection(downloadedIDs)
+    }
+
+    private func clear(_ selection: ReadLaterClearSelection) {
+        switch selection {
+        case .downloaded(let recordIDs):
+            readLater.removeAll(withIDs: recordIDs)
+        case .all:
+            readLater.clear()
+        }
+    }
+
     private func downloadStatusText(for item: ComicListItem) -> String? {
         if downloadService.task(for: item) != nil {
             return "已在下载队列"
         }
-        if let record = downloadService.record(for: item),
-           record.totalChapterCount > 0,
-           record.chapters.count >= record.totalChapterCount {
+        if let record = downloadService.record(for: item), record.isFullyDownloaded {
             return "已下载完成"
         }
         return nil
+    }
+}
+
+private enum ReadLaterClearSelection: Identifiable {
+    case downloaded(Set<String>)
+    case all
+
+    var id: String {
+        switch self {
+        case .downloaded:
+            "downloaded"
+        case .all:
+            "all"
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .downloaded:
+            "清空已下载书籍？"
+        case .all:
+            "清空稍后再读？"
+        }
+    }
+
+    var confirmationTitle: String {
+        switch self {
+        case .downloaded:
+            "清空已下载"
+        case .all:
+            "清空全部"
+        }
+    }
+
+    var message: String {
+        switch self {
+        case .downloaded(let recordIDs):
+            "将从稍后再读中移除 \(recordIDs.count) 本已下载完成的书籍。未下载或尚未下载完成的书籍会保留，本地下载文件不会被删除。"
+        case .all:
+            "此操作只会清空稍后再读列表，不会影响历史记录、收藏或下载。"
+        }
     }
 }
 

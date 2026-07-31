@@ -72,6 +72,10 @@ struct DownloadRecord: Identifiable, Equatable, Codable {
         Set(chapters.map(\.index))
     }
 
+    var isFullyDownloaded: Bool {
+        totalChapterCount > 0 && chapters.count >= totalChapterCount
+    }
+
     var statusText: String {
         if totalChapterCount <= 1 {
             let pages = chapters.first?.pageCount ?? item.pageCount ?? 0
@@ -589,9 +593,7 @@ final class DownloadService: ObservableObject {
             return .alreadyDownloading
         }
 
-        if let record = record(for: item),
-           record.totalChapterCount > 0,
-           record.chapters.count >= record.totalChapterCount {
+        if let record = record(for: item), record.isFullyDownloaded {
             return .alreadyDownloaded
         }
 
@@ -611,9 +613,7 @@ final class DownloadService: ObservableObject {
         guard !items.isEmpty else { return [] }
 
         var taskIDs = Set(tasks.map { downloadID(for: $0.item) })
-        let completedRecordIDs = Set(records.lazy.filter { record in
-            record.totalChapterCount > 0 && record.chapters.count >= record.totalChapterCount
-        }.map(\.id))
+        let completedRecordIDs = Set(records.lazy.filter(\.isFullyDownloaded).map(\.id))
         var queuedTasks: [ComicDownloadTask] = []
         queuedTasks.reserveCapacity(items.count)
 
