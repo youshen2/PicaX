@@ -362,7 +362,7 @@ enum EhTagTranslationService {
         if let data = try? Data(contentsOf: downloadedDatabaseURL),
            let value = try? JSONDecoder().decode([String: [String: String]].self, from: data),
            isValidDatabase(value) {
-            return value
+            return applyingBundledRichTitles(to: value)
         }
         return loadBundledTranslations()
     }
@@ -387,7 +387,12 @@ enum EhTagTranslationService {
 
         var result = translations
         for (namespace, titles) in richTitles {
-            result[namespace, default: [:]].merge(titles) { _, richTitle in richTitle }
+            for (tag, richTitle) in titles {
+                let plainTitle = MarkdownImageTagContent(richTitle).plainText
+                let currentTitle = result[namespace]?[tag]
+                guard currentTitle == nil || currentTitle == plainTitle else { continue }
+                result[namespace, default: [:]][tag] = richTitle
+            }
         }
         return result
     }
@@ -414,7 +419,7 @@ enum EhTagTranslationService {
         try data.write(to: downloadedDatabaseURL, options: .atomic)
         UserDefaults.standard.set(version, forKey: EhTagTranslationSettingsKey.downloadedVersion)
         UserDefaults.standard.set(Date(), forKey: EhTagTranslationSettingsKey.lastUpdatedAt)
-        snapshotBox.replace(with: makeSnapshot(translations: translations))
+        snapshotBox.replace(with: makeSnapshot(translations: applyingBundledRichTitles(to: translations)))
         NotificationCenter.default.post(name: .picaxEhTagTranslationsDidChange, object: nil)
     }
 

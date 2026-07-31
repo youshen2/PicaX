@@ -108,6 +108,17 @@ enum NhentaiTagSuggestionService {
         return EhTagTranslationService.translatedAnyTagTitle(trimmed)
     }
 
+    static func detailTagReference(forTagName tagName: String, group: String) -> ComicTagReference? {
+        let trimmed = tagName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return ComicTagReference(
+            title: translatedTitle(forTagName: trimmed, group: group),
+            query: trimmed,
+            platform: .nhentai,
+            urlString: nil
+        )
+    }
+
     fileprivate nonisolated static func normalizedTag(_ value: String) -> String {
         value
             .trimmingCharacters(in: .whitespacesAndNewlines)

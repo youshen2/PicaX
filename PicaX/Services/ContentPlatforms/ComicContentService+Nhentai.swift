@@ -203,7 +203,10 @@ extension ComicContentService {
         let tagGroups = grouped.keys.sorted().map { key in
             ComicTagGroup(
                 title: nhentaiTagGroupTitle(key),
-                tags: tagRefs(grouped[key]?.compactMap { $0["name"] as? String } ?? [], platform: .nhentai)
+                tags: (grouped[key] ?? []).compactMap { tag in
+                    guard let name = tag["name"] as? String else { return nil }
+                    return NhentaiTagSuggestionService.detailTagReference(forTagName: name, group: key)
+                }
             )
         }.filter { !$0.tags.isEmpty }
         let detailItem = ComicListItem(
