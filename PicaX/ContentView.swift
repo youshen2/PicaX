@@ -35,7 +35,7 @@ struct ContentView_Previews: PreviewProvider {
     static var previews: some View {
         let downloadService = DownloadService(defaults: .preview)
         let releaseNotes = AppReleaseNotesStore(
-            currentVersion: "1.1.6",
+            currentVersion: "1.1.7",
             hadCompletedOnboarding: false,
             currentReleaseNotes: nil,
             defaults: .preview
