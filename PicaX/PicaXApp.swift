@@ -9,6 +9,7 @@ import SwiftUI
 
 @main
 struct PicaXApp: App {
+    private let appDataMigrationCoordinator = AppDataMigrationCoordinator()
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var appSettings = AppSettings()
     @StateObject private var platformAccountService = PlatformAccountService()

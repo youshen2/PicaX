@@ -1,6 +1,8 @@
 import Foundation
 
 struct LocalFavoritesStore: Sendable {
+    nonisolated static let legacyDefaultsKeyPrefix = "picax.localFavorites."
+
     nonisolated init() {}
 
     nonisolated var folders: [LocalFavoriteFolder] {

@@ -8,8 +8,17 @@ final class PicaXSQLiteDatabase: Sendable {
     private let queueResult: Result<DatabaseQueue, Error>
 
     private nonisolated init() {
+        queueResult = Self.openDatabase(at: Self.databaseURL())
+    }
+
+    nonisolated init(databaseURL: URL) {
+        queueResult = Self.openDatabase(at: databaseURL)
+    }
+
+    private nonisolated static func openDatabase(
+        at url: URL
+    ) -> Result<DatabaseQueue, Error> {
         do {
-            let url = Self.databaseURL()
             try FileManager.default.createDirectory(
                 at: url.deletingLastPathComponent(),
                 withIntermediateDirectories: true
@@ -22,9 +31,9 @@ final class PicaXSQLiteDatabase: Sendable {
             }
             let queue = try DatabaseQueue(path: url.path, configuration: configuration)
             try Self.migrator.migrate(queue)
-            queueResult = .success(queue)
+            return .success(queue)
         } catch {
-            queueResult = .failure(error)
+            return .failure(error)
         }
     }
 
@@ -134,6 +143,18 @@ final class PicaXSQLiteDatabase: Sendable {
                 """
             )
         }
+        migrator.registerMigration("createLegacyUserDataMigrationState") { database in
+            try database.execute(
+                sql: """
+                CREATE TABLE legacy_user_data_migrations (
+                    source_key TEXT PRIMARY KEY NOT NULL,
+                    payload_digest BLOB NOT NULL,
+                    discarded_count INTEGER NOT NULL,
+                    migrated_at REAL NOT NULL
+                );
+                """
+            )
+        }
         return migrator
     }()
 
@@ -187,6 +208,17 @@ enum PicaXSQLiteStore {
         subsystem: Bundle.main.bundleIdentifier ?? "PicaX",
         category: "SQLiteStore"
     )
+
+    static func migrateLegacyUserDataAtAppLaunch() {
+        do {
+            try LegacyUserDataMigration.migrate(
+                defaults: .standard,
+                database: db
+            )
+        } catch {
+            report(error, operation: "migrate legacy user data")
+        }
+    }
 
     static func loadReadingHistory() -> [ReadingHistoryRecord] {
         loadValues("SELECT value FROM reading_history ORDER BY sort_date DESC")
@@ -564,9 +596,10 @@ enum PicaXSQLiteStore {
     }
 
     private static func loadPersistedPlatformAccountsOrThrow() throws -> [PlatformAccount] {
-        try loadValuesOrThrow(
+        let rows = try db.dataRows(
             "SELECT value FROM platform_accounts ORDER BY sort_date DESC"
         )
+        return decodeStoredRows(rows, as: PlatformAccount.self)
     }
 
     private static func persistRedactedPlatformAccountsOrThrow(
@@ -842,10 +875,26 @@ enum PicaXSQLiteStore {
 
     private nonisolated static func loadValues<Value: Decodable>(_ sql: String, bindings: [SQLiteBinding] = []) -> [Value] {
         do {
-            return try loadValuesOrThrow(sql, bindings: bindings)
+            let rows = try db.dataRows(sql, bindings: bindings)
+            return decodeStoredRows(rows, as: Value.self)
         } catch {
             report(error, operation: "load values")
             return []
+        }
+    }
+
+    nonisolated static func decodeStoredRows<Value: Decodable>(
+        _ rows: [Data],
+        as type: Value.Type
+    ) -> [Value] {
+        let decoder = JSONDecoder()
+        return rows.compactMap { data in
+            do {
+                return try decoder.decode(type, from: data)
+            } catch {
+                report(error, operation: "decode stored \(String(describing: type))")
+                return nil
+            }
         }
     }
 }

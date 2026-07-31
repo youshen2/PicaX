@@ -201,7 +201,7 @@ enum AppAppearanceMode: String, CaseIterable, Identifiable {
 }
 
 enum DownloadSettingsKey {
-    static let records = "picax.download.records"
+    nonisolated static let records = "picax.download.records"
     static let tasks = "picax.download.tasks"
     static let homeLimit = "settings.download.homeLimit"
     static let imageRetryCount = "settings.download.imageRetryCount"

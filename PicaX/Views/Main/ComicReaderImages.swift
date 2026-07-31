@@ -246,22 +246,24 @@ struct ReaderContinuousZoomHost<Content: View>: UIViewRepresentable {
         self.content = content()
     }
 
-    func makeUIView(context: Context) -> ReaderContinuousZoomUIView<Content> {
-        ReaderContinuousZoomUIView(rootView: content)
+    func makeUIView(context: Context) -> ReaderContinuousZoomUIView {
+        ReaderContinuousZoomUIView(rootView: AnyView(content))
     }
 
-    func updateUIView(_ uiView: ReaderContinuousZoomUIView<Content>, context: Context) {
-        uiView.update(rootView: content, configuration: configuration, resetID: resetID)
+    func updateUIView(_ uiView: ReaderContinuousZoomUIView, context: Context) {
+        uiView.update(rootView: AnyView(content), configuration: configuration, resetID: resetID)
     }
 
-    static func dismantleUIView(_ uiView: ReaderContinuousZoomUIView<Content>, coordinator: ()) {
+    static func dismantleUIView(_ uiView: ReaderContinuousZoomUIView, coordinator: ()) {
         uiView.prepareForReuse()
     }
 }
 
-final class ReaderContinuousZoomUIView<Content: View>: UIView, UIScrollViewDelegate, UIGestureRecognizerDelegate {
+// Keep this bridge type-erased: a generic UIHostingController subclass crashes
+// the Swift compiler during the CI Release whole-module optimization build.
+final class ReaderContinuousZoomUIView: UIView, UIScrollViewDelegate, UIGestureRecognizerDelegate {
     private let scrollView = UIScrollView()
-    private let hostingController: UIHostingController<Content>
+    private let hostingController: UIHostingController<AnyView>
     private var resetID = ""
     private var lastBoundsSize: CGSize = .zero
     private var configuration = ReaderZoomConfiguration(
@@ -274,7 +276,7 @@ final class ReaderContinuousZoomUIView<Content: View>: UIView, UIScrollViewDeleg
     )
     private var longPressStartedZoom = false
 
-    init(rootView: Content) {
+    init(rootView: AnyView) {
         hostingController = UIHostingController(rootView: rootView)
         super.init(frame: .zero)
         setup()
@@ -284,13 +286,13 @@ final class ReaderContinuousZoomUIView<Content: View>: UIView, UIScrollViewDeleg
         fatalError("init(coder:) has not been implemented")
     }
 
-	    func update(rootView: Content, configuration: ReaderZoomConfiguration, resetID: String) {
-	        hostingController.rootView = rootView
-	        hostingController.view.invalidateIntrinsicContentSize()
-	        hostingController.view.setNeedsLayout()
-	        let wasZoomEnabled = self.configuration.isZoomEnabled
-	        self.configuration = configuration
-	        let shouldReset = self.resetID != resetID
+    func update(rootView: AnyView, configuration: ReaderZoomConfiguration, resetID: String) {
+        hostingController.rootView = rootView
+        hostingController.view.invalidateIntrinsicContentSize()
+        hostingController.view.setNeedsLayout()
+        let wasZoomEnabled = self.configuration.isZoomEnabled
+        self.configuration = configuration
+        let shouldReset = self.resetID != resetID
         self.resetID = resetID
         configureGestures()
         configureZoomLimits()
@@ -307,17 +309,17 @@ final class ReaderContinuousZoomUIView<Content: View>: UIView, UIScrollViewDeleg
 
     override func layoutSubviews() {
         super.layoutSubviews()
-	        guard bounds.width > 0, bounds.height > 0 else { return }
-	        scrollView.frame = bounds
-	        let didChangeSize = lastBoundsSize != bounds.size
-	        lastBoundsSize = bounds.size
-	        if didChangeSize {
-	            resetZoom(animated: false)
-	        }
-	        layoutHostedViewForCurrentZoomScale()
-	        updateContentInsets()
-	        updateInteractionState()
-	    }
+        guard bounds.width > 0, bounds.height > 0 else { return }
+        scrollView.frame = bounds
+        let didChangeSize = lastBoundsSize != bounds.size
+        lastBoundsSize = bounds.size
+        if didChangeSize {
+            resetZoom(animated: false)
+        }
+        layoutHostedViewForCurrentZoomScale()
+        updateContentInsets()
+        updateInteractionState()
+    }
 
     func viewForZooming(in scrollView: UIScrollView) -> UIView? {
         hostingController.view
@@ -328,10 +330,10 @@ final class ReaderContinuousZoomUIView<Content: View>: UIView, UIScrollViewDeleg
         updateInteractionState()
     }
 
-	    func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) {
-	        layoutHostedViewForCurrentZoomScale()
-	        updateInteractionState()
-	    }
+    func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) {
+        layoutHostedViewForCurrentZoomScale()
+        updateInteractionState()
+    }
 
     private func setup() {
         backgroundColor = .black
@@ -398,50 +400,50 @@ final class ReaderContinuousZoomUIView<Content: View>: UIView, UIScrollViewDeleg
         updateInteractionState()
     }
 
-	    private func resetZoom(animated: Bool) {
-	        longPressStartedZoom = false
-	        scrollView.setZoomScale(scrollView.minimumZoomScale, animated: animated)
-	        scrollView.contentOffset = .zero
-	        if !animated {
-	            scrollView.contentSize = bounds.size
-	            hostingController.view.transform = .identity
-	            hostingController.view.frame = CGRect(origin: .zero, size: bounds.size)
-	        }
-	        updateContentInsets()
-	        updateInteractionState()
-	    }
+    private func resetZoom(animated: Bool) {
+        longPressStartedZoom = false
+        scrollView.setZoomScale(scrollView.minimumZoomScale, animated: animated)
+        scrollView.contentOffset = .zero
+        if !animated {
+            scrollView.contentSize = bounds.size
+            hostingController.view.transform = .identity
+            hostingController.view.frame = CGRect(origin: .zero, size: bounds.size)
+        }
+        updateContentInsets()
+        updateInteractionState()
+    }
 
-	    private func layoutHostedViewForCurrentZoomScale() {
-	        guard bounds.width > 0, bounds.height > 0 else { return }
+    private func layoutHostedViewForCurrentZoomScale() {
+        guard bounds.width > 0, bounds.height > 0 else { return }
 
-	        if scrollView.zoomScale <= scrollView.minimumZoomScale + 0.01 {
-	            hostingController.view.transform = .identity
-	            hostingController.view.frame = CGRect(origin: .zero, size: bounds.size)
-	            scrollView.contentSize = bounds.size
-	            return
-	        }
+        if scrollView.zoomScale <= scrollView.minimumZoomScale + 0.01 {
+            hostingController.view.transform = .identity
+            hostingController.view.frame = CGRect(origin: .zero, size: bounds.size)
+            scrollView.contentSize = bounds.size
+            return
+        }
 
-	        let oldOffset = scrollView.contentOffset
-	        hostingController.view.bounds = CGRect(origin: .zero, size: bounds.size)
-	        scrollView.contentSize = CGSize(
-	            width: bounds.width * scrollView.zoomScale,
-	            height: bounds.height * scrollView.zoomScale
-	        )
-	        hostingController.view.center = CGPoint(
-	            x: scrollView.contentSize.width * 0.5,
-	            y: scrollView.contentSize.height * 0.5
-	        )
-	        scrollView.contentOffset = clampedContentOffset(oldOffset)
-	    }
+        let oldOffset = scrollView.contentOffset
+        hostingController.view.bounds = CGRect(origin: .zero, size: bounds.size)
+        scrollView.contentSize = CGSize(
+            width: bounds.width * scrollView.zoomScale,
+            height: bounds.height * scrollView.zoomScale
+        )
+        hostingController.view.center = CGPoint(
+            x: scrollView.contentSize.width * 0.5,
+            y: scrollView.contentSize.height * 0.5
+        )
+        scrollView.contentOffset = clampedContentOffset(oldOffset)
+    }
 
-	    private func clampedContentOffset(_ offset: CGPoint) -> CGPoint {
-	        CGPoint(
-	            x: min(max(offset.x, 0), max(scrollView.contentSize.width - bounds.width, 0)),
-	            y: min(max(offset.y, 0), max(scrollView.contentSize.height - bounds.height, 0))
-	        )
-	    }
+    private func clampedContentOffset(_ offset: CGPoint) -> CGPoint {
+        CGPoint(
+            x: min(max(offset.x, 0), max(scrollView.contentSize.width - bounds.width, 0)),
+            y: min(max(offset.y, 0), max(scrollView.contentSize.height - bounds.height, 0))
+        )
+    }
 
-	    private func updateContentInsets() {
+    private func updateContentInsets() {
         let contentSize = scrollView.contentSize
         let insetX = max((bounds.width - contentSize.width) * 0.5, 0)
         let insetY = max((bounds.height - contentSize.height) * 0.5, 0)

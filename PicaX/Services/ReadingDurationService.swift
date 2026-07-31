@@ -33,7 +33,7 @@ struct ReadingDurationRecord: Identifiable, Equatable, Codable {
 @MainActor
 final class ReadingDurationService: ObservableObject {
     enum Key {
-        static let records = "picax.readingDuration.records"
+        nonisolated static let records = "picax.readingDuration.records"
         static let isEnabled = "settings.readingDuration.isEnabled"
         static let homeLimit = "settings.readingDuration.homeLimit"
         static let maxRecords = "settings.readingDuration.maxRecords"

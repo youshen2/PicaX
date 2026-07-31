@@ -94,7 +94,7 @@ nonisolated enum ReadingProgressStatus: String, Codable, Sendable {
 @MainActor
 final class ReadingHistoryService: ObservableObject {
     enum Key {
-        static let records = "picax.readingHistory.records"
+        nonisolated static let records = "picax.readingHistory.records"
         static let isEnabled = "settings.history.isEnabled"
         static let homeLimit = "settings.history.homeLimit"
         static let maxRecords = "settings.history.maxRecords"
@@ -316,7 +316,7 @@ struct ReadLaterRecord: Identifiable, Equatable, Codable, Sendable {
 @MainActor
 final class ReadLaterService: ObservableObject {
     enum Key {
-        static let records = "picax.readLater.records"
+        nonisolated static let records = "picax.readLater.records"
         static let homeLimit = "settings.readLater.homeLimit"
         static let maxRecords = "settings.readLater.maxRecords"
     }
