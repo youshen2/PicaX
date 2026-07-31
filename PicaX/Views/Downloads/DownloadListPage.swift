@@ -390,17 +390,18 @@ private struct DownloadArchiveExportFeedback: Identifiable {
 private struct DownloadQueueSheet: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var downloadService: DownloadService
+    @EnvironmentObject private var downloadTaskStore: DownloadTaskStore
     @State private var showsClearQueueConfirmation = false
 
     var body: some View {
         PicaxNavigationContainer {
             List {
-                if downloadService.tasks.isEmpty {
+                if downloadTaskStore.tasks.isEmpty {
                     ContentUnavailableView("暂无下载任务", systemImage: "tray", description: Text("新任务会从漫画详情页加入"))
                         .listRowBackground(Color.clear)
                 } else {
                     Section {
-                        ForEach(downloadService.tasks) { task in
+                        ForEach(downloadTaskStore.tasks) { task in
                             DownloadTaskRow(task: task)
                                 .swipeActions(edge: .leading, allowsFullSwipe: false) {
                                     if task.status == .paused {
@@ -450,12 +451,12 @@ private struct DownloadQueueSheet: View {
             }
             .picaxInsetGroupedListStyle()
             .background(AppColor.groupedBackground)
-            .picaxSensitiveImageContent(!downloadService.tasks.isEmpty)
+            .picaxSensitiveImageContent(!downloadTaskStore.tasks.isEmpty)
             .navigationTitle("下载队列")
             .picaxNavigationBarTitleDisplayModeInline()
             .toolbar {
                 ToolbarItemGroup(placement: .picaxTopBarTrailing) {
-                    if !downloadService.tasks.isEmpty {
+                    if !downloadTaskStore.tasks.isEmpty {
                         Button(role: .destructive) {
                             showsClearQueueConfirmation = true
                         } label: {

@@ -280,11 +280,6 @@ final class ReaderContinuousZoomUIView<Content: View>: UIView, UIScrollViewDeleg
         setup()
     }
 
-    @inline(never)
-    deinit {
-        scrollView.delegate = nil
-    }
-
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }

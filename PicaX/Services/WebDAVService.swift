@@ -2,7 +2,7 @@ import Combine
 import Foundation
 import Security
 
-struct WebDAVConfiguration: Sendable {
+nonisolated struct WebDAVConfiguration: Sendable {
     let baseURL: URL
     let username: String
     let password: String
@@ -12,7 +12,7 @@ struct WebDAVConfiguration: Sendable {
         let trimmedURL = serverURL.trimmingCharacters(in: .whitespacesAndNewlines)
         guard var components = URLComponents(string: trimmedURL),
               let scheme = components.scheme?.lowercased(),
-              ["http", "https"].contains(scheme),
+              scheme == "https",
               components.host != nil else {
             throw WebDAVError.invalidServerURL
         }
@@ -48,18 +48,31 @@ struct WebDAVRemoteBackup: Identifiable, Sendable {
     let size: Int64?
 }
 
-enum WebDAVError: LocalizedError {
+private struct WebDAVDownloadedResource: Sendable {
+    let data: Data
+    let writeCondition: WebDAVWriteCondition
+}
+
+private enum WebDAVWriteCondition: Sendable {
+    case absent
+    case entityTag(String)
+    case unmodifiedSince(String)
+}
+
+nonisolated enum WebDAVError: LocalizedError {
     case invalidServerURL
     case invalidResponse
     case requestFailed(statusCode: Int, message: String?)
     case keychain(OSStatus)
     case notConfigured
     case operationInProgress
+    case conflict
+    case missingRemoteValidator
 
     var errorDescription: String? {
         switch self {
         case .invalidServerURL:
-            "请输入完整的 HTTP 或 HTTPS WebDAV 地址。"
+            "请输入完整的 HTTPS WebDAV 地址。"
         case .invalidResponse:
             "WebDAV 服务器返回了无法识别的响应。"
         case .requestFailed(let statusCode, let message):
@@ -74,6 +87,10 @@ enum WebDAVError: LocalizedError {
             "请先填写并保存 WebDAV 配置。"
         case .operationInProgress:
             "另一项 WebDAV 操作仍在进行中。"
+        case .conflict:
+            "远端同步文件刚刚被其他设备更新，请重试。"
+        case .missingRemoteValidator:
+            "WebDAV 服务器没有提供 ETag 或 Last-Modified，无法安全覆盖同步文件。"
         }
     }
 }
@@ -139,12 +156,28 @@ private enum WebDAVCredentialStore {
             kSecAttrService as String: service,
             kSecAttrAccount as String: account
         ]
-        SecItemDelete(query as CFDictionary)
-        guard !password.isEmpty else { return }
+        guard !password.isEmpty else {
+            let status = SecItemDelete(query as CFDictionary)
+            guard status == errSecSuccess || status == errSecItemNotFound else {
+                throw WebDAVError.keychain(status)
+            }
+            return
+        }
+
+        let attributes: [String: Any] = [
+            kSecValueData as String: Data(password.utf8),
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        ]
+        let updateStatus = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+        if updateStatus == errSecSuccess {
+            return
+        }
+        guard updateStatus == errSecItemNotFound else {
+            throw WebDAVError.keychain(updateStatus)
+        }
 
         var item = query
-        item[kSecValueData as String] = Data(password.utf8)
-        item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+        attributes.forEach { item[$0] = $1 }
         let status = SecItemAdd(item as CFDictionary, nil)
         guard status == errSecSuccess else {
             throw WebDAVError.keychain(status)
@@ -187,12 +220,31 @@ struct WebDAVClient {
             }
     }
 
-    func upload(_ data: Data, named fileName: String) async throws {
+    fileprivate func upload(
+        fileAt sourceURL: URL,
+        named fileName: String,
+        condition: WebDAVWriteCondition? = nil
+    ) async throws {
         try await ensureRemoteDirectory()
         var request = makeRequest(url: fileURL(named: fileName), method: "PUT")
         request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
-        request.httpBody = data
-        _ = try await perform(request, acceptedStatusCodes: [200, 201, 204])
+        switch condition {
+        case .absent:
+            request.setValue("*", forHTTPHeaderField: "If-None-Match")
+        case .entityTag(let entityTag):
+            request.setValue(entityTag, forHTTPHeaderField: "If-Match")
+        case .unmodifiedSince(let value):
+            request.setValue(value, forHTTPHeaderField: "If-Unmodified-Since")
+        case nil:
+            break
+        }
+        let (data, response) = try await session.upload(for: request, fromFile: sourceURL)
+        guard let response = response as? HTTPURLResponse else {
+            throw WebDAVError.invalidResponse
+        }
+        guard [200, 201, 204].contains(response.statusCode) else {
+            throw requestError(response: response, data: data)
+        }
     }
 
     func download(named fileName: String) async throws -> Data {
@@ -200,7 +252,7 @@ struct WebDAVClient {
         return try await perform(request, acceptedStatusCodes: [200]).0
     }
 
-    func downloadIfPresent(named fileName: String) async throws -> Data? {
+    fileprivate func downloadIfPresent(named fileName: String) async throws -> WebDAVDownloadedResource? {
         let request = makeRequest(url: fileURL(named: fileName), method: "GET")
         let (data, response) = try await session.data(for: request)
         guard let response = response as? HTTPURLResponse else {
@@ -210,7 +262,13 @@ struct WebDAVClient {
         guard response.statusCode == 200 else {
             throw requestError(response: response, data: data)
         }
-        return data
+        if let entityTag = response.value(forHTTPHeaderField: "ETag"), !entityTag.isEmpty {
+            return WebDAVDownloadedResource(data: data, writeCondition: .entityTag(entityTag))
+        }
+        if let lastModified = response.value(forHTTPHeaderField: "Last-Modified"), !lastModified.isEmpty {
+            return WebDAVDownloadedResource(data: data, writeCondition: .unmodifiedSince(lastModified))
+        }
+        throw WebDAVError.missingRemoteValidator
     }
 
     func delete(_ backup: WebDAVRemoteBackup) async throws {
@@ -259,6 +317,9 @@ struct WebDAVClient {
     }
 
     private func requestError(response: HTTPURLResponse, data: Data) -> WebDAVError {
+        if response.statusCode == 412 {
+            return .conflict
+        }
         let message = String(data: data.prefix(300), encoding: .utf8)?
             .replacingOccurrences(of: "\n", with: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -312,9 +373,12 @@ final class WebDAVSyncService: ObservableObject {
         try begin(.backingUp)
         defer { activity = .idle }
         let fileName = "PicaX-Backup-\(Self.fileNameFormatter.string(from: Date())).picax"
-        let data = try await BackupService.makeData(includedContent: includedContent)
         let client = WebDAVClient(configuration: configuration)
-        try await client.upload(data, named: fileName)
+        try await uploadLocalBackup(
+            using: client,
+            named: fileName,
+            includedContent: includedContent
+        )
         backups = try await client.listBackups()
         return fileName
     }
@@ -374,19 +438,68 @@ final class WebDAVSyncService: ObservableObject {
         defaults: UserDefaults = .standard
     ) async throws {
         let client = WebDAVClient(configuration: configuration)
-        if let remoteData = try await client.downloadIfPresent(named: WebDAVSettingsKey.syncFileName) {
-            let preview = try BackupService.preview(from: remoteData)
-            let backup = BackupService.filteredBackup(preview.backup, includedContent: includedContent)
-            if !backup.contentSelection.isEmpty {
-                try await BackupService.importBackup(backup, mode: .merge, defaults: defaults)
+        var didImport = false
+        defer {
+            if didImport {
                 NotificationCenter.default.post(name: .picaxBackupDidImport, object: nil)
             }
         }
 
-        let mergedData = try await BackupService.makeData(includedContent: includedContent, defaults: defaults)
-        try await client.upload(mergedData, named: WebDAVSettingsKey.syncFileName)
+        for attempt in 0..<3 {
+            let remote = try await client.downloadIfPresent(named: WebDAVSettingsKey.syncFileName)
+            if let remote {
+                let preview = try BackupService.preview(from: remote.data)
+                let filtered = BackupService.filteredBackup(
+                    preview.backup,
+                    includedContent: includedContent
+                )
+                if !filtered.contentSelection.isEmpty {
+                    try await BackupService.importBackup(
+                        filtered,
+                        mode: .merge,
+                        archiveData: remote.data,
+                        defaults: defaults,
+                        postsNotification: false
+                    )
+                    didImport = true
+                }
+            }
+
+            do {
+                try await uploadLocalBackup(
+                    using: client,
+                    named: WebDAVSettingsKey.syncFileName,
+                    condition: remote?.writeCondition ?? .absent,
+                    includedContent: includedContent,
+                    defaults: defaults
+                )
+                break
+            } catch WebDAVError.conflict where attempt < 2 {
+                continue
+            }
+        }
+
         defaults.set(Date().timeIntervalSince1970, forKey: WebDAVSettingsKey.lastSuccessfulSyncAt)
         backups = try await client.listBackups()
+    }
+
+    private func uploadLocalBackup(
+        using client: WebDAVClient,
+        named fileName: String,
+        condition: WebDAVWriteCondition? = nil,
+        includedContent: Set<BackupContentKind>,
+        defaults: UserDefaults = .standard
+    ) async throws {
+        let archiveURL = try await BackupService.makeArchiveFile(
+            includedContent: includedContent,
+            defaults: defaults
+        )
+        defer { try? FileManager.default.removeItem(at: archiveURL) }
+        try await client.upload(
+            fileAt: archiveURL,
+            named: fileName,
+            condition: condition
+        )
     }
 
     private func begin(_ nextActivity: Activity) throws {

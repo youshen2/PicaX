@@ -83,7 +83,7 @@ struct PlatformWebLoginPage: View {
 
         do {
             let account = try await makeAccount(cookies: cookies, currentURL: currentURL, userAgent: userAgent, automatic: automatic)
-            platformAccounts.saveValidatedAccount(account)
+            try platformAccounts.saveValidatedAccount(account)
             didSave = true
             message = "登录成功"
             dismiss()
@@ -333,6 +333,7 @@ private struct LoginWebView {
         Coordinator(onTitleChanged: onTitleChanged, onCookiesChanged: onCookiesChanged)
     }
 
+    @MainActor
     final class Coordinator: NSObject, WKNavigationDelegate, WKHTTPCookieStoreObserver {
         private let onTitleChanged: (String) -> Void
         private let onCookiesChanged: (URL?, [HTTPCookie], String?) -> Void
@@ -346,27 +347,33 @@ private struct LoginWebView {
             self.onCookiesChanged = onCookiesChanged
         }
 
-        deinit {
-            cookieStore?.remove(self)
-        }
-
         func attach(_ webView: WKWebView) {
             self.webView = webView
             let cookieStore = webView.configuration.websiteDataStore.httpCookieStore
             self.cookieStore = cookieStore
             cookieStore.add(self)
 
-            titleObservation = webView.observe(\.title, options: [.new]) { [weak self, weak webView] observedWebView, _ in
-                self?.onTitleChanged(observedWebView.title ?? "")
-                if let currentWebView = webView {
-                    self?.collectState(from: currentWebView)
+            titleObservation = webView.observe(\.title, options: [.new]) { [weak self, weak webView] _, _ in
+                Task { @MainActor in
+                    guard let self, let webView else { return }
+                    self.onTitleChanged(webView.title ?? "")
+                    self.collectState(from: webView)
                 }
             }
             urlObservation = webView.observe(\.url, options: [.new]) { [weak self, weak webView] _, _ in
-                if let webView {
-                    self?.collectState(from: webView)
+                Task { @MainActor in
+                    guard let self, let webView else { return }
+                    self.collectState(from: webView)
                 }
             }
+        }
+
+        func detach() {
+            titleObservation = nil
+            urlObservation = nil
+            cookieStore?.remove(self)
+            cookieStore = nil
+            webView = nil
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -431,6 +438,10 @@ extension LoginWebView: NSViewRepresentable {
     func updateNSView(_ nsView: WKWebView, context: Context) {
         updateWebView(nsView)
     }
+
+    static func dismantleNSView(_ nsView: WKWebView, coordinator: Coordinator) {
+        coordinator.detach()
+    }
 }
 #else
 extension LoginWebView: UIViewRepresentable {
@@ -440,6 +451,10 @@ extension LoginWebView: UIViewRepresentable {
 
     func updateUIView(_ uiView: WKWebView, context: Context) {
         updateWebView(uiView)
+    }
+
+    static func dismantleUIView(_ uiView: WKWebView, coordinator: Coordinator) {
+        coordinator.detach()
     }
 }
 #endif

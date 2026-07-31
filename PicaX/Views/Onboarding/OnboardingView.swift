@@ -124,40 +124,45 @@ private struct OnboardingPageView: View {
     let page: OnboardingPage
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Spacer(minLength: 28)
+        GeometryReader { proxy in
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 0) {
+                    OnboardingIconView(page: page)
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 28)
+                        .padding(.bottom, 44)
 
-            OnboardingIconView(page: page)
-                .frame(maxWidth: .infinity)
-                .padding(.bottom, 58)
+                    Text(page.title)
+                        .font(.largeTitle.bold())
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.bottom, 6)
 
-            Text(page.title)
-                .font(.system(size: 28, weight: .bold))
-                .padding(.bottom, 5)
+                    Text(page.subtitle)
+                        .font(.title2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .lineSpacing(3)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.bottom, 30)
 
-            Text(page.subtitle)
-                .font(.system(size: 22, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .lineSpacing(3)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.bottom, 30)
+                    VStack(alignment: .leading, spacing: 20) {
+                        ForEach(page.features) { feature in
+                            OnboardingFeatureRow(feature: feature)
+                        }
+                    }
 
-            VStack(alignment: .leading, spacing: 20) {
-                ForEach(page.features) { feature in
-                    OnboardingFeatureRow(feature: feature)
+                    Spacer(minLength: 32)
+
+                    Text(page.footnote)
+                        .font(.footnote.weight(.medium))
+                        .foregroundStyle(.tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-            }
-
-            Spacer()
-
-            Text(page.footnote)
-                .font(.footnote.weight(.medium))
-                .foregroundStyle(.tertiary)
-                .lineLimit(nil)
-                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 34)
                 .padding(.bottom, 128)
+                .frame(minHeight: proxy.size.height, alignment: .topLeading)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
         }
-        .padding(.horizontal, 34)
     }
 }
 
@@ -215,8 +220,11 @@ private struct OnboardingBottomBar: View {
             Button(action: primaryAction) {
                 Text(primaryTitle)
                     .font(.headline)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity)
-                    .frame(height: 54)
+                    .frame(minHeight: 54)
+                    .padding(.vertical, 2)
                     .contentShape(Capsule())
             }
             .buttonStyle(.plain)
@@ -228,8 +236,10 @@ private struct OnboardingBottomBar: View {
                 Button(action: secondaryAction) {
                     Text(secondaryTitle)
                         .font(.headline)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity)
-                        .frame(height: 36)
+                        .frame(minHeight: 44)
                         .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)

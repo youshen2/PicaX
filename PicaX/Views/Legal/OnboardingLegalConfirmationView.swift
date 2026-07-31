@@ -68,8 +68,11 @@ struct OnboardingLegalConfirmationView: View {
             Button(action: acceptCurrentStep) {
                 Text(primaryButtonTitle)
                     .font(.headline)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity)
-                    .frame(height: 54)
+                    .frame(minHeight: 54)
+                    .padding(.vertical, 2)
                     .contentShape(Capsule())
             }
             .buttonStyle(.plain)
@@ -84,12 +87,14 @@ struct OnboardingLegalConfirmationView: View {
             .font(.headline)
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity)
-            .frame(height: 44)
+            .frame(minHeight: 44)
+            .fixedSize(horizontal: false, vertical: true)
 
             Text("同意后仍可在“设置 > 关于”中查看这些文档。")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.horizontal, 30)
         .padding(.top, 22)

@@ -13,6 +13,8 @@ struct WatchSearchPage: View {
     @State private var aggregatePlatforms = Set(WatchComicPlatform.allCases)
     @State private var searchOptions = WatchSearchOptions()
     @State private var hasAppliedDefaultTarget = false
+    @State private var searchTask: Task<Void, Never>?
+    @State private var loadMoreTask: Task<Void, Never>?
 
     private let usesConfiguredDefaultTarget: Bool
     private let recordsInitialSearchInHistory: Bool
@@ -34,7 +36,7 @@ struct WatchSearchPage: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
-                    Task { await performSearch(force: true) }
+                    startSearch(force: true)
                 } label: {
                     Image(systemName: "arrow.clockwise")
                 }
@@ -47,6 +49,11 @@ struct WatchSearchPage: View {
             guard !viewModel.hasSearched, !viewModel.trimmedKeyword(query).isEmpty else { return }
             await performSearch(force: true, recordsHistory: recordsInitialSearchInHistory)
         }
+        .onDisappear {
+            searchTask?.cancel()
+            loadMoreTask?.cancel()
+            viewModel.cancelCurrentSearch()
+        }
     }
 
     private var searchControls: some View {
@@ -54,7 +61,7 @@ struct WatchSearchPage: View {
             TextField("关键词、作者、标签", text: $query)
                 .submitLabel(.search)
                 .onSubmit {
-                    Task { await performSearch(force: true) }
+                    startSearch(force: true)
                 }
 
             Picker("搜索源", selection: $selectedTarget) {
@@ -77,7 +84,7 @@ struct WatchSearchPage: View {
             }
 
             Button {
-                Task { await performSearch(force: true) }
+                startSearch(force: true)
             } label: {
                 Label("搜索", systemImage: "magnifyingglass")
             }
@@ -129,7 +136,7 @@ struct WatchSearchPage: View {
                 if items.isEmpty {
                     WatchEmptyRow(title: "暂无结果", systemImage: "magnifyingglass")
                 } else {
-                    ForEach(items, id: \.self) { item in
+                    ForEach(items, id: \.searchResultID) { item in
                         NavigationLink {
                             WatchComicDetailPage(item: item)
                         } label: {
@@ -170,7 +177,7 @@ struct WatchSearchPage: View {
             Section("搜索失败") {
                 WatchValueRow(title: "加载失败", subtitle: message, systemImage: "exclamationmark.triangle", tint: .orange)
                 Button {
-                    Task { await performSearch(force: true, recordsHistory: false) }
+                    startSearch(force: true, recordsHistory: false)
                 } label: {
                     Label("重试", systemImage: "arrow.clockwise")
                 }
@@ -247,18 +254,27 @@ struct WatchSearchPage: View {
         )
     }
 
+    private func startSearch(force: Bool, recordsHistory: Bool = true) {
+        searchTask?.cancel()
+        loadMoreTask?.cancel()
+        searchTask = Task {
+            await performSearch(force: force, recordsHistory: recordsHistory)
+        }
+    }
+
     private func applyHistory(_ record: WatchSearchHistoryRecord) {
         query = record.keyword
         selectedTarget = record.target
         if case .aggregate(let platforms) = record.target {
             aggregatePlatforms = Set(platforms)
         }
-        Task { await performSearch(force: true) }
+        startSearch(force: true)
     }
 
     private func loadMoreIfNeeded(currentItem: WatchComicItem, items: [WatchComicItem]) {
         guard viewModel.hasMore, currentItem == items.last else { return }
-        Task {
+        loadMoreTask?.cancel()
+        loadMoreTask = Task {
             await viewModel.loadMore(accounts: searchAccounts)
         }
     }

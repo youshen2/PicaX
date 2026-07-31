@@ -280,6 +280,12 @@ final class ComicReaderViewModel: ObservableObject {
         }
     }
 
+    func cancelAllPreloads() {
+        cancelImagePreload()
+        cancelNextChapterPreload(clearCachedChapter: true)
+        preloadedImageKeys.removeAll(keepingCapacity: false)
+    }
+
     func isCurrentPageNearChapterEnd(pageThreshold: Int) -> Bool {
         Self.isPageNearChapterEnd(
             currentPageIndex,

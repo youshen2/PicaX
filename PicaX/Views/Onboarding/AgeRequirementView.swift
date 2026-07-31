@@ -51,8 +51,11 @@ struct AgeRequirementView: View {
             } label: {
                 Text("我已满 18 周岁")
                     .font(.headline)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity)
-                    .frame(height: 54)
+                    .frame(minHeight: 54)
+                    .padding(.vertical, 2)
                     .contentShape(Capsule())
             }
             .buttonStyle(.plain)
@@ -68,7 +71,8 @@ struct AgeRequirementView: View {
             .font(.headline)
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity)
-            .frame(height: 44)
+            .frame(minHeight: 44)
+            .fixedSize(horizontal: false, vertical: true)
             .accessibilityHint("未满 18 周岁无法使用本应用")
         }
         .padding(.horizontal, 30)

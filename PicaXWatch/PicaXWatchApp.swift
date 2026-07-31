@@ -12,8 +12,8 @@ struct PicaXWatchApp: App {
                 .environmentObject(downloadService)
                 .task {
                     accountSyncStore.activate()
-                    WatchImageCacheService.configure()
-                    WatchComicDetailCacheService.configure()
+                    await WatchImageCacheService.configure().value
+                    await WatchComicDetailCacheService.configure().value
                     downloadService.configure { platform in
                         accountSyncStore.snapshot.account(for: platform)
                     }

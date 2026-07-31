@@ -17,7 +17,11 @@ struct WatchReadLaterStore {
               let deletions = try? JSONDecoder().decode([WatchReadLaterDeletion].self, from: data) else {
             return []
         }
-        return deletions.sorted { $0.deletedAt > $1.deletedAt }
+        return TimestampedSyncMerge.deletions(
+            deletions,
+            id: \.syncID,
+            deletedAt: \.deletedAt
+        )
     }
 
     func contains(_ item: WatchComicItem) -> Bool {
@@ -29,9 +33,24 @@ struct WatchReadLaterStore {
     }
 
     @discardableResult
-    func merge(_ incoming: [WatchReadLaterItem]) -> [WatchReadLaterItem] {
-        let merged = merge(existing: load(), incoming: incoming, deletions: loadDeletions())
+    func merge(
+        _ incoming: [WatchReadLaterItem],
+        deletions incomingDeletions: [WatchReadLaterDeletion] = []
+    ) -> [WatchReadLaterItem] {
+        let deletions = mergeDeletions(incomingDeletions)
+        let merged = merge(existing: load(), incoming: incoming, deletions: deletions)
         replace(merged)
+        return merged
+    }
+
+    @discardableResult
+    func mergeDeletions(_ incoming: [WatchReadLaterDeletion]) -> [WatchReadLaterDeletion] {
+        let merged = TimestampedSyncMerge.deletions(
+            loadDeletions() + incoming,
+            id: \.syncID,
+            deletedAt: \.deletedAt
+        )
+        persistDeletions(merged)
         return merged
     }
 
@@ -51,7 +70,7 @@ struct WatchReadLaterStore {
     @discardableResult
     func remove(syncID: String) -> [WatchReadLaterItem] {
         let deletion = WatchReadLaterDeletion(syncID: syncID, deletedAt: Date())
-        persistDeletions(deduplicatedDeletions(loadDeletions() + [deletion]))
+        mergeDeletions([deletion])
         let remaining = load().filter { $0.syncID != syncID }
         replace(remaining)
         return remaining
@@ -67,18 +86,15 @@ struct WatchReadLaterStore {
         incoming: [WatchReadLaterItem],
         deletions: [WatchReadLaterDeletion]
     ) -> [WatchReadLaterItem] {
-        var deletionMap: [String: Date] = [:]
-        for deletion in deletions {
-            if let old = deletionMap[deletion.syncID] {
-                deletionMap[deletion.syncID] = max(old, deletion.deletedAt)
-            } else {
-                deletionMap[deletion.syncID] = deletion.deletedAt
-            }
-        }
-        return deduplicated(existing + incoming).filter { item in
-            guard let deletedAt = deletionMap[item.syncID] else { return true }
-            return item.addedAt > deletedAt
-        }
+        sorted(TimestampedSyncMerge.items(
+            existing: existing,
+            incoming: incoming,
+            deletions: deletions,
+            itemID: \.syncID,
+            itemDate: \.addedAt,
+            deletionID: \.syncID,
+            deletedAt: \.deletedAt
+        ))
     }
 
     private func deduplicated(_ items: [WatchReadLaterItem]) -> [WatchReadLaterItem] {
@@ -99,18 +115,6 @@ struct WatchReadLaterStore {
 
     private func sorted(_ items: [WatchReadLaterItem]) -> [WatchReadLaterItem] {
         items.sorted { $0.addedAt > $1.addedAt }
-    }
-
-    private func deduplicatedDeletions(_ deletions: [WatchReadLaterDeletion]) -> [WatchReadLaterDeletion] {
-        var result: [String: WatchReadLaterDeletion] = [:]
-        for deletion in deletions {
-            if let old = result[deletion.syncID] {
-                result[deletion.syncID] = deletion.deletedAt >= old.deletedAt ? deletion : old
-            } else {
-                result[deletion.syncID] = deletion
-            }
-        }
-        return Array(result.values).sorted { $0.deletedAt > $1.deletedAt }
     }
 
     private func persist(_ items: [WatchReadLaterItem]) {

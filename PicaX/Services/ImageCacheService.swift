@@ -17,6 +17,7 @@ enum ImageCacheService {
     nonisolated(unsafe) private static var diskCapacityBytes = defaultMaxDiskSizeMB * 1024 * 1024
     nonisolated(unsafe) private static var isStoreTrimScheduled = false
     private static var activeTrimTask: Task<Void, Never>?
+    nonisolated private static let requestCoalescer = AsyncRequestCoalescer<Data>()
     private static let uncachedSession: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
@@ -87,7 +88,16 @@ enum ImageCacheService {
         if let fileURL = url.picaxLocalFileURL {
             return try await localFileData(for: fileURL)
         }
+        let key = "\(url.absoluteString)#cache=\(storesInCache)"
+        return try await requestCoalescer.value(for: key) {
+            try await loadRemoteData(for: url, storesInCache: storesInCache)
+        }
+    }
 
+    private nonisolated static func loadRemoteData(
+        for url: URL,
+        storesInCache: Bool
+    ) async throws -> Data {
         if EhentaiLazyImageResolver.isLazyImageURL(url) {
             if storesInCache, let cachedData = await cachedImageData(for: url) {
                 return cachedData
@@ -130,11 +140,11 @@ enum ImageCacheService {
               isDecodableImageData(data) else {
             return
         }
+        prepareDiskCacheDirectoryLocked()
+        let fileURL = cacheFileURL(for: url)
+        try? data.write(to: fileURL, options: [.atomic])
+        touchCacheFileLocked(fileURL)
         let shouldScheduleTrim = withDiskCacheLock {
-            prepareDiskCacheDirectoryLocked()
-            let fileURL = cacheFileURL(for: url)
-            try? data.write(to: fileURL, options: [.atomic])
-            touchCacheFileLocked(fileURL)
             guard !isStoreTrimScheduled else { return false }
             isStoreTrimScheduled = true
             return true
@@ -190,20 +200,20 @@ enum ImageCacheService {
             return nil
         }
 
-        return withDiskCacheLock {
-            let fileURL = cacheFileURL(for: url)
-            guard FileManager.default.fileExists(atPath: fileURL.path) else {
-                return nil
-            }
-
-            guard let data = try? Data(contentsOf: fileURL), isDecodableImageData(data) else {
-                try? FileManager.default.removeItem(at: fileURL)
-                return nil
-            }
-
-            touchCacheFileLocked(fileURL)
-            return data
+        let fileURL = cacheFileURL(for: url)
+        guard FileManager.default.fileExists(atPath: fileURL.path) else {
+            return nil
         }
+
+        guard let data = try? Data(contentsOf: fileURL), isDecodableImageData(data) else {
+            withDiskCacheLock {
+                try? FileManager.default.removeItem(at: fileURL)
+            }
+            return nil
+        }
+
+        touchCacheFileLocked(fileURL)
+        return data
     }
 
     private nonisolated static func isDecodableImageData(_ data: Data) -> Bool {
@@ -300,5 +310,4 @@ enum ImageCacheService {
         let byteCount: Int64
         let modificationDate: Date
     }
-
 }

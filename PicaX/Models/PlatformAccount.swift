@@ -134,7 +134,7 @@ enum PlatformWebUserAgent {
     }
 }
 
-struct PlatformAccount: Codable, Equatable, Identifiable {
+nonisolated struct PlatformAccount: Codable, Equatable, Identifiable, Sendable {
     var platform: ComicPlatform
     var username: String
     var credential: PlatformCredential
@@ -171,8 +171,7 @@ struct PlatformAccount: Codable, Equatable, Identifiable {
         username = try container.decode(String.self, forKey: .username)
         loggedInAt = try container.decode(Date.self, forKey: .loggedInAt)
         var decodedCredential = try container.decodeIfPresent(PlatformCredential.self, forKey: .credential) ?? .empty
-        if platform == .jmComic,
-           decodedCredential.password?.isEmpty ?? true,
+        if decodedCredential.password?.isEmpty ?? true,
            let legacyPassword = try container.decodeIfPresent(String.self, forKey: .password),
            !legacyPassword.isEmpty {
             decodedCredential.password = legacyPassword
@@ -189,7 +188,7 @@ struct PlatformAccount: Codable, Equatable, Identifiable {
     }
 }
 
-struct PlatformCredential: Codable, Equatable {
+nonisolated struct PlatformCredential: Codable, Equatable, Sendable {
     var token: String?
     var refreshToken: String?
     var tokenType: String?
@@ -220,6 +219,43 @@ struct PlatformCredential: Codable, Equatable {
         isEmpty ? "未保存" : "已保存"
     }
 
+    var hasSensitiveData: Bool {
+        !(token?.isEmpty ?? true) ||
+            !(refreshToken?.isEmpty ?? true) ||
+            !(password?.isEmpty ?? true) ||
+            !cookies.isEmpty
+    }
+
+    var secrets: PlatformCredentialSecrets {
+        PlatformCredentialSecrets(
+            token: token,
+            refreshToken: refreshToken,
+            tokenType: tokenType,
+            password: password,
+            cookies: cookies
+        )
+    }
+
+    func removingSecrets() -> PlatformCredential {
+        var copy = self
+        copy.token = nil
+        copy.refreshToken = nil
+        copy.tokenType = nil
+        copy.password = nil
+        copy.cookies = []
+        return copy
+    }
+
+    func applying(_ secrets: PlatformCredentialSecrets) -> PlatformCredential {
+        var copy = self
+        copy.token = secrets.token
+        copy.refreshToken = secrets.refreshToken
+        copy.tokenType = secrets.tokenType
+        copy.password = secrets.password
+        copy.cookies = secrets.cookies
+        return copy
+    }
+
     func cookieStorage() -> HTTPCookieStorage {
         let storage = HTTPCookieStorage()
         for cookie in cookies.compactMap(\.httpCookie) {
@@ -229,13 +265,21 @@ struct PlatformCredential: Codable, Equatable {
     }
 }
 
-enum PlatformCredentialSource: String, Codable, Equatable {
+nonisolated struct PlatformCredentialSecrets: Codable, Equatable, Sendable {
+    var token: String?
+    var refreshToken: String?
+    var tokenType: String?
+    var password: String?
+    var cookies: [StoredHTTPCookie]
+}
+
+nonisolated enum PlatformCredentialSource: String, Codable, Equatable, Sendable {
     case api
     case web
     case manual
 }
 
-struct PlatformAccountProfile: Codable, Equatable {
+nonisolated struct PlatformAccountProfile: Codable, Equatable, Sendable {
     var email: String?
     var username: String?
     var nickname: String?
@@ -245,7 +289,7 @@ struct PlatformAccountProfile: Codable, Equatable {
     }
 }
 
-struct StoredHTTPCookie: Codable, Equatable, Identifiable {
+nonisolated struct StoredHTTPCookie: Codable, Equatable, Identifiable, Sendable {
     var name: String
     var value: String
     var domain: String
@@ -296,7 +340,7 @@ struct StoredHTTPCookie: Codable, Equatable, Identifiable {
 }
 
 private extension Optional where Wrapped == String {
-    var nonEmptyValue: String? {
+    nonisolated var nonEmptyValue: String? {
         guard let value = self?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else {
             return nil
         }

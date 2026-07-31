@@ -28,7 +28,6 @@ enum WatchSettingsKey {
     nonisolated static let readerSystemStatusEdgeInset = "watch.reader.systemStatusEdgeInset"
     nonisolated static let readerSystemStatusBottomInset = "watch.reader.systemStatusBottomInset"
     nonisolated static let readerUsesSystemStatusGlassBackground = "watch.reader.usesSystemStatusGlassBackground"
-    nonisolated static let readerKeepsScreenAwake = "watch.reader.keepsScreenAwake"
     nonisolated static let detailCacheEnabled = "watch.cache.detail.enabled"
     nonisolated static let detailCacheMaxDiskSizeMB = "watch.cache.detail.maxDiskSizeMB"
     nonisolated static let imageCacheEnabled = "watch.cache.image.enabled"

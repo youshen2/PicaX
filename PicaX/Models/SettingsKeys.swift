@@ -120,12 +120,11 @@ enum AppRecommendationPrompt {
 
 enum WatchConnectivitySettingsKey {
     static let syncsReadingHistory = "settings.watchConnectivity.syncsReadingHistory"
-    static let syncsReadingHistoryWithWatch = "settings.watchConnectivity.syncsReadingHistoryWithWatch"
     static let syncsLocalFavorites = "settings.watchConnectivity.syncsLocalFavorites"
     static let syncsReadLater = "settings.watchConnectivity.syncsReadLater"
 }
 
-enum WebDAVSettingsKey {
+nonisolated enum WebDAVSettingsKey {
     static let serverURL = "settings.webDAV.serverURL"
     static let username = "settings.webDAV.username"
     static let remoteDirectory = "settings.webDAV.remoteDirectory"
@@ -160,10 +159,6 @@ enum WebDAVSyncContentSettings {
 enum WatchConnectivitySettings {
     static func syncsReadingHistory(defaults: UserDefaults = .standard) -> Bool {
         defaults.object(forKey: WatchConnectivitySettingsKey.syncsReadingHistory) as? Bool ?? true
-    }
-
-    static func syncsReadingHistoryWithWatch(defaults: UserDefaults = .standard) -> Bool {
-        defaults.object(forKey: WatchConnectivitySettingsKey.syncsReadingHistoryWithWatch) as? Bool ?? true
     }
 
     static func syncsLocalFavorites(defaults: UserDefaults = .standard) -> Bool {

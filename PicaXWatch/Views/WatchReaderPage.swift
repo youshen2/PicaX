@@ -281,6 +281,7 @@ struct WatchReaderPage: View {
             totalPages: totalPages,
             totalChapters: totalChapters
         )
+        accountSyncStore.syncReadingHistory()
     }
 
     private func persistCurrentProgress() {

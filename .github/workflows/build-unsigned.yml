@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: build-unsigned-${{ github.ref }}
@@ -30,7 +30,7 @@ jobs:
       # are included in one git push. Let the tag run own a tagged commit.
       - name: Checkout branch push
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
 
@@ -57,10 +57,12 @@ jobs:
     if: needs.select_run.outputs.should_build == 'true'
     runs-on: macos-26
     timeout-minutes: 90
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
 
@@ -78,11 +80,25 @@ jobs:
           xcodebuild -version
           xcodebuild -showsdks
 
+      - name: Run unit tests
+        run: |
+          set -euo pipefail
+
+          xcodebuild \
+            -project PicaX.xcodeproj \
+            -scheme PicaX \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            -derivedDataPath build/TestDerivedData \
+            -disableAutomaticPackageResolution \
+            CODE_SIGNING_ALLOWED=NO \
+            test
+
       - name: Build unsigned artifacts
         run: bash build_all_unsigned.sh
 
       - name: Upload iOS unsigned IPA
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: PicaX-iOS-unsigned-${{ github.run_number }}
           path: build/PicaX-unsigned.ipa
@@ -90,7 +106,7 @@ jobs:
           retention-days: 14
 
       - name: Upload iOS with Watch unsigned IPA
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: PicaX-iOS-with-Watch-unsigned-${{ github.run_number }}
           path: build/PicaX-with-watch-unsigned.ipa
@@ -98,7 +114,7 @@ jobs:
           retention-days: 14
 
       - name: Upload Watch unsigned ZIP
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: PicaX-WatchApp-unsigned-${{ github.run_number }}
           path: build/PicaX-WatchApp-unsigned.zip
@@ -106,7 +122,7 @@ jobs:
           retention-days: 14
 
       - name: Upload macOS unsigned DMG
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: PicaX-macOS-unsigned-${{ github.run_number }}
           path: build/PicaX.dmg
@@ -193,29 +209,56 @@ jobs:
           echo "" >> release_body.md
           echo "由 GitHub Actions 自动发布。" >> release_body.md
 
-      - name: Create GitHub Release
+      - name: Upload release metadata
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: PicaX-release-metadata-${{ github.run_number }}
+          path: |
+            release_body.md
+            release_commits.txt
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish GitHub Release
+    needs:
+      - select_run
+      - build
+    if: startsWith(github.ref, 'refs/tags/') && needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+
+    steps:
+      - name: Download unsigned artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: PicaX-*-unsigned-${{ github.run_number }}
+          path: release-assets
+          merge-multiple: true
+
+      - name: Download release metadata
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: PicaX-release-metadata-${{ github.run_number }}
+          path: release-metadata
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@da05d552573ad5aba039eaac05058a918a7bf631 # v2.2.2
         with:
           name: PicaX ${{ github.ref_name }}
           tag_name: ${{ github.ref_name }}
-          body_path: release_body.md
+          body_path: release-metadata/release_body.md
           draft: false
           prerelease: false
+          fail_on_unmatched_files: true
           files: |
-            build/PicaX-unsigned.ipa
-            build/PicaX-with-watch-unsigned.ipa
-            build/PicaX-WatchApp-unsigned.zip
-            build/PicaX.dmg
-
-      - name: Upload release metadata
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: actions/upload-artifact@v4
-        with:
-          name: PicaX-release-metadata-${{ github.run_number }}
-          path: release_commits.txt
-          if-no-files-found: error
-          retention-days: 14
+            release-assets/PicaX-unsigned.ipa
+            release-assets/PicaX-with-watch-unsigned.ipa
+            release-assets/PicaX-WatchApp-unsigned.zip
+            release-assets/PicaX.dmg
 
   telegram:
     name: Send artifacts to Telegram channel
@@ -225,9 +268,8 @@ jobs:
     if: >-
       needs.select_run.outputs.should_build == 'true' &&
       needs.build.result == 'success' &&
-      !startsWith(github.ref, 'refs/tags/') &&
-      (github.event_name != 'pull_request' ||
-      github.event.pull_request.head.repo.full_name == github.repository)
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -235,12 +277,12 @@ jobs:
 
     steps:
       - name: Checkout commit history
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
 
       - name: Download unsigned artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: PicaX-*-unsigned-${{ github.run_number }}
           path: telegram-assets
@@ -354,17 +396,17 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Download unsigned artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: PicaX-*-unsigned-${{ github.run_number }}
           path: telegram-assets
           merge-multiple: true
 
       - name: Download release metadata
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: PicaX-release-metadata-${{ github.run_number }}
           path: release-metadata

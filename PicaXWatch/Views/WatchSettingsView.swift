@@ -379,7 +379,6 @@ struct WatchReaderSettingsPage: View {
     @AppStorage(WatchSettingsKey.readerSystemStatusEdgeInset) private var systemStatusEdgeInset = 8
     @AppStorage(WatchSettingsKey.readerSystemStatusBottomInset) private var systemStatusBottomInset = 3
     @AppStorage(WatchSettingsKey.readerUsesSystemStatusGlassBackground) private var usesSystemStatusGlassBackground = true
-    @AppStorage(WatchSettingsKey.readerKeepsScreenAwake) private var readerKeepsScreenAwake = false
 
     var body: some View {
         List {
@@ -390,7 +389,6 @@ struct WatchReaderSettingsPage: View {
                             .tag(mode)
                     }
                 }
-                Toggle("阅读时保持亮屏", isOn: $readerKeepsScreenAwake)
             }
 
             Section("边距") {
@@ -639,6 +637,7 @@ struct WatchStorageManagementPage: View {
     @State private var imageUsage = WatchCacheUsage(diskBytes: 0)
     @State private var detailUsage = WatchDetailCacheUsage(diskBytes: 0)
     @State private var downloadUsage = WatchDownloadStorageUsage(filesBytes: 0, metadataBytes: 0)
+    @State private var pendingDestructiveAction: WatchStorageDestructiveAction?
 
     var body: some View {
         List {
@@ -658,28 +657,25 @@ struct WatchStorageManagementPage: View {
 
             Section("操作") {
                 Button {
-                    refreshUsage()
+                    Task { await refreshUsage() }
                 } label: {
                     Label("刷新占用", systemImage: "arrow.clockwise")
                 }
 
                 Button(role: .destructive) {
-                    WatchImageCacheService.clear()
-                    refreshUsage()
+                    pendingDestructiveAction = .imageCache
                 } label: {
                     Label("清空图片缓存", systemImage: "trash")
                 }
 
                 Button(role: .destructive) {
-                    WatchComicDetailCacheService.clear()
-                    refreshUsage()
+                    pendingDestructiveAction = .detailCache
                 } label: {
                     Label("清空详情缓存", systemImage: "trash")
                 }
 
                 Button(role: .destructive) {
-                    downloadService.clearAllDownloads()
-                    refreshUsage()
+                    pendingDestructiveAction = .downloads
                 } label: {
                     Label("清空下载", systemImage: "trash")
                 }
@@ -687,7 +683,17 @@ struct WatchStorageManagementPage: View {
         }
         .navigationTitle("存储管理")
         .task {
-            refreshUsage()
+            await refreshUsage()
+        }
+        .alert(item: $pendingDestructiveAction) { action in
+            Alert(
+                title: Text(action.title),
+                message: Text(action.message),
+                primaryButton: .destructive(Text(action.buttonTitle)) {
+                    Task { await perform(action) }
+                },
+                secondaryButton: .cancel()
+            )
         }
     }
 
@@ -695,12 +701,28 @@ struct WatchStorageManagementPage: View {
         imageUsage.diskBytes + detailUsage.diskBytes + downloadUsage.filesBytes + Int64(downloadUsage.metadataBytes)
     }
 
-    private func refreshUsage() {
-        imageUsage = WatchImageCacheService.usage
-        detailUsage = WatchComicDetailCacheService.usage
-        Task {
-            downloadUsage = await downloadService.storageUsage()
+    @MainActor
+    private func refreshUsage() async {
+        async let nextImageUsage = WatchImageCacheService.usage()
+        async let nextDetailUsage = WatchComicDetailCacheService.usage()
+        async let nextDownloadUsage = downloadService.storageUsage()
+        let values = await (nextImageUsage, nextDetailUsage, nextDownloadUsage)
+        imageUsage = values.0
+        detailUsage = values.1
+        downloadUsage = values.2
+    }
+
+    @MainActor
+    private func perform(_ action: WatchStorageDestructiveAction) async {
+        switch action {
+        case .imageCache:
+            await WatchImageCacheService.clear()
+        case .detailCache:
+            await WatchComicDetailCacheService.clear()
+        case .downloads:
+            downloadService.clearAllDownloads()
         }
+        await refreshUsage()
     }
 }
 
@@ -709,6 +731,7 @@ struct WatchCacheSettingsPage: View {
     @AppStorage(WatchSettingsKey.detailCacheEnabled) private var detailCacheEnabled = true
     @AppStorage(WatchSettingsKey.imageCacheMaxDiskSizeMB) private var maxDiskSizeMB = WatchImageCacheService.defaultMaxDiskSizeMB
     @AppStorage(WatchSettingsKey.detailCacheMaxDiskSizeMB) private var maxDetailDiskSizeMB = WatchComicDetailCacheService.defaultMaxDiskSizeMB
+    @State private var pendingDestructiveAction: WatchStorageDestructiveAction?
 
     var body: some View {
         List {
@@ -736,13 +759,13 @@ struct WatchCacheSettingsPage: View {
 
             Section("操作") {
                 Button(role: .destructive) {
-                    WatchImageCacheService.clear()
+                    pendingDestructiveAction = .imageCache
                 } label: {
                     Label("清空图片缓存", systemImage: "trash")
                 }
 
                 Button(role: .destructive) {
-                    WatchComicDetailCacheService.clear()
+                    pendingDestructiveAction = .detailCache
                 } label: {
                     Label("清空详情缓存", systemImage: "trash")
                 }
@@ -750,14 +773,33 @@ struct WatchCacheSettingsPage: View {
         }
         .navigationTitle("缓存")
         .task {
-            WatchImageCacheService.configure()
-            WatchComicDetailCacheService.configure()
+            await WatchImageCacheService.configure().value
+            await WatchComicDetailCacheService.configure().value
         }
         .onChange(of: maxDiskSizeMB) { _ in
-            WatchImageCacheService.configure()
+            Task { await WatchImageCacheService.configure().value }
         }
         .onChange(of: maxDetailDiskSizeMB) { _ in
-            WatchComicDetailCacheService.configure()
+            Task { await WatchComicDetailCacheService.configure().value }
+        }
+        .alert(item: $pendingDestructiveAction) { action in
+            Alert(
+                title: Text(action.title),
+                message: Text(action.message),
+                primaryButton: .destructive(Text(action.buttonTitle)) {
+                    Task {
+                        switch action {
+                        case .imageCache:
+                            await WatchImageCacheService.clear()
+                        case .detailCache:
+                            await WatchComicDetailCacheService.clear()
+                        case .downloads:
+                            break
+                        }
+                    }
+                },
+                secondaryButton: .cancel()
+            )
         }
     }
 
@@ -781,6 +823,43 @@ struct WatchCacheSettingsPage: View {
             get: { validatedMaxDetailDiskSizeMB },
             set: { maxDetailDiskSizeMB = min(max($0, 5), 100) }
         )
+    }
+}
+
+private enum WatchStorageDestructiveAction: String, Identifiable {
+    case imageCache
+    case detailCache
+    case downloads
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .imageCache:
+            "清空图片缓存？"
+        case .detailCache:
+            "清空详情缓存？"
+        case .downloads:
+            "删除全部下载？"
+        }
+    }
+
+    var message: String {
+        switch self {
+        case .imageCache, .detailCache:
+            "缓存会在后续浏览时重新生成。"
+        case .downloads:
+            "所有已下载图片和下载记录都会被删除，此操作无法撤销。"
+        }
+    }
+
+    var buttonTitle: String {
+        switch self {
+        case .imageCache, .detailCache:
+            "清空"
+        case .downloads:
+            "全部删除"
+        }
     }
 }
 

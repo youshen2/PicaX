@@ -12,6 +12,66 @@ struct ComicListItem: Identifiable, Equatable, Codable, Sendable {
     let likesCount: Int?
     let favoriteDate: Date?
 
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case platform
+        case title
+        case subtitle
+        case coverURLString
+        case tags
+        case pageCount
+        case likesCount
+        case favoriteDate
+    }
+
+    nonisolated init(
+        id: String,
+        platform: ComicPlatform,
+        title: String,
+        subtitle: String,
+        coverURLString: String,
+        tags: [String],
+        pageCount: Int?,
+        likesCount: Int?,
+        favoriteDate: Date?
+    ) {
+        self.id = id
+        self.platform = platform
+        self.title = title
+        self.subtitle = subtitle
+        self.coverURLString = coverURLString
+        self.tags = tags
+        self.pageCount = pageCount
+        self.likesCount = likesCount
+        self.favoriteDate = favoriteDate
+    }
+
+    nonisolated init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        platform = try container.decode(ComicPlatform.self, forKey: .platform)
+        title = try container.decode(String.self, forKey: .title)
+        subtitle = try container.decode(String.self, forKey: .subtitle)
+        coverURLString = try container.decode(String.self, forKey: .coverURLString)
+        tags = try container.decode([String].self, forKey: .tags)
+        pageCount = try container.decodeIfPresent(Int.self, forKey: .pageCount)
+        likesCount = try container.decodeIfPresent(Int.self, forKey: .likesCount)
+        favoriteDate = try container.decodeIfPresent(Date.self, forKey: .favoriteDate)
+    }
+
+    nonisolated func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(platform, forKey: .platform)
+        try container.encode(title, forKey: .title)
+        try container.encode(subtitle, forKey: .subtitle)
+        try container.encode(coverURLString, forKey: .coverURLString)
+        try container.encode(tags, forKey: .tags)
+        try container.encodeIfPresent(pageCount, forKey: .pageCount)
+        try container.encodeIfPresent(likesCount, forKey: .likesCount)
+        try container.encodeIfPresent(favoriteDate, forKey: .favoriteDate)
+    }
+
     nonisolated var target: String { id }
 
     nonisolated var readingHistoryID: String {
@@ -465,7 +525,7 @@ enum ComicExploreEntry: Hashable, Identifiable {
     }
 }
 
-struct ComicSearchAdvancedOptions: Equatable {
+struct ComicSearchAdvancedOptions: Equatable, Sendable {
     var picacgSort = "dd"
     var nhentaiSort = "date"
     var jmComicSort = "mr"
@@ -532,7 +592,7 @@ struct ComicSearchAdvancedOptions: Equatable {
     }
 }
 
-enum ComicSearchLanguage: String, CaseIterable, Identifiable {
+enum ComicSearchLanguage: String, CaseIterable, Identifiable, Sendable {
     case chinese
     case japanese
     case english

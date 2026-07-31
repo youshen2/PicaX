@@ -151,6 +151,7 @@ final class WatchSearchViewModel: ObservableObject {
     private var currentTarget: WatchSearchTarget?
     private var currentKeyword = ""
     private var currentOptions = WatchSearchOptions()
+    private var requestGeneration = 0
 
     init(client: WatchComicAPIClient = WatchComicAPIClient()) {
         self.client = client
@@ -176,6 +177,8 @@ final class WatchSearchViewModel: ObservableObject {
             return
         }
 
+        requestGeneration &+= 1
+        let generation = requestGeneration
         state = .loading
         hasSearched = true
         hasMore = false
@@ -187,27 +190,28 @@ final class WatchSearchViewModel: ObservableObject {
         currentKeyword = trimmed
         currentOptions = options
 
-        var groups: [[WatchComicItem]] = []
+        let responses = await fetchSearchPages(
+            platforms: target.platforms,
+            keyword: trimmed,
+            accounts: accounts,
+            pages: Dictionary(uniqueKeysWithValues: target.platforms.map { ($0, 1) }),
+            options: options
+        )
+        guard generation == requestGeneration, !Task.isCancelled else { return }
+
+        var groupsByPlatform: [WatchComicPlatform: [WatchComicItem]] = [:]
         var failures: [String] = []
-        for platform in target.platforms {
-            do {
-                let items = try await client.search(
-                    platform: platform,
-                    keyword: trimmed,
-                    account: accounts[platform],
-                    page: 1,
-                    options: options
-                )
-                currentPages[platform] = 1
-                platformHasMore[platform] = !items.isEmpty
-                groups.append(items)
-            } catch {
-                currentPages[platform] = 0
-                platformHasMore[platform] = false
-                failures.append("\(platform.title): \(error.localizedDescription)")
+        for response in responses {
+            currentPages[response.platform] = response.items == nil ? 0 : 1
+            platformHasMore[response.platform] = !(response.items?.isEmpty ?? true)
+            if let items = response.items {
+                groupsByPlatform[response.platform] = items
+            } else if let message = response.errorMessage {
+                failures.append("\(response.platform.title): \(message)")
             }
         }
 
+        let groups = target.platforms.compactMap { groupsByPlatform[$0] }
         let items = uniqueItems(from: interleaved(groups))
         hasMore = platformHasMore.values.contains(true)
         if !items.isEmpty || failures.count < target.platforms.count {
@@ -226,35 +230,97 @@ final class WatchSearchViewModel: ObservableObject {
             return
         }
 
-        isLoadingMore = true
-        defer { isLoadingMore = false }
+        let generation = requestGeneration
+        let keyword = currentKeyword
+        let options = currentOptions
+        let platforms = target.platforms.filter { platformHasMore[$0] == true }
+        let pages = Dictionary(uniqueKeysWithValues: platforms.map { platform in
+            (platform, (currentPages[platform] ?? 1) + 1)
+        })
 
-        var groups: [[WatchComicItem]] = []
-        for platform in target.platforms where platformHasMore[platform] == true {
-            do {
-                let nextPage = (currentPages[platform] ?? 1) + 1
-                let items = try await client.search(
-                    platform: platform,
-                    keyword: currentKeyword,
-                    account: accounts[platform],
-                    page: nextPage,
-                    options: currentOptions
-                )
-                currentPages[platform] = nextPage
-                platformHasMore[platform] = !items.isEmpty
-                groups.append(items)
-            } catch {
-                platformHasMore[platform] = false
+        isLoadingMore = true
+        defer {
+            if generation == requestGeneration {
+                isLoadingMore = false
             }
         }
 
+        let responses = await fetchSearchPages(
+            platforms: platforms,
+            keyword: keyword,
+            accounts: accounts,
+            pages: pages,
+            options: options
+        )
+        guard generation == requestGeneration, !Task.isCancelled else { return }
+
+        var groupsByPlatform: [WatchComicPlatform: [WatchComicItem]] = [:]
+        for response in responses {
+            guard let items = response.items else {
+                platformHasMore[response.platform] = false
+                continue
+            }
+            currentPages[response.platform] = pages[response.platform]
+            platformHasMore[response.platform] = !items.isEmpty
+            groupsByPlatform[response.platform] = items
+        }
+
+        let groups = platforms.compactMap { groupsByPlatform[$0] }
         let newItems = uniqueItems(from: interleaved(groups))
         hasMore = platformHasMore.values.contains(true)
         guard !newItems.isEmpty else { return }
         state = .loaded(currentItems + newItems)
     }
 
+    func cancelCurrentSearch() {
+        requestGeneration &+= 1
+        isLoadingMore = false
+    }
+
+    private func fetchSearchPages(
+        platforms: [WatchComicPlatform],
+        keyword: String,
+        accounts: [WatchComicPlatform: WatchPlatformAccount],
+        pages: [WatchComicPlatform: Int],
+        options: WatchSearchOptions
+    ) async -> [WatchPlatformSearchResponse] {
+        let client = client
+        return await withTaskGroup(of: WatchPlatformSearchResponse.self) { group in
+            for platform in platforms {
+                group.addTask {
+                    do {
+                        let items = try await client.search(
+                            platform: platform,
+                            keyword: keyword,
+                            account: accounts[platform],
+                            page: pages[platform] ?? 1,
+                            options: options
+                        )
+                        return WatchPlatformSearchResponse(
+                            platform: platform,
+                            items: items,
+                            errorMessage: nil
+                        )
+                    } catch {
+                        return WatchPlatformSearchResponse(
+                            platform: platform,
+                            items: nil,
+                            errorMessage: error.isTaskCancellation ? nil : error.localizedDescription
+                        )
+                    }
+                }
+            }
+
+            var responses: [WatchPlatformSearchResponse] = []
+            for await response in group {
+                responses.append(response)
+            }
+            return responses
+        }
+    }
+
     private func reset() {
+        requestGeneration &+= 1
         state = .idle
         isLoadingMore = false
         hasMore = false
@@ -282,6 +348,12 @@ final class WatchSearchViewModel: ObservableObject {
     private func uniqueItems(from items: [WatchComicItem]) -> [WatchComicItem] {
         items.filter { loadedKeys.insert("\($0.platform.id)-\($0.id)").inserted }
     }
+}
+
+private struct WatchPlatformSearchResponse: Sendable {
+    let platform: WatchComicPlatform
+    let items: [WatchComicItem]?
+    let errorMessage: String?
 }
 
 @MainActor

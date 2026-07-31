@@ -17,7 +17,11 @@ struct WatchLocalFavoritesStore {
               let deletions = try? JSONDecoder().decode([WatchLocalFavoriteDeletion].self, from: data) else {
             return []
         }
-        return deletions.sorted { $0.deletedAt > $1.deletedAt }
+        return TimestampedSyncMerge.deletions(
+            deletions,
+            id: \.syncID,
+            deletedAt: \.deletedAt
+        )
     }
 
     func contains(_ item: WatchComicItem) -> Bool {
@@ -29,9 +33,26 @@ struct WatchLocalFavoritesStore {
     }
 
     @discardableResult
-    func merge(_ incoming: [WatchLocalFavoriteItem]) -> [WatchLocalFavoriteItem] {
-        let merged = merge(existing: load(), incoming: incoming, deletions: loadDeletions())
+    func merge(
+        _ incoming: [WatchLocalFavoriteItem],
+        deletions incomingDeletions: [WatchLocalFavoriteDeletion] = []
+    ) -> [WatchLocalFavoriteItem] {
+        let deletions = mergeDeletions(incomingDeletions)
+        let merged = merge(existing: load(), incoming: incoming, deletions: deletions)
         replace(merged)
+        return merged
+    }
+
+    @discardableResult
+    func mergeDeletions(
+        _ incoming: [WatchLocalFavoriteDeletion]
+    ) -> [WatchLocalFavoriteDeletion] {
+        let merged = TimestampedSyncMerge.deletions(
+            loadDeletions() + incoming,
+            id: \.syncID,
+            deletedAt: \.deletedAt
+        )
+        persistDeletions(merged)
         return merged
     }
 
@@ -51,7 +72,7 @@ struct WatchLocalFavoritesStore {
     @discardableResult
     func remove(syncID: String) -> [WatchLocalFavoriteItem] {
         let deletion = WatchLocalFavoriteDeletion(syncID: syncID, deletedAt: Date())
-        persistDeletions(deduplicatedDeletions(loadDeletions() + [deletion]))
+        mergeDeletions([deletion])
         let remaining = load().filter { $0.syncID != syncID }
         replace(remaining)
         return remaining
@@ -67,11 +88,15 @@ struct WatchLocalFavoritesStore {
         incoming: [WatchLocalFavoriteItem],
         deletions: [WatchLocalFavoriteDeletion]
     ) -> [WatchLocalFavoriteItem] {
-        let deletionMap = Dictionary(uniqueKeysWithValues: deletions.map { ($0.syncID, $0.deletedAt) })
-        return deduplicated(existing + incoming).filter { item in
-            guard let deletedAt = deletionMap[item.syncID] else { return true }
-            return (item.favoriteDate ?? .distantPast) > deletedAt
-        }
+        sorted(TimestampedSyncMerge.items(
+            existing: existing,
+            incoming: incoming,
+            deletions: deletions,
+            itemID: \.syncID,
+            itemDate: { $0.favoriteDate ?? .distantPast },
+            deletionID: \.syncID,
+            deletedAt: \.deletedAt
+        ))
     }
 
     private func deduplicated(_ items: [WatchLocalFavoriteItem]) -> [WatchLocalFavoriteItem] {
@@ -96,18 +121,6 @@ struct WatchLocalFavoritesStore {
         items.sorted {
             ($0.favoriteDate ?? .distantPast) > ($1.favoriteDate ?? .distantPast)
         }
-    }
-
-    private func deduplicatedDeletions(_ deletions: [WatchLocalFavoriteDeletion]) -> [WatchLocalFavoriteDeletion] {
-        var result: [String: WatchLocalFavoriteDeletion] = [:]
-        for deletion in deletions {
-            if let old = result[deletion.syncID] {
-                result[deletion.syncID] = deletion.deletedAt >= old.deletedAt ? deletion : old
-            } else {
-                result[deletion.syncID] = deletion
-            }
-        }
-        return Array(result.values).sorted { $0.deletedAt > $1.deletedAt }
     }
 
     private func persist(_ items: [WatchLocalFavoriteItem]) {

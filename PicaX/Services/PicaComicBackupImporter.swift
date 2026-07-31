@@ -1075,7 +1075,7 @@ private enum PicaComicSQLiteValue {
     }
 }
 
-private final class PicaComicSQLiteDatabase {
+nonisolated private final class PicaComicSQLiteDatabase: @unchecked Sendable {
     private var database: OpaquePointer?
     private let url: URL
 

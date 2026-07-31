@@ -12,6 +12,8 @@
 		6D9FF2B02FEEF001008AA850 /* CryptoSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 6D9FF2522FEEB001008AA850 /* CryptoSwift */; };
 		6D9FF3022FF01000008AA850 /* PicaXDownloadActivityWidgets.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 6D9FF3052FF01000008AA850 /* PicaXDownloadActivityWidgets.appex */; platformFilter = ios; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		6D9FF3202FF02000008AA850 /* libwebp in Frameworks */ = {isa = PBXBuildFile; productRef = 6D9FF3222FF02000008AA850 /* libwebp */; };
+		6D9FF3322FF03000008AA850 /* ZIPFoundation in Frameworks */ = {isa = PBXBuildFile; productRef = 6D9FF3312FF03000008AA850 /* ZIPFoundation */; };
+		6D9FF3352FF03000008AA850 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = 6D9FF3342FF03000008AA850 /* GRDB */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -28,6 +30,13 @@
 			proxyType = 1;
 			remoteGlobalIDString = 6D9FF3082FF01000008AA850;
 			remoteInfo = PicaXDownloadActivityWidgets;
+		};
+		6D9FF3462FF04000008AA850 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 6D9FF22B2FEEA844008AA850 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 6D9FF2322FEEA844008AA850;
+			remoteInfo = PicaX;
 		};
 /* End PBXContainerItemProxy section */
 
@@ -60,6 +69,7 @@
 		6D9FF2332FEEA844008AA850 /* PicaX.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PicaX.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		6D9FF2622FEEB200008AA850 /* PicaX Watch App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "PicaX Watch App.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		6D9FF3052FF01000008AA850 /* PicaXDownloadActivityWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = PicaXDownloadActivityWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		6D9FF3402FF04000008AA850 /* PicaXTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PicaXTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -83,6 +93,11 @@
 			path = PicaXDownloadActivityWidgets;
 			sourceTree = "<group>";
 		};
+		6D9FF3412FF04000008AA850 /* PicaXTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = PicaXTests;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -91,6 +106,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				6D9FF2502FEEB001008AA850 /* CryptoSwift in Frameworks */,
+				6D9FF3322FF03000008AA850 /* ZIPFoundation in Frameworks */,
+				6D9FF3352FF03000008AA850 /* GRDB in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -110,6 +127,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		6D9FF3422FF04000008AA850 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -120,6 +144,7 @@
 				6D9FF2602FEEB200008AA850 /* PicaXShared */,
 				6D9FF2612FEEB200008AA850 /* PicaXWatch */,
 				6D9FF3062FF01000008AA850 /* PicaXDownloadActivityWidgets */,
+				6D9FF3412FF04000008AA850 /* PicaXTests */,
 				6D9FF2342FEEA844008AA850 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -130,6 +155,7 @@
 				6D9FF2332FEEA844008AA850 /* PicaX.app */,
 				6D9FF2622FEEB200008AA850 /* PicaX Watch App.app */,
 				6D9FF3052FF01000008AA850 /* PicaXDownloadActivityWidgets.appex */,
+				6D9FF3402FF04000008AA850 /* PicaXTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -161,6 +187,8 @@
 			name = PicaX;
 			packageProductDependencies = (
 				6D9FF2522FEEB001008AA850 /* CryptoSwift */,
+				6D9FF3312FF03000008AA850 /* ZIPFoundation */,
+				6D9FF3342FF03000008AA850 /* GRDB */,
 			);
 			productName = PicaX;
 			productReference = 6D9FF2332FEEA844008AA850 /* PicaX.app */;
@@ -214,6 +242,29 @@
 			productReference = 6D9FF3052FF01000008AA850 /* PicaXDownloadActivityWidgets.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
+		6D9FF3452FF04000008AA850 /* PicaXTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 6D9FF34A2FF04000008AA850 /* Build configuration list for PBXNativeTarget "PicaXTests" */;
+			buildPhases = (
+				6D9FF3442FF04000008AA850 /* Sources */,
+				6D9FF3422FF04000008AA850 /* Frameworks */,
+				6D9FF3432FF04000008AA850 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				6D9FF3472FF04000008AA850 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				6D9FF3412FF04000008AA850 /* PicaXTests */,
+			);
+			name = PicaXTests;
+			packageProductDependencies = (
+			);
+			productName = PicaXTests;
+			productReference = 6D9FF3402FF04000008AA850 /* PicaXTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -233,6 +284,10 @@
 					6D9FF3082FF01000008AA850 = {
 						CreatedOnToolsVersion = 26.6;
 					};
+					6D9FF3452FF04000008AA850 = {
+						CreatedOnToolsVersion = 26.6;
+						TestTargetID = 6D9FF2322FEEA844008AA850;
+					};
 				};
 			};
 			buildConfigurationList = 6D9FF22E2FEEA844008AA850 /* Build configuration list for PBXProject "PicaX" */;
@@ -247,6 +302,8 @@
 			packageReferences = (
 				6D9FF2512FEEB001008AA850 /* XCRemoteSwiftPackageReference "CryptoSwift" */,
 				6D9FF3212FF02000008AA850 /* XCRemoteSwiftPackageReference "libwebp-Xcode" */,
+				6D9FF3302FF03000008AA850 /* XCRemoteSwiftPackageReference "ZIPFoundation" */,
+				6D9FF3332FF03000008AA850 /* XCRemoteSwiftPackageReference "GRDB.swift" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 6D9FF2342FEEA844008AA850 /* Products */;
@@ -256,6 +313,7 @@
 				6D9FF2322FEEA844008AA850 /* PicaX */,
 				6D9FF2662FEEB200008AA850 /* PicaX Watch App */,
 				6D9FF3082FF01000008AA850 /* PicaXDownloadActivityWidgets */,
+				6D9FF3452FF04000008AA850 /* PicaXTests */,
 			);
 		};
 /* End PBXProject section */
@@ -276,6 +334,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		6D9FF3092FF01000008AA850 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		6D9FF3432FF04000008AA850 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -330,6 +395,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		6D9FF3442FF04000008AA850 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -344,6 +416,11 @@
 			platformFilter = ios;
 			target = 6D9FF3082FF01000008AA850 /* PicaXDownloadActivityWidgets */;
 			targetProxy = 6D9FF3032FF01000008AA850 /* PBXContainerItemProxy */;
+		};
+		6D9FF3472FF04000008AA850 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 6D9FF2322FEEA844008AA850 /* PicaX */;
+			targetProxy = 6D9FF3462FF04000008AA850 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -476,7 +553,7 @@
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
-				ENABLE_USER_SELECTED_FILES = readonly;
+				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "BuildSupport/PicaX-Info.plist";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
@@ -489,7 +566,7 @@
 				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphonesimulator*]" = UIStatusBarStyleDefault;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.2;
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
@@ -508,6 +585,7 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2,7";
@@ -527,7 +605,7 @@
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
-				ENABLE_USER_SELECTED_FILES = readonly;
+				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "BuildSupport/PicaX-Info.plist";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
@@ -540,7 +618,7 @@
 				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphonesimulator*]" = UIStatusBarStyleDefault;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.2;
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
@@ -559,6 +637,7 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2,7";
@@ -594,6 +673,7 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 4;
@@ -629,6 +709,7 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 4;
@@ -662,6 +743,7 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -694,9 +776,72 @@
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		6D9FF3482FF04000008AA850 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = YG7LA7A4T5;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.2;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				PRODUCT_BUNDLE_IDENTIFIER = moye.PicaXTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				"TEST_HOST[sdk=iphoneos*]" = "$(BUILT_PRODUCTS_DIR)/PicaX.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/PicaX";
+				"TEST_HOST[sdk=iphonesimulator*]" = "$(BUILT_PRODUCTS_DIR)/PicaX.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/PicaX";
+				"TEST_HOST[sdk=macosx*]" = "$(BUILT_PRODUCTS_DIR)/PicaX.app/Contents/MacOS/PicaX";
+				TEST_TARGET_NAME = PicaX;
+			};
+			name = Debug;
+		};
+		6D9FF3492FF04000008AA850 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = YG7LA7A4T5;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.2;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				PRODUCT_BUNDLE_IDENTIFIER = moye.PicaXTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				"TEST_HOST[sdk=iphoneos*]" = "$(BUILT_PRODUCTS_DIR)/PicaX.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/PicaX";
+				"TEST_HOST[sdk=iphonesimulator*]" = "$(BUILT_PRODUCTS_DIR)/PicaX.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/PicaX";
+				"TEST_HOST[sdk=macosx*]" = "$(BUILT_PRODUCTS_DIR)/PicaX.app/Contents/MacOS/PicaX";
+				TEST_TARGET_NAME = PicaX;
 			};
 			name = Release;
 		};
@@ -739,6 +884,15 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
+		6D9FF34A2FF04000008AA850 /* Build configuration list for PBXNativeTarget "PicaXTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6D9FF3482FF04000008AA850 /* Debug */,
+				6D9FF3492FF04000008AA850 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
@@ -758,6 +912,22 @@
 				minimumVersion = 1.5.0;
 			};
 		};
+		6D9FF3302FF03000008AA850 /* XCRemoteSwiftPackageReference "ZIPFoundation" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/weichsel/ZIPFoundation.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.9.20;
+			};
+		};
+		6D9FF3332FF03000008AA850 /* XCRemoteSwiftPackageReference "GRDB.swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/groue/GRDB.swift.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 7.10.0;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -770,6 +940,16 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 6D9FF3212FF02000008AA850 /* XCRemoteSwiftPackageReference "libwebp-Xcode" */;
 			productName = libwebp;
+		};
+		6D9FF3312FF03000008AA850 /* ZIPFoundation */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 6D9FF3302FF03000008AA850 /* XCRemoteSwiftPackageReference "ZIPFoundation" */;
+			productName = ZIPFoundation;
+		};
+		6D9FF3342FF03000008AA850 /* GRDB */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 6D9FF3332FF03000008AA850 /* XCRemoteSwiftPackageReference "GRDB.swift" */;
+			productName = GRDB;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

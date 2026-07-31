@@ -518,7 +518,9 @@ private final class ReaderScrollViewResolverView: UIView {
         guard let scrollView else { return }
         observations = [
             scrollView.observe(\.contentOffset, options: [.initial, .new]) { [weak self] _, _ in
-                self?.reportScrollState()
+                MainActor.assumeIsolated {
+                    self?.reportScrollState()
+                }
             },
             scrollView.observe(\.contentSize, options: [.initial, .new]) { [weak self] _, _ in
                 MainActor.assumeIsolated {
@@ -527,7 +529,9 @@ private final class ReaderScrollViewResolverView: UIView {
                 }
             },
             scrollView.observe(\.bounds, options: [.initial, .new]) { [weak self] _, _ in
-                self?.reportScrollState()
+                MainActor.assumeIsolated {
+                    self?.reportScrollState()
+                }
             }
         ]
     }

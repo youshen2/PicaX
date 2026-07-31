@@ -88,33 +88,33 @@ enum ComicDetailCacheService {
     }
 
     private nonisolated static func diskCachedDetail(for item: ComicListItem, account: PlatformAccount?) -> ComicDetailInfo? {
-        withDiskCacheLock {
-            let fileURL = cacheFileURL(for: item, account: account)
-            guard FileManager.default.fileExists(atPath: fileURL.path) else {
-                return nil
-            }
-
-            guard let data = try? Data(contentsOf: fileURL),
-                  let payload = try? JSONDecoder().decode(CachedComicDetail.self, from: data),
-                  payload.version == cacheFormatVersion else {
-                try? FileManager.default.removeItem(at: fileURL)
-                return nil
-            }
-
-            touchCacheFileLocked(fileURL)
-            return payload.detail
+        let fileURL = cacheFileURL(for: item, account: account)
+        guard FileManager.default.fileExists(atPath: fileURL.path) else {
+            return nil
         }
+
+        guard let data = try? Data(contentsOf: fileURL),
+              let payload = try? JSONDecoder().decode(CachedComicDetail.self, from: data),
+              payload.version == cacheFormatVersion else {
+            withDiskCacheLock {
+                try? FileManager.default.removeItem(at: fileURL)
+            }
+            return nil
+        }
+
+        touchCacheFileLocked(fileURL)
+        return payload.detail
     }
 
     private nonisolated static func storeDetailOnDisk(_ detail: ComicDetailInfo, account: PlatformAccount?) {
         guard let data = try? JSONEncoder().encode(CachedComicDetail(version: cacheFormatVersion, cachedAt: Date(), detail: detail)) else {
             return
         }
+        prepareDiskCacheDirectoryLocked()
+        let fileURL = cacheFileURL(for: detail.item, account: account)
+        try? data.write(to: fileURL, options: [.atomic])
+        touchCacheFileLocked(fileURL)
         let shouldScheduleTrim = withDiskCacheLock {
-            prepareDiskCacheDirectoryLocked()
-            let fileURL = cacheFileURL(for: detail.item, account: account)
-            try? data.write(to: fileURL, options: [.atomic])
-            touchCacheFileLocked(fileURL)
             guard !isStoreTrimScheduled else { return false }
             isStoreTrimScheduled = true
             return true

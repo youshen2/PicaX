@@ -1,17 +1,15 @@
 import Foundation
-import SQLite3
+import GRDB
 import SwiftUI
 import UniformTypeIdentifiers
-import zlib
-
-private let backupSQLiteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+import ZIPFoundation
 
 extension UTType {
-    static let picaxBackup = UTType(exportedAs: "moye.picax.backup", conformingTo: .data)
-    static let picaComicBackup = UTType(importedAs: "moye.picacomic.backup", conformingTo: .data)
+    nonisolated static let picaxBackup = UTType(exportedAs: "moye.picax.backup", conformingTo: .data)
+    nonisolated static let picaComicBackup = UTType(importedAs: "moye.picacomic.backup", conformingTo: .data)
 }
 
-enum BackupImportMode {
+nonisolated enum BackupImportMode: Equatable, Sendable {
     case overwrite
     case merge
 }
@@ -20,18 +18,29 @@ struct PicaXBackupDocument: FileDocument {
     static var readableContentTypes: [UTType] { [.picaxBackup] }
     static var writableContentTypes: [UTType] { [.picaxBackup] }
 
-    var data: Data
+    private var data: Data
+    var temporaryFileURL: URL?
 
     init(data: Data = Data()) {
         self.data = data
+        temporaryFileURL = nil
+    }
+
+    init(temporaryFileURL: URL) {
+        data = Data()
+        self.temporaryFileURL = temporaryFileURL
     }
 
     init(configuration: ReadConfiguration) throws {
         data = configuration.file.regularFileContents ?? Data()
+        temporaryFileURL = nil
     }
 
     func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
-        FileWrapper(regularFileWithContents: data)
+        if let temporaryFileURL {
+            return try FileWrapper(url: temporaryFileURL, options: [])
+        }
+        return FileWrapper(regularFileWithContents: data)
     }
 }
 
@@ -62,7 +71,7 @@ struct BackupOperationResult: Identifiable {
     let message: String
 }
 
-struct PicaXBackup: Codable {
+nonisolated struct PicaXBackup: Codable, Sendable {
     var formatVersion: Int
     var createdAt: Date
     var includedContent: [BackupContentKind]
@@ -105,7 +114,7 @@ struct PicaXBackup: Codable {
     }
 }
 
-enum BackupContentKind: String, Codable, CaseIterable, Identifiable, Hashable {
+nonisolated enum BackupContentKind: String, Codable, CaseIterable, Identifiable, Hashable, Sendable {
     case accounts
     case settings
     case favorites
@@ -121,7 +130,7 @@ enum BackupContentKind: String, Codable, CaseIterable, Identifiable, Hashable {
     var title: String {
         switch self {
         case .accounts:
-            "账号和登录状态"
+            "账号资料"
         case .settings:
             "应用设置"
         case .favorites:
@@ -144,7 +153,7 @@ enum BackupContentKind: String, Codable, CaseIterable, Identifiable, Hashable {
     var summary: String {
         switch self {
         case .accounts:
-            "已登录账号和平台账号"
+            "账号名称和来源（不含密码、令牌或 Cookie）"
         case .settings:
             "外观、首页、搜索、来源等设置"
         case .favorites:
@@ -165,11 +174,11 @@ enum BackupContentKind: String, Codable, CaseIterable, Identifiable, Hashable {
     }
 
     static var defaultSelection: Set<BackupContentKind> {
-        Set(allCases.filter { $0 != .downloads })
+        Set(allCases.filter { $0 != .accounts && $0 != .downloads })
     }
 }
 
-struct BackupFile: Codable {
+nonisolated struct BackupFile: Codable, Sendable {
     var relativePath: String
     var data: String? = nil
     var rawData: Data? = nil
@@ -180,8 +189,8 @@ struct BackupFile: Codable {
     }
 }
 
-struct BackupDefaultValue: Codable {
-    enum ValueType: String, Codable {
+nonisolated struct BackupDefaultValue: Codable, Sendable {
+    nonisolated enum ValueType: String, Codable, Sendable {
         case string
         case bool
         case int
@@ -277,10 +286,18 @@ enum BackupService {
     private static let valueDecoder = JSONDecoder()
 
     static func makeDocument(includedContent: Set<BackupContentKind>, defaults: UserDefaults = .standard) async throws -> PicaXBackupDocument {
-        PicaXBackupDocument(data: try await makeData(includedContent: includedContent, defaults: defaults))
+        PicaXBackupDocument(
+            temporaryFileURL: try await makeArchiveFile(
+                includedContent: includedContent,
+                defaults: defaults
+            )
+        )
     }
 
-    static func makeData(includedContent: Set<BackupContentKind>, defaults: UserDefaults = .standard) async throws -> Data {
+    static func makeArchiveFile(
+        includedContent: Set<BackupContentKind>,
+        defaults: UserDefaults = .standard
+    ) async throws -> URL {
         let orderedContent = BackupContentKind.allCases.filter { includedContent.contains($0) }
         let includesDownloads = includedContent.contains(.downloads)
         let exportedDefaults = exportDefaults(includedContent: includedContent, defaults: defaults)
@@ -293,15 +310,39 @@ enum BackupService {
             defaults: [:],
             downloadFiles: []
         )
-        let backupDatabase = try BackupSQLiteArchive.makeDatabase(defaults: exportedDefaults, downloadFiles: downloadFileRecords)
-        var entries = [
-            StoredZipEntry(path: "backup.json", data: try encoder.encode(backup)),
-            StoredZipEntry(path: BackupSQLiteArchive.fileName, data: backupDatabase)
-        ]
-        entries += exportedDownloadFiles.map { file in
-            StoredZipEntry(path: BackupSQLiteArchive.downloadEntryPath(for: file.relativePath), data: file.data)
-        }
-        return try StoredZipArchive.makeArchive(entries: entries)
+        let backupMetadata = try encoder.encode(backup)
+        let archiveURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PicaXBackup-\(UUID().uuidString)")
+            .appendingPathExtension("picax")
+
+        return try await Task.detached(priority: .utility) {
+            do {
+                let backupDatabase = try BackupSQLiteArchive.makeDatabase(
+                    defaults: exportedDefaults,
+                    downloadFiles: downloadFileRecords
+                )
+                let entries = [
+                    StoredZipEntry(path: "backup.json", data: backupMetadata),
+                    StoredZipEntry(path: BackupSQLiteArchive.fileName, data: backupDatabase)
+                ]
+                let fileEntries = exportedDownloadFiles.map { file in
+                    StoredZipFileEntry(
+                        path: BackupSQLiteArchive.downloadEntryPath(for: file.relativePath),
+                        fileURL: file.fileURL,
+                        size: file.size
+                    )
+                }
+                try StoredZipArchive.makeArchive(
+                    entries: entries,
+                    fileEntries: fileEntries,
+                    at: archiveURL
+                )
+                return archiveURL
+            } catch {
+                try? FileManager.default.removeItem(at: archiveURL)
+                throw error
+            }
+        }.value
     }
 
     static func preview(from data: Data) throws -> BackupImportPreview {
@@ -309,19 +350,58 @@ enum BackupService {
         return BackupImportPreview(backup: backup, data: data)
     }
 
-    static func importBackup(_ backup: PicaXBackup, mode: BackupImportMode, defaults: UserDefaults = .standard) async throws {
-        switch mode {
-        case .overwrite:
-            try await overwrite(with: backup, defaults: defaults)
-        case .merge:
-            try await merge(with: backup, defaults: defaults)
+    static func importBackup(
+        _ backup: PicaXBackup,
+        mode: BackupImportMode,
+        archiveData: Data? = nil,
+        defaults: UserDefaults = .standard,
+        postsNotification: Bool = true
+    ) async throws {
+        let plan = try makeImportPlan(for: backup, mode: mode, defaults: defaults)
+        let downloadTransaction: DownloadFilesTransaction?
+        if let downloadImport = plan.downloadImport {
+            downloadTransaction = try await DownloadFilesTransaction.prepare(
+                files: downloadImport.files,
+                archiveData: archiveData,
+                mode: downloadImport.mode
+            )
+        } else {
+            downloadTransaction = nil
+        }
+
+        do {
+            try await downloadTransaction?.commit()
+            try PicaXSQLiteStore.applyRestoreOrThrow(plan.sqlite)
+            for key in plan.defaultKeysToRemove {
+                defaults.removeObject(forKey: key)
+            }
+            for (key, value) in plan.defaults {
+                defaults.set(value, forKey: key)
+            }
+            await downloadTransaction?.finalize()
+        } catch {
+            let importError = error
+            do {
+                try await downloadTransaction?.rollback()
+            } catch {
+                throw BackupArchiveError.rollbackFailed
+            }
+            throw importError
         }
         defaults.synchronize()
+        if postsNotification {
+            NotificationCenter.default.post(name: .picaxBackupDidImport, object: nil)
+        }
     }
 
     static func importBackup(from data: Data, mode: BackupImportMode, defaults: UserDefaults = .standard) async throws {
-        let backup = try decodeBackup(from: data)
-        try await importBackup(backup, mode: mode, defaults: defaults)
+        let decoded = try decodeBackup(from: data)
+        try await importBackup(
+            decoded,
+            mode: mode,
+            archiveData: data,
+            defaults: defaults
+        )
     }
 
     static func filteredBackup(_ backup: PicaXBackup, includedContent: Set<BackupContentKind>) -> PicaXBackup {
@@ -341,7 +421,10 @@ enum BackupService {
     }
 
     private static func decodeBackup(from data: Data) throws -> PicaXBackup {
-        let entries = try StoredZipArchive.extractEntries(from: data)
+        let entries = try StoredZipArchive.extractEntries(
+            from: data,
+            matching: ["backup.json", BackupSQLiteArchive.fileName]
+        )
         let entryMap = entries.reduce(into: [String: Data]()) { result, entry in
             result[entry.path] = result[entry.path] ?? entry.data
         }
@@ -349,18 +432,15 @@ enum BackupService {
             throw BackupArchiveError.missingManifest
         }
         var backup = try decoder.decode(PicaXBackup.self, from: manifest)
+        guard backup.formatVersion == formatVersion else {
+            throw BackupArchiveError.unsupportedVersion(backup.formatVersion)
+        }
         guard let database = entryMap[BackupSQLiteArchive.fileName] else {
             throw BackupArchiveError.missingManifest
         }
         let content = try BackupSQLiteArchive.readDatabase(database)
         backup.defaults = content.defaults
-        backup.downloadFiles = content.downloadFiles.map { file in
-            var file = file
-            if let data = entryMap[BackupSQLiteArchive.downloadEntryPath(for: file.relativePath)] {
-                file.rawData = data
-            }
-            return file
-        }
+        backup.downloadFiles = content.downloadFiles
         return backup
     }
 
@@ -379,46 +459,266 @@ enum BackupService {
         return values
     }
 
-    private static func overwrite(with backup: PicaXBackup, defaults: UserDefaults) async throws {
+    @MainActor
+    private static func makeImportPlan(
+        for backup: PicaXBackup,
+        mode: BackupImportMode,
+        defaults: UserDefaults
+    ) throws -> BackupImportPlan {
         let includedContent = backup.contentSelection
-        let currentKeys = defaults.dictionaryRepresentation().keys.filter { isManagedKey($0) }
-        for key in currentKeys where backup.defaults[key] == nil && shouldRemoveMissingKey(key, includedContent: includedContent) {
-            defaults.removeObject(forKey: key)
-        }
-
-        for (key, value) in backup.defaults {
-            if isSQLiteBackedDataKey(key) { continue }
-            guard let defaultsValue = value.userDefaultsValue() else { continue }
-            defaults.set(defaultsValue, forKey: key)
-        }
-
-        applySQLiteBackupValues(backup)
-
-        if includedContent.contains(.downloads) {
-            try await replaceDownloadFiles(with: backup.downloadFiles)
-        }
-    }
-
-    private static func merge(with backup: PicaXBackup, defaults: UserDefaults) async throws {
-        for (key, importedValue) in backup.defaults {
-            if mergeSQLiteBackupValue(key: key, importedValue: importedValue) {
+        var importedDefaults: [String: Any] = [:]
+        for (key, value) in backup.defaults where !isSQLiteBackedDataKey(key) {
+            guard key != "picax.accounts",
+                  key != "picax.session",
+                  let kind = contentKind(for: key),
+                  includedContent.contains(kind) else {
                 continue
             }
-            if let mergedValue = mergedDefaultValue(key: key, importedValue: importedValue, defaults: defaults) {
-                defaults.set(mergedValue, forKey: key)
+            switch mode {
+            case .overwrite:
+                guard let value = value.userDefaultsValue() else {
+                    throw BackupArchiveError.invalidPayload(key)
+                }
+                importedDefaults[key] = value
+            case .merge:
+                guard let value = mergedDefaultValue(
+                    key: key,
+                    importedValue: value,
+                    defaults: defaults
+                ) else {
+                    throw BackupArchiveError.invalidPayload(key)
+                }
+                importedDefaults[key] = value
             }
         }
 
-        if backup.contentSelection.contains(.downloads) {
-            try await mergeDownloadFiles(backup.downloadFiles)
+        let keysToRemove: [String]
+        switch mode {
+        case .overwrite:
+            keysToRemove = defaults.dictionaryRepresentation().keys.filter { key in
+                guard isManagedKey(key),
+                      !isSQLiteBackedDataKey(key),
+                      key != "picax.accounts",
+                      key != "picax.session",
+                      backup.defaults[key] == nil else {
+                    return false
+                }
+                return shouldRemoveMissingKey(key, includedContent: includedContent)
+            }
+        case .merge:
+            keysToRemove = []
         }
+
+        var sqlite = PicaXSQLiteRestorePayload()
+        if includedContent.contains(.accounts) {
+            let imported: [PlatformAccount] = try requiredArray(
+                in: backup,
+                key: "picax.platformAccounts",
+                id: { $0.platform.id }
+            )
+            var local = PicaXSQLiteStore.loadPlatformAccounts()
+            var didChangeAccounts = false
+            for importedAccount in imported {
+                if importedAccount.credential.hasSensitiveData {
+                    if mode == .overwrite || local[importedAccount.platform] == nil {
+                        local[importedAccount.platform] = importedAccount
+                        didChangeAccounts = true
+                    }
+                } else if mode == .overwrite,
+                          let localAccount = local[importedAccount.platform] {
+                    var restoredAccount = importedAccount
+                    restoredAccount.credential = importedAccount.credential
+                        .removingSecrets()
+                        .applying(localAccount.credential.secrets)
+                    local[importedAccount.platform] = restoredAccount
+                    didChangeAccounts = true
+                }
+            }
+            if didChangeAccounts {
+                sqlite.platformAccounts = ComicPlatform.allCases.compactMap { local[$0] }
+            }
+        }
+        if includedContent.contains(.favorites) {
+            let imported: [StoredLocalFavorite] = try requiredArray(
+                in: backup,
+                key: "picax.localFavorites.default",
+                id: { "\($0.platform.id)-\($0.id)" }
+            )
+            sqlite.localFavorites = mode == .overwrite
+                ? imported.sorted(by: favoriteSort)
+                : mergeNewest(
+                    local: PicaXSQLiteStore.loadLocalFavorites(folderID: "default"),
+                    imported: imported,
+                    id: { "\($0.platform.id)-\($0.id)" },
+                    date: { $0.favoriteDate ?? .distantPast }
+                )
+        }
+        if includedContent.contains(.readingHistory) {
+            let imported: [ReadingHistoryRecord] = try requiredArray(
+                in: backup,
+                key: ReadingHistoryService.Key.records,
+                id: \.id
+            )
+            sqlite.readingHistory = mode == .overwrite
+                ? imported.sorted { $0.viewedAt > $1.viewedAt }
+                : mergeNewest(
+                    local: PicaXSQLiteStore.loadReadingHistory(),
+                    imported: imported,
+                    id: \.id,
+                    date: \.viewedAt
+                )
+        }
+        if includedContent.contains(.readLater) {
+            let imported: [ReadLaterRecord] = try requiredArray(
+                in: backup,
+                key: ReadLaterService.Key.records,
+                id: \.id
+            )
+            sqlite.readLater = mode == .overwrite
+                ? imported.sorted { $0.addedAt > $1.addedAt }
+                : mergeNewest(
+                    local: PicaXSQLiteStore.loadReadLater(),
+                    imported: imported,
+                    id: \.id,
+                    date: \.addedAt
+                )
+        }
+        if includedContent.contains(.readingDuration) {
+            let imported: [ReadingDurationRecord] = try requiredArray(
+                in: backup,
+                key: ReadingDurationService.Key.records,
+                id: \.id
+            )
+            sqlite.readingDuration = mode == .overwrite
+                ? imported.sorted { $0.lastReadAt > $1.lastReadAt }
+                : mergeReadingDurations(
+                    local: PicaXSQLiteStore.loadReadingDuration(),
+                    imported: imported
+                )
+        }
+        if includedContent.contains(.searchHistory) {
+            let imported: [SearchHistoryRecord] = try requiredArray(
+                in: backup,
+                key: SearchHistorySettingsKey.records,
+                id: \.id
+            )
+            sqlite.searchHistory = mode == .overwrite
+                ? imported.sorted { $0.searchedAt > $1.searchedAt }
+                : mergeNewest(
+                    local: PicaXSQLiteStore.loadSearchHistory(),
+                    imported: imported,
+                    id: \.id,
+                    date: \.searchedAt
+                )
+        }
+        if includedContent.contains(.downloads) {
+            let imported: [DownloadRecord] = try requiredArray(
+                in: backup,
+                key: DownloadSettingsKey.records,
+                id: \.id
+            )
+            sqlite.downloadRecords = mode == .overwrite
+                ? imported.sorted { $0.updatedAt > $1.updatedAt }
+                : mergeNewest(
+                    local: PicaXSQLiteStore.loadDownloadRecords(),
+                    imported: imported,
+                    id: \.id,
+                    date: \.updatedAt
+                )
+        }
+
+        return BackupImportPlan(
+            defaults: importedDefaults,
+            defaultKeysToRemove: keysToRemove,
+            sqlite: sqlite,
+            downloadImport: includedContent.contains(.downloads)
+                ? BackupDownloadImport(files: backup.downloadFiles, mode: mode)
+                : nil
+        )
+    }
+
+    private static func requiredArray<Value: Decodable>(
+        in backup: PicaXBackup,
+        key: String,
+        id: (Value) -> String
+    ) throws -> [Value] {
+        guard let encodedValue = backup.defaults[key],
+              let data = encodedValue.decodedData() else {
+            throw BackupArchiveError.invalidPayload(key)
+        }
+        let values: [Value]
+        do {
+            values = try valueDecoder.decode([Value].self, from: data)
+        } catch {
+            throw BackupArchiveError.invalidPayload(key)
+        }
+        var seen = Set<String>()
+        guard values.allSatisfy({ seen.insert(id($0)).inserted }) else {
+            throw BackupArchiveError.invalidPayload(key)
+        }
+        return values
+    }
+
+    private static func mergeNewest<Value>(
+        local: [Value],
+        imported: [Value],
+        id: (Value) -> String,
+        date: (Value) -> Date
+    ) -> [Value] {
+        var result: [String: Value] = [:]
+        for value in imported + local {
+            let key = id(value)
+            guard let existing = result[key] else {
+                result[key] = value
+                continue
+            }
+            if date(value) >= date(existing) {
+                result[key] = value
+            }
+        }
+        return result.values.sorted { date($0) > date($1) }
+    }
+
+    private static func mergeReadingDurations(
+        local: [ReadingDurationRecord],
+        imported: [ReadingDurationRecord]
+    ) -> [ReadingDurationRecord] {
+        var result: [String: ReadingDurationRecord] = [:]
+        for record in imported + local {
+            guard var existing = result[record.id] else {
+                result[record.id] = record
+                continue
+            }
+            if record.lastReadAt > existing.lastReadAt {
+                existing.item = record.item
+                existing.lastReadAt = record.lastReadAt
+            }
+            existing.totalSeconds = max(existing.totalSeconds, record.totalSeconds)
+            for (day, seconds) in record.dailySeconds {
+                existing.dailySeconds[day] = max(existing.dailySeconds[day] ?? 0, seconds)
+            }
+            result[record.id] = existing
+        }
+        return result.values.sorted { $0.lastReadAt > $1.lastReadAt }
+    }
+
+    private static func favoriteSort(
+        _ lhs: StoredLocalFavorite,
+        _ rhs: StoredLocalFavorite
+    ) -> Bool {
+        (lhs.favoriteDate ?? .distantPast) > (rhs.favoriteDate ?? .distantPast)
     }
 
     @MainActor
     private static func appendSQLiteDefaults(to values: inout [String: BackupDefaultValue], includedContent: Set<BackupContentKind>) {
         if includedContent.contains(.accounts) {
             let accounts = PicaXSQLiteStore.loadPlatformAccounts()
-            if let data = encodeValue(ComicPlatform.allCases.compactMap { accounts[$0] }) {
+            let redactedAccounts = ComicPlatform.allCases.compactMap { platform -> PlatformAccount? in
+                guard var account = accounts[platform] else { return nil }
+                account.credential = account.credential.removingSecrets()
+                return account
+            }
+            if let data = encodeValue(redactedAccounts) {
                 values["picax.platformAccounts"] = BackupDefaultValue.from(data)
             }
         }
@@ -454,170 +754,8 @@ enum BackupService {
         }
     }
 
-    @MainActor
-    private static func applySQLiteBackupValues(_ backup: PicaXBackup) {
-        let content = backup.contentSelection
-        if content.contains(.accounts) {
-            replaceSQLiteValue(
-                backup.defaults["picax.platformAccounts"],
-                as: PlatformAccount.self,
-                replace: PicaXSQLiteStore.replacePlatformAccounts
-            )
-        }
-        if content.contains(.favorites) {
-            replaceSQLiteValue(
-                backup.defaults["picax.localFavorites.default"],
-                as: StoredLocalFavorite.self
-            ) { PicaXSQLiteStore.replaceLocalFavorites($0, folderID: "default") }
-        }
-        if content.contains(.readingHistory) {
-            replaceSQLiteValue(
-                backup.defaults[ReadingHistoryService.Key.records],
-                as: ReadingHistoryRecord.self,
-                replace: PicaXSQLiteStore.replaceReadingHistory
-            )
-        }
-        if content.contains(.readLater) {
-            replaceSQLiteValue(
-                backup.defaults[ReadLaterService.Key.records],
-                as: ReadLaterRecord.self,
-                replace: PicaXSQLiteStore.replaceReadLater
-            )
-        }
-        if content.contains(.readingDuration) {
-            replaceSQLiteValue(
-                backup.defaults[ReadingDurationService.Key.records],
-                as: ReadingDurationRecord.self,
-                replace: PicaXSQLiteStore.replaceReadingDuration
-            )
-        }
-        if content.contains(.searchHistory) {
-            replaceSQLiteValue(
-                backup.defaults[SearchHistorySettingsKey.records],
-                as: SearchHistoryRecord.self,
-                replace: PicaXSQLiteStore.replaceSearchHistory
-            )
-        }
-        if content.contains(.downloads) {
-            replaceSQLiteValue(
-                backup.defaults[DownloadSettingsKey.records],
-                as: DownloadRecord.self,
-                replace: PicaXSQLiteStore.replaceDownloadRecords
-            )
-        }
-
-    }
-
-    @discardableResult
-    @MainActor
-    private static func mergeSQLiteBackupValue(key: String, importedValue: BackupDefaultValue) -> Bool {
-        guard isSQLiteBackedDataKey(key) else {
-            return false
-        }
-        guard let importedData = importedValue.decodedData() else {
-            return true
-        }
-
-        if key == "picax.platformAccounts" {
-            let accounts = PicaXSQLiteStore.loadPlatformAccounts()
-            mergeSQLiteValues(
-                existing: ComicPlatform.allCases.compactMap { accounts[$0] },
-                importedData: importedData,
-                merge: mergePlatformAccounts,
-                replace: PicaXSQLiteStore.replacePlatformAccounts
-            )
-            return true
-        }
-        if key == "picax.localFavorites.default" {
-            mergeSQLiteValues(
-                existing: PicaXSQLiteStore.loadLocalFavorites(folderID: "default"),
-                importedData: importedData,
-                merge: mergeLocalFavorites
-            ) { PicaXSQLiteStore.replaceLocalFavorites($0, folderID: "default") }
-            return true
-        }
-        if key == ReadingHistoryService.Key.records {
-            mergeSQLiteValues(
-                existing: PicaXSQLiteStore.loadReadingHistory(),
-                importedData: importedData,
-                merge: mergeReadingHistory,
-                replace: PicaXSQLiteStore.replaceReadingHistory
-            )
-            return true
-        }
-        if key == ReadLaterService.Key.records {
-            mergeSQLiteValues(
-                existing: PicaXSQLiteStore.loadReadLater(),
-                importedData: importedData,
-                merge: mergeReadLater,
-                replace: PicaXSQLiteStore.replaceReadLater
-            )
-            return true
-        }
-        if key == ReadingDurationService.Key.records {
-            mergeSQLiteValues(
-                existing: PicaXSQLiteStore.loadReadingDuration(),
-                importedData: importedData,
-                merge: mergeReadingDuration,
-                replace: PicaXSQLiteStore.replaceReadingDuration
-            )
-            return true
-        }
-        if key == SearchHistorySettingsKey.records {
-            mergeSQLiteValues(
-                existing: PicaXSQLiteStore.loadSearchHistory(),
-                importedData: importedData,
-                merge: mergeSearchHistory,
-                replace: PicaXSQLiteStore.replaceSearchHistory
-            )
-            return true
-        }
-        if key == DownloadSettingsKey.records {
-            mergeSQLiteValues(
-                existing: PicaXSQLiteStore.loadDownloadRecords(),
-                importedData: importedData,
-                merge: mergeDownloadRecords,
-                replace: PicaXSQLiteStore.replaceDownloadRecords
-            )
-            return true
-        }
-        return true
-    }
-
-    @MainActor
-    private static func mergeSQLiteValues<Value: Codable>(
-        existing: [Value],
-        importedData: Data,
-        merge: (_ existingData: Data, _ importedData: Data) -> Data?,
-        replace: ([Value]) -> Void
-    ) {
-        guard let existingData = encodeValue(existing) else { return }
-        if let data = merge(existingData, importedData),
-           let values = decodeValue([Value].self, from: data) {
-            replace(values)
-        }
-    }
-
-    @MainActor
-    private static func replaceSQLiteValue<Value: Decodable>(
-        _ value: BackupDefaultValue?,
-        as type: Value.Type,
-        replace: ([Value]) -> Void
-    ) {
-        guard let data = value?.decodedData(),
-              let values = decodeValue([Value].self, from: data) else {
-            replace([])
-            return
-        }
-        replace(values)
-    }
-
     private static func encodeValue<Value: Encodable>(_ value: Value) -> Data? {
         try? valueEncoder.encode(value)
-    }
-
-    private static func decodeValue<Value: Decodable>(_ type: Value.Type, from data: Data) -> Value? {
-        try? valueDecoder.decode(type, from: data)
     }
 
     private static func isSQLiteBackedDataKey(_ key: String) -> Bool {
@@ -631,7 +769,11 @@ enum BackupService {
     }
 
     private static func shouldExportKey(_ key: String, includedContent: Set<BackupContentKind>) -> Bool {
-        if key == DownloadSettingsKey.tasks { return false }
+        if key == DownloadSettingsKey.tasks
+            || key == "picax.accounts"
+            || key == "picax.session" {
+            return false
+        }
         guard let contentKind = contentKind(for: key) else { return false }
         return includedContent.contains(contentKind)
     }
@@ -689,36 +831,6 @@ enum BackupService {
             return uniqueStrings((existingValue as? [String] ?? []) + (importedValue.stringArrayValue ?? []))
         }
 
-        guard let importedData = importedValue.decodedData(),
-              let existingData = existingValue as? Data else {
-            return existingValue
-        }
-
-        if key == "picax.platformAccounts" {
-            return mergePlatformAccounts(existingData: existingData, importedData: importedData)
-        }
-        if key == "picax.accounts" {
-            return mergeUserAccounts(existingData: existingData, importedData: importedData)
-        }
-        if key == ReadingHistoryService.Key.records {
-            return mergeReadingHistory(existingData: existingData, importedData: importedData)
-        }
-        if key == ReadLaterService.Key.records {
-            return mergeReadLater(existingData: existingData, importedData: importedData)
-        }
-        if key == ReadingDurationService.Key.records {
-            return mergeReadingDuration(existingData: existingData, importedData: importedData)
-        }
-        if key == SearchHistorySettingsKey.records {
-            return mergeSearchHistory(existingData: existingData, importedData: importedData)
-        }
-        if key == DownloadSettingsKey.records {
-            return mergeDownloadRecords(existingData: existingData, importedData: importedData)
-        }
-        if key.hasPrefix("picax.localFavorites.") {
-            return mergeLocalFavorites(existingData: existingData, importedData: importedData)
-        }
-
         return existingValue
     }
 
@@ -735,180 +847,46 @@ enum BackupService {
         return result
     }
 
-    private static func mergePlatformAccounts(existingData: Data, importedData: Data) -> Data? {
-        let local = decodeValue([PlatformAccount].self, from: existingData) ?? []
-        let imported = decodeValue([PlatformAccount].self, from: importedData) ?? []
-        var values = Dictionary(uniqueKeysWithValues: imported.map { ($0.platform, $0) })
-        for account in local {
-            values[account.platform] = account
-        }
-        let ordered = ComicPlatform.allCases.compactMap { values[$0] }
-        return encodeValue(ordered)
-    }
-
-    private static func mergeUserAccounts(existingData: Data, importedData: Data) -> Data? {
-        let local = decodeValue([UserAccount].self, from: existingData) ?? []
-        let imported = decodeValue([UserAccount].self, from: importedData) ?? []
-        var values = Dictionary(uniqueKeysWithValues: imported.map { ($0.id, $0) })
-        for account in local {
-            values[account.id] = account
-        }
-        return encodeValue(Array(values.values).sorted { $0.createdAt > $1.createdAt })
-    }
-
-    private static func mergeReadingHistory(existingData: Data, importedData: Data) -> Data? {
-        let local = decodeValue([ReadingHistoryRecord].self, from: existingData) ?? []
-        let imported = decodeValue([ReadingHistoryRecord].self, from: importedData) ?? []
-        var values = Dictionary(uniqueKeysWithValues: imported.map { ($0.id, $0) })
-        for record in local {
-            if let existing = values[record.id] {
-                values[record.id] = existing.viewedAt > record.viewedAt ? existing : record
-            } else {
-                values[record.id] = record
-            }
-        }
-        return encodeValue(Array(values.values).sorted { $0.viewedAt > $1.viewedAt })
-    }
-
-    private static func mergeReadLater(existingData: Data, importedData: Data) -> Data? {
-        let local = decodeValue([ReadLaterRecord].self, from: existingData) ?? []
-        let imported = decodeValue([ReadLaterRecord].self, from: importedData) ?? []
-        var values = Dictionary(uniqueKeysWithValues: imported.map { ($0.id, $0) })
-        for record in local {
-            if let existing = values[record.id] {
-                values[record.id] = existing.addedAt > record.addedAt ? existing : record
-            } else {
-                values[record.id] = record
-            }
-        }
-        return encodeValue(Array(values.values).sorted { $0.addedAt > $1.addedAt })
-    }
-
-    private static func mergeReadingDuration(existingData: Data, importedData: Data) -> Data? {
-        let local = decodeValue([ReadingDurationRecord].self, from: existingData) ?? []
-        let imported = decodeValue([ReadingDurationRecord].self, from: importedData) ?? []
-        var values = Dictionary(uniqueKeysWithValues: imported.map { ($0.id, $0) })
-        for record in local {
-            guard var existing = values[record.id] else {
-                values[record.id] = record
-                continue
-            }
-            if record.lastReadAt > existing.lastReadAt {
-                existing.item = record.item
-                existing.lastReadAt = record.lastReadAt
-            }
-            existing.totalSeconds = max(existing.totalSeconds, record.totalSeconds)
-            for (key, seconds) in record.dailySeconds {
-                existing.dailySeconds[key] = max(existing.dailySeconds[key] ?? 0, seconds)
-            }
-            values[record.id] = existing
-        }
-        return encodeValue(Array(values.values).sorted { $0.lastReadAt > $1.lastReadAt })
-    }
-
-    private static func mergeSearchHistory(existingData: Data, importedData: Data) -> Data? {
-        let local = decodeValue([SearchHistoryRecord].self, from: existingData) ?? []
-        let imported = decodeValue([SearchHistoryRecord].self, from: importedData) ?? []
-        var values = Dictionary(uniqueKeysWithValues: imported.map { ($0.id, $0) })
-        for record in local {
-            if let existing = values[record.id] {
-                values[record.id] = existing.searchedAt > record.searchedAt ? existing : record
-            } else {
-                values[record.id] = record
-            }
-        }
-        return encodeValue(Array(values.values).sorted { $0.searchedAt > $1.searchedAt })
-    }
-
-    private static func mergeDownloadRecords(existingData: Data, importedData: Data) -> Data? {
-        let local = decodeValue([DownloadRecord].self, from: existingData) ?? []
-        let imported = decodeValue([DownloadRecord].self, from: importedData) ?? []
-        var values = Dictionary(uniqueKeysWithValues: imported.map { ($0.id, $0) })
-        for record in local {
-            if let existing = values[record.id] {
-                values[record.id] = existing.updatedAt > record.updatedAt ? existing : record
-            } else {
-                values[record.id] = record
-            }
-        }
-        return encodeValue(Array(values.values).sorted { $0.updatedAt > $1.updatedAt })
-    }
-
-    private static func mergeLocalFavorites(existingData: Data, importedData: Data) -> Data? {
-        let local = decodeValue([BackupStoredLocalFavorite].self, from: existingData) ?? []
-        let imported = decodeValue([BackupStoredLocalFavorite].self, from: importedData) ?? []
-        var values = Dictionary(uniqueKeysWithValues: imported.map { ($0.mergeID, $0) })
-        for favorite in local {
-            values[favorite.mergeID] = favorite
-        }
-        return encodeValue(Array(values.values).sorted {
-            ($0.favoriteDate ?? .distantPast) > ($1.favoriteDate ?? .distantPast)
-        })
-    }
-
     private static func exportDownloadFiles() async throws -> [ExportedBackupFile] {
         try await Task.detached(priority: .utility) {
             let rootURL = try downloadsRootURL()
             guard FileManager.default.fileExists(atPath: rootURL.path),
                   let enumerator = FileManager.default.enumerator(
                     at: rootURL,
-                    includingPropertiesForKeys: [.isRegularFileKey],
+                    includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
                     options: [.skipsHiddenFiles]
                   ) else {
                 return []
             }
 
+            let rootPrefix = rootURL.standardizedFileURL.path + "/"
             var files: [ExportedBackupFile] = []
             while let fileURL = enumerator.nextObject() as? URL {
-                let values = try? fileURL.resourceValues(forKeys: [.isRegularFileKey])
-                guard values?.isRegularFile == true else { continue }
-                let relativePath = fileURL.path.replacingOccurrences(of: rootURL.path + "/", with: "")
-                let data = try Data(contentsOf: fileURL)
-                files.append(ExportedBackupFile(relativePath: relativePath, data: data))
+                let standardizedURL = fileURL.standardizedFileURL
+                let values = try standardizedURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+                guard values.isRegularFile == true,
+                      standardizedURL.path.hasPrefix(rootPrefix) else {
+                    continue
+                }
+                let relativePath = String(standardizedURL.path.dropFirst(rootPrefix.count))
+                guard isSafeRelativePath(relativePath) else {
+                    throw BackupArchiveError.invalidPath
+                }
+                files.append(ExportedBackupFile(
+                    relativePath: relativePath,
+                    fileURL: standardizedURL,
+                    size: UInt64(values.fileSize ?? 0)
+                ))
             }
             return files.sorted { $0.relativePath.localizedStandardCompare($1.relativePath) == .orderedAscending }
         }.value
     }
 
-    private static func replaceDownloadFiles(with files: [BackupFile]) async throws {
-        try await Task.detached(priority: .utility) {
-            let rootURL = try downloadsRootURL()
-            if FileManager.default.fileExists(atPath: rootURL.path) {
-                try FileManager.default.removeItem(at: rootURL)
-            }
-            try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
-            try writeDownloadFiles(files, rootURL: rootURL, overwritesExisting: true)
-        }.value
-    }
-
-    private static func mergeDownloadFiles(_ files: [BackupFile]) async throws {
-        try await Task.detached(priority: .utility) {
-            let rootURL = try downloadsRootURL()
-            try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
-            try writeDownloadFiles(files, rootURL: rootURL, overwritesExisting: false)
-        }.value
-    }
-
-    private nonisolated static func writeDownloadFiles(_ files: [BackupFile], rootURL: URL, overwritesExisting: Bool) throws {
-        for file in files {
-            guard isSafeRelativePath(file.relativePath),
-                  let data = file.rawData ?? file.data.flatMap({ Data(base64Encoded: $0) }) else {
-                continue
-            }
-            let fileURL = rootURL.appendingPathComponent(file.relativePath)
-            try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            if !overwritesExisting, FileManager.default.fileExists(atPath: fileURL.path) {
-                continue
-            }
-            try data.write(to: fileURL, options: .atomic)
-        }
-    }
-
-    private nonisolated static func isSafeRelativePath(_ value: String) -> Bool {
+    fileprivate nonisolated static func isSafeRelativePath(_ value: String) -> Bool {
         !value.isEmpty && !value.hasPrefix("/") && !value.split(separator: "/").contains("..")
     }
 
-    private nonisolated static func downloadsRootURL() throws -> URL {
+    fileprivate nonisolated static func downloadsRootURL() throws -> URL {
         guard let baseURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
             throw ComicContentError.invalidResponse("无法访问应用支持目录。")
         }
@@ -918,25 +896,260 @@ enum BackupService {
     }
 }
 
-private struct ExportedBackupFile {
-    var relativePath: String
-    var data: Data
+private struct BackupImportPlan {
+    var defaults: [String: Any]
+    var defaultKeysToRemove: [String]
+    var sqlite: PicaXSQLiteRestorePayload
+    var downloadImport: BackupDownloadImport?
 }
 
-private struct BackupStoredLocalFavorite: Codable {
-    let id: String
-    let platform: ComicPlatform
-    let title: String
-    let subtitle: String
-    let coverURLString: String
-    let tags: [String]
-    let pageCount: Int?
-    let likesCount: Int?
-    let favoriteDate: Date?
+private struct BackupDownloadImport {
+    var files: [BackupFile]
+    var mode: BackupImportMode
+}
 
-    var mergeID: String {
-        "\(platform.id)-\(id)"
+nonisolated private enum DownloadImportTransactionRegistry {
+    private static let transactionPrefix = ".PicaXBackupImport-"
+    private static let stagedDirectoryName = "StagedDownloads"
+    private static let previousDirectoryName = "PreviousDownloads"
+    private static let commitMarkerName = "CommitStarted"
+    private static let completionMarkerName = "RestoreCommitted"
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var activePaths = Set<String>()
+
+    static func createRoot(parent: URL, liveRoot: URL) throws -> URL {
+        lock.lock()
+        defer { lock.unlock() }
+
+        try recoverInterruptedTransactions(
+            parent: parent,
+            liveRoot: liveRoot,
+            excluding: activePaths
+        )
+        let root = parent.appendingPathComponent(
+            "\(transactionPrefix)\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        activePaths.insert(root.path)
+        return root
     }
+
+    static func unregister(_ root: URL) {
+        lock.lock()
+        activePaths.remove(root.path)
+        lock.unlock()
+    }
+
+    private static func recoverInterruptedTransactions(
+        parent: URL,
+        liveRoot: URL,
+        excluding activePaths: Set<String>
+    ) throws {
+        let fileManager = FileManager.default
+        let candidates = try fileManager.contentsOfDirectory(
+            at: parent,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsSubdirectoryDescendants]
+        )
+        .filter {
+            guard $0.lastPathComponent.hasPrefix(transactionPrefix),
+                  !activePaths.contains($0.path) else {
+                return false
+            }
+            return (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+        }
+
+        for root in candidates {
+            let completionMarker = root.appendingPathComponent(completionMarkerName)
+            if fileManager.fileExists(atPath: completionMarker.path) {
+                try fileManager.removeItem(at: root)
+                continue
+            }
+
+            let previousRoot = root.appendingPathComponent(previousDirectoryName, isDirectory: true)
+            let stagedRoot = root.appendingPathComponent(stagedDirectoryName, isDirectory: true)
+            let commitMarker = root.appendingPathComponent(commitMarkerName)
+            if fileManager.fileExists(atPath: previousRoot.path) {
+                if fileManager.fileExists(atPath: liveRoot.path) {
+                    try fileManager.removeItem(at: liveRoot)
+                }
+                try fileManager.moveItem(at: previousRoot, to: liveRoot)
+            } else if fileManager.fileExists(atPath: commitMarker.path),
+                      !fileManager.fileExists(atPath: stagedRoot.path),
+                      fileManager.fileExists(atPath: liveRoot.path) {
+                try fileManager.removeItem(at: liveRoot)
+            }
+            try fileManager.removeItem(at: root)
+        }
+    }
+
+    static func commitMarker(in root: URL) -> URL {
+        root.appendingPathComponent(commitMarkerName)
+    }
+
+    static func completionMarker(in root: URL) -> URL {
+        root.appendingPathComponent(completionMarkerName)
+    }
+}
+
+private actor DownloadFilesTransaction {
+    private let transactionRoot: URL
+    private let stagedRoot: URL
+    private let liveRoot: URL
+    private let previousRoot: URL
+    private var didCommit = false
+
+    private init(transactionRoot: URL, stagedRoot: URL, liveRoot: URL, previousRoot: URL) {
+        self.transactionRoot = transactionRoot
+        self.stagedRoot = stagedRoot
+        self.liveRoot = liveRoot
+        self.previousRoot = previousRoot
+    }
+
+    static func prepare(
+        files: [BackupFile],
+        archiveData: Data?,
+        mode: BackupImportMode
+    ) async throws -> DownloadFilesTransaction {
+        let urls = try await Task.detached(priority: .utility) {
+            let fileManager = FileManager.default
+            let liveRoot = try BackupService.downloadsRootURL()
+            let parent = liveRoot.deletingLastPathComponent()
+            try fileManager.createDirectory(at: parent, withIntermediateDirectories: true)
+            let transactionRoot = try DownloadImportTransactionRegistry.createRoot(
+                parent: parent,
+                liveRoot: liveRoot
+            )
+            let stagedRoot = transactionRoot.appendingPathComponent("StagedDownloads", isDirectory: true)
+            let previousRoot = transactionRoot.appendingPathComponent("PreviousDownloads", isDirectory: true)
+
+            do {
+                if mode == .merge, fileManager.fileExists(atPath: liveRoot.path) {
+                    try fileManager.copyItem(at: liveRoot, to: stagedRoot)
+                } else {
+                    try fileManager.createDirectory(at: stagedRoot, withIntermediateDirectories: true)
+                }
+
+                let stagedPrefix = stagedRoot.standardizedFileURL.path + "/"
+                var archivedFileDestinations = [String: URL]()
+                for file in files {
+                    guard BackupService.isSafeRelativePath(file.relativePath) else {
+                        throw BackupArchiveError.invalidPath
+                    }
+                    let target = stagedRoot
+                        .appendingPathComponent(file.relativePath, isDirectory: false)
+                        .standardizedFileURL
+                    guard target.path.hasPrefix(stagedPrefix) else {
+                        throw BackupArchiveError.invalidPath
+                    }
+                    if mode == .merge, fileManager.fileExists(atPath: target.path) {
+                        continue
+                    }
+                    if let data = file.rawData ?? file.data.flatMap({ Data(base64Encoded: $0) }) {
+                        try fileManager.createDirectory(
+                            at: target.deletingLastPathComponent(),
+                            withIntermediateDirectories: true
+                        )
+                        try data.write(to: target, options: .atomic)
+                    } else {
+                        archivedFileDestinations[
+                            BackupSQLiteArchive.downloadEntryPath(for: file.relativePath)
+                        ] = target
+                    }
+                }
+
+                if !archivedFileDestinations.isEmpty {
+                    guard let archiveData else {
+                        throw BackupArchiveError.missingDownloadFile(
+                            archivedFileDestinations.keys.sorted().first ?? "downloads"
+                        )
+                    }
+                    try StoredZipArchive.extractEntries(
+                        from: archiveData,
+                        to: archivedFileDestinations
+                    )
+                }
+            } catch {
+                try? fileManager.removeItem(at: transactionRoot)
+                DownloadImportTransactionRegistry.unregister(transactionRoot)
+                throw error
+            }
+            return (transactionRoot, stagedRoot, liveRoot, previousRoot)
+        }.value
+
+        return DownloadFilesTransaction(
+            transactionRoot: urls.0,
+            stagedRoot: urls.1,
+            liveRoot: urls.2,
+            previousRoot: urls.3
+        )
+    }
+
+    func commit() async throws {
+        let transactionRoot = transactionRoot
+        let stagedRoot = stagedRoot
+        let liveRoot = liveRoot
+        let previousRoot = previousRoot
+        try await Task.detached(priority: .utility) {
+            let fileManager = FileManager.default
+            try Data().write(
+                to: DownloadImportTransactionRegistry.commitMarker(in: transactionRoot),
+                options: .atomic
+            )
+            if fileManager.fileExists(atPath: liveRoot.path) {
+                try fileManager.moveItem(at: liveRoot, to: previousRoot)
+            }
+            try fileManager.moveItem(at: stagedRoot, to: liveRoot)
+        }.value
+        didCommit = true
+    }
+
+    func rollback() async throws {
+        let transactionRoot = transactionRoot
+        let liveRoot = liveRoot
+        let previousRoot = previousRoot
+        let didCommit = didCommit
+        do {
+            try await Task.detached(priority: .utility) {
+                let fileManager = FileManager.default
+                if fileManager.fileExists(atPath: previousRoot.path) {
+                    if fileManager.fileExists(atPath: liveRoot.path) {
+                        try fileManager.removeItem(at: liveRoot)
+                    }
+                    try fileManager.moveItem(at: previousRoot, to: liveRoot)
+                } else if didCommit, fileManager.fileExists(atPath: liveRoot.path) {
+                    try fileManager.removeItem(at: liveRoot)
+                }
+                if fileManager.fileExists(atPath: transactionRoot.path) {
+                    try fileManager.removeItem(at: transactionRoot)
+                }
+            }.value
+        } catch {
+            DownloadImportTransactionRegistry.unregister(transactionRoot)
+            throw error
+        }
+        DownloadImportTransactionRegistry.unregister(transactionRoot)
+    }
+
+    func finalize() async {
+        let transactionRoot = transactionRoot
+        await Task.detached(priority: .utility) {
+            let fileManager = FileManager.default
+            try? Data().write(
+                to: DownloadImportTransactionRegistry.completionMarker(in: transactionRoot),
+                options: .atomic
+            )
+            try? fileManager.removeItem(at: transactionRoot)
+        }.value
+        DownloadImportTransactionRegistry.unregister(transactionRoot)
+    }
+}
+
+nonisolated private struct ExportedBackupFile: Sendable {
+    var relativePath: String
+    var fileURL: URL
+    var size: UInt64
 }
 
 private struct BackupSQLiteContent {
@@ -944,7 +1157,7 @@ private struct BackupSQLiteContent {
     var downloadFiles: [BackupFile]
 }
 
-private enum BackupSQLiteArchive {
+nonisolated private enum BackupSQLiteArchive {
     static let fileName = "data.sqlite3"
 
     static func downloadEntryPath(for relativePath: String) -> String {
@@ -958,44 +1171,30 @@ private enum BackupSQLiteArchive {
             removeDatabaseFiles(for: url)
         }
 
-        var db: OpaquePointer?
-        guard sqlite3_open(url.path, &db) == SQLITE_OK else {
-            throw BackupArchiveError.sqliteFailure
-        }
-        defer {
-            sqlite3_close(db)
-        }
+        var queue: DatabaseQueue? = try DatabaseQueue(path: url.path)
+        try queue?.write { database in
+            try database.create(table: "defaults") { table in
+                table.column("key", .text).primaryKey()
+                table.column("value", .blob).notNull()
+            }
+            try database.create(table: "download_files") { table in
+                table.column("relative_path", .text).primaryKey()
+            }
 
-        try execute("""
-        CREATE TABLE defaults (
-            key TEXT PRIMARY KEY NOT NULL,
-            value BLOB NOT NULL
-        )
-        """, db: db)
-        try execute("""
-        CREATE TABLE download_files (
-            relative_path TEXT PRIMARY KEY NOT NULL
-        )
-        """, db: db)
-        try execute("BEGIN IMMEDIATE TRANSACTION", db: db)
-        for (key, value) in defaults.sorted(by: { $0.key < $1.key }) {
-            guard let data = try? JSONEncoder().encode(value) else { continue }
-            try execute(
-                "INSERT OR REPLACE INTO defaults(key, value) VALUES(?, ?)",
-                bindings: [.text(key), .data(data)],
-                db: db
-            )
+            for (key, value) in defaults.sorted(by: { $0.key < $1.key }) {
+                try database.execute(
+                    sql: "INSERT INTO defaults(key, value) VALUES(?, ?)",
+                    arguments: [key, try JSONEncoder().encode(value)]
+                )
+            }
+            for file in downloadFiles.sorted(by: { $0.relativePath < $1.relativePath }) {
+                try database.execute(
+                    sql: "INSERT INTO download_files(relative_path) VALUES(?)",
+                    arguments: [file.relativePath]
+                )
+            }
         }
-        for file in downloadFiles.sorted(by: { $0.relativePath < $1.relativePath }) {
-            try execute(
-                "INSERT OR REPLACE INTO download_files(relative_path) VALUES(?)",
-                bindings: [.text(file.relativePath)],
-                db: db
-            )
-        }
-        try execute("COMMIT", db: db)
-        sqlite3_close(db)
-        db = nil
+        queue = nil
         return try Data(contentsOf: url)
     }
 
@@ -1007,76 +1206,35 @@ private enum BackupSQLiteArchive {
         }
         try data.write(to: url, options: .atomic)
 
-        var db: OpaquePointer?
-        guard sqlite3_open_v2(url.path, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else {
-            throw BackupArchiveError.invalidArchive
-        }
-        defer {
-            sqlite3_close(db)
-        }
-
-        var defaults: [String: BackupDefaultValue] = [:]
-        try query("SELECT key, value FROM defaults", db: db) { statement in
-            guard let keyPointer = sqlite3_column_text(statement, 0) else { return }
-            let key = String(cString: keyPointer)
-            let byteCount = Int(sqlite3_column_bytes(statement, 1))
-            guard byteCount > 0,
-                  let bytes = sqlite3_column_blob(statement, 1),
-                  let value = try? JSONDecoder().decode(BackupDefaultValue.self, from: Data(bytes: bytes, count: byteCount)) else {
-                return
-            }
-            defaults[key] = value
-        }
-
-        var downloadFiles: [BackupFile] = []
-        try query("SELECT relative_path FROM download_files ORDER BY relative_path", db: db) { statement in
-            guard let pathPointer = sqlite3_column_text(statement, 0) else { return }
-            downloadFiles.append(BackupFile(relativePath: String(cString: pathPointer)))
-        }
-
-        return BackupSQLiteContent(defaults: defaults, downloadFiles: downloadFiles)
-    }
-
-    private static func execute(_ sql: String, bindings: [SQLiteBinding] = [], db: OpaquePointer?) throws {
-        var statement: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
-            throw BackupArchiveError.sqliteFailure
-        }
-        defer {
-            sqlite3_finalize(statement)
-        }
-        bind(bindings, to: statement)
-        guard sqlite3_step(statement) == SQLITE_DONE else {
-            throw BackupArchiveError.sqliteFailure
-        }
-    }
-
-    private static func query(_ sql: String, db: OpaquePointer?, row: (OpaquePointer?) throws -> Void) throws {
-        var statement: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
-            throw BackupArchiveError.invalidArchive
-        }
-        defer {
-            sqlite3_finalize(statement)
-        }
-        while sqlite3_step(statement) == SQLITE_ROW {
-            try row(statement)
-        }
-    }
-
-    private static func bind(_ bindings: [SQLiteBinding], to statement: OpaquePointer?) {
-        for (index, binding) in bindings.enumerated() {
-            let position = Int32(index + 1)
-            switch binding {
-            case .text(let value):
-                sqlite3_bind_text(statement, position, value, -1, backupSQLiteTransient)
-            case .double(let value):
-                sqlite3_bind_double(statement, position, value)
-            case .data(let value):
-                _ = value.withUnsafeBytes { buffer in
-                    sqlite3_bind_blob(statement, position, buffer.baseAddress, Int32(value.count), backupSQLiteTransient)
+        var configuration = Configuration()
+        configuration.readonly = true
+        let queue = try DatabaseQueue(path: url.path, configuration: configuration)
+        return try queue.read { database in
+            let defaultRows = try Row.fetchAll(
+                database,
+                sql: "SELECT key, value FROM defaults"
+            )
+            var defaults: [String: BackupDefaultValue] = [:]
+            for row in defaultRows {
+                let key: String = row["key"]
+                let data: Data = row["value"]
+                guard defaults[key] == nil else {
+                    throw BackupArchiveError.duplicateEntry
                 }
+                defaults[key] = try JSONDecoder().decode(BackupDefaultValue.self, from: data)
             }
+
+            let paths = try String.fetchAll(
+                database,
+                sql: "SELECT relative_path FROM download_files ORDER BY relative_path"
+            )
+            guard Set(paths).count == paths.count else {
+                throw BackupArchiveError.duplicateEntry
+            }
+            return BackupSQLiteContent(
+                defaults: defaults,
+                downloadFiles: paths.map { BackupFile(relativePath: $0) }
+            )
         }
     }
 
@@ -1093,353 +1251,265 @@ private enum BackupSQLiteArchive {
     }
 }
 
-struct StoredZipEntry {
+nonisolated struct StoredZipEntry: Sendable {
     var path: String
     var data: Data
 }
 
-enum StoredZipArchive {
-    static func makeArchive(entries: [StoredZipEntry]) throws -> Data {
-        var archive = Data()
-        var centralDirectory = Data()
-        var centralRecords: [CentralDirectoryWriteRecord] = []
+nonisolated struct StoredZipFileEntry: Sendable {
+    var path: String
+    var fileURL: URL
+    var size: UInt64
+}
 
-        for entry in entries {
-            let fileName = try fileNameData(for: entry.path)
-            let compressedData = try deflateRawDeflate(entry.data)
-            let compressedSize = try uint32Size(compressedData.count)
-            let uncompressedSize = try uint32Size(entry.data.count)
-            let offset = try uint32Size(archive.count)
-            let crc32 = CRC32.checksum(entry.data)
+nonisolated enum StoredZipArchive {
+    private static let maximumEntryCount = 10_000
+    private static let maximumEntryBytes: UInt64 = 512 * 1024 * 1024
+    private static let maximumTotalBytes: UInt64 = 8 * 1024 * 1024 * 1024
+    private static let maximumCompressionRatio: UInt64 = 200
+    private static let extractionBufferSize = 64 * 1024
 
-            archive.appendUInt32LE(0x04034b50)
-            archive.appendUInt16LE(20)
-            archive.appendUInt16LE(0)
-            archive.appendUInt16LE(8)
-            archive.appendUInt16LE(0)
-            archive.appendUInt16LE(0)
-            archive.appendUInt32LE(crc32)
-            archive.appendUInt32LE(compressedSize)
-            archive.appendUInt32LE(uncompressedSize)
-            archive.appendUInt16LE(UInt16(fileName.count))
-            archive.appendUInt16LE(0)
-            archive.append(fileName)
-            archive.append(compressedData)
-
-            centralRecords.append(CentralDirectoryWriteRecord(
-                entry: entry,
-                crc32: crc32,
-                compressedSize: compressedSize,
-                uncompressedSize: uncompressedSize,
-                offset: offset
-            ))
-        }
-
-        let centralDirectoryOffset = try uint32Size(archive.count)
-
-        for record in centralRecords {
-            let fileName = try fileNameData(for: record.entry.path)
-
-            centralDirectory.appendUInt32LE(0x02014b50)
-            centralDirectory.appendUInt16LE(20)
-            centralDirectory.appendUInt16LE(20)
-            centralDirectory.appendUInt16LE(0)
-            centralDirectory.appendUInt16LE(8)
-            centralDirectory.appendUInt16LE(0)
-            centralDirectory.appendUInt16LE(0)
-            centralDirectory.appendUInt32LE(record.crc32)
-            centralDirectory.appendUInt32LE(record.compressedSize)
-            centralDirectory.appendUInt32LE(record.uncompressedSize)
-            centralDirectory.appendUInt16LE(UInt16(fileName.count))
-            centralDirectory.appendUInt16LE(0)
-            centralDirectory.appendUInt16LE(0)
-            centralDirectory.appendUInt16LE(0)
-            centralDirectory.appendUInt16LE(0)
-            centralDirectory.appendUInt32LE(0)
-            centralDirectory.appendUInt32LE(record.offset)
-            centralDirectory.append(fileName)
-        }
-
-        archive.append(centralDirectory)
-        let centralDirectorySize = try uint32Size(centralDirectory.count)
-        let entryCount = UInt16(centralRecords.count)
-
-        archive.appendUInt32LE(0x06054b50)
-        archive.appendUInt16LE(0)
-        archive.appendUInt16LE(0)
-        archive.appendUInt16LE(entryCount)
-        archive.appendUInt16LE(entryCount)
-        archive.appendUInt32LE(centralDirectorySize)
-        archive.appendUInt32LE(centralDirectoryOffset)
-        archive.appendUInt16LE(0)
-
-        return archive
-    }
-
-    static func extractEntry(named path: String, from archive: Data) throws -> Data? {
-        try extractEntries(from: archive).first { $0.path == path }?.data
-    }
-
-    static func extractEntries(from archive: Data) throws -> [StoredZipEntry] {
-        if let records = centralDirectoryRecords(in: archive) {
-            return try records.compactMap { record in
-                guard !record.path.hasSuffix("/") else { return nil }
-                return StoredZipEntry(path: record.path, data: try entryData(record: record, archive: archive))
-            }
-        }
-        return try localEntries(from: archive)
-    }
-
-    private static func fileNameData(for path: String) throws -> Data {
-        guard !path.isEmpty,
-              !path.hasPrefix("/"),
-              !path.split(separator: "/").contains(".."),
-              let data = path.data(using: .utf8),
-              data.count <= Int(UInt16.max) else {
-            throw BackupArchiveError.invalidPath
+    static func makeArchive(
+        entries: [StoredZipEntry],
+        fileEntries: [StoredZipFileEntry] = []
+    ) throws -> Data {
+        let archive = try Archive(accessMode: .create)
+        try populate(archive, entries: entries, fileEntries: fileEntries)
+        guard let data = archive.data else {
+            throw BackupArchiveError.invalidArchive
         }
         return data
     }
 
-    private static func uint32Size(_ value: Int) throws -> UInt32 {
-        guard value <= Int(UInt32.max) else {
-            throw BackupArchiveError.entryTooLarge
+    static func makeArchive(
+        entries: [StoredZipEntry],
+        fileEntries: [StoredZipFileEntry] = [],
+        at destinationURL: URL
+    ) throws {
+        do {
+            let archive = try Archive(url: destinationURL, accessMode: .create)
+            try populate(archive, entries: entries, fileEntries: fileEntries)
+        } catch {
+            try? FileManager.default.removeItem(at: destinationURL)
+            throw error
         }
-        return UInt32(value)
     }
 
-    private struct CentralDirectoryRecord {
-        var path: String
-        var compression: UInt16
-        var compressedSize: Int
-        var uncompressedSize: Int
-        var localHeaderOffset: Int
-    }
-
-    private struct CentralDirectoryWriteRecord {
-        var entry: StoredZipEntry
-        var crc32: UInt32
-        var compressedSize: UInt32
-        var uncompressedSize: UInt32
-        var offset: UInt32
-    }
-
-    private static func centralDirectoryRecords(in archive: Data) -> [CentralDirectoryRecord]? {
-        guard let endOffset = endOfCentralDirectoryOffset(in: archive),
-              let entryCount = archive.uint16LE(at: endOffset + 10),
-              let centralDirectoryOffset = archive.uint32LE(at: endOffset + 16) else {
-            return nil
+    private static func populate(
+        _ archive: Archive,
+        entries: [StoredZipEntry],
+        fileEntries: [StoredZipFileEntry]
+    ) throws {
+        guard entries.count + fileEntries.count <= maximumEntryCount else {
+            throw BackupArchiveError.tooManyEntries
         }
-
-        var records: [CentralDirectoryRecord] = []
-        var offset = Int(centralDirectoryOffset)
-        for _ in 0..<Int(entryCount) {
-            guard offset + 46 <= archive.count,
-                  archive.uint32LE(at: offset) == 0x02014b50,
-                  let compression = archive.uint16LE(at: offset + 10),
-                  let compressedSize = archive.uint32LE(at: offset + 20),
-                  let uncompressedSize = archive.uint32LE(at: offset + 24),
-                  let fileNameLength = archive.uint16LE(at: offset + 28),
-                  let extraLength = archive.uint16LE(at: offset + 30),
-                  let commentLength = archive.uint16LE(at: offset + 32),
-                  let localHeaderOffset = archive.uint32LE(at: offset + 42) else {
-                return nil
+        var seenPaths = Set<String>()
+        var totalBytes: UInt64 = 0
+        for entry in entries {
+            try validate(path: entry.path)
+            guard seenPaths.insert(entry.path).inserted else {
+                throw BackupArchiveError.duplicateEntry
             }
-            let nameStart = offset + 46
-            let nameEnd = nameStart + Int(fileNameLength)
-            guard nameEnd <= archive.count,
-                  let path = String(data: archive.subdata(in: nameStart..<nameEnd), encoding: .utf8) else {
-                return nil
+            let entrySize = UInt64(entry.data.count)
+            guard entrySize <= maximumEntryBytes,
+                  totalBytes <= maximumTotalBytes - entrySize else {
+                throw BackupArchiveError.entryTooLarge
             }
-            records.append(CentralDirectoryRecord(
-                path: path,
-                compression: compression,
-                compressedSize: Int(compressedSize),
-                uncompressedSize: Int(uncompressedSize),
-                localHeaderOffset: Int(localHeaderOffset)
-            ))
-            offset = nameEnd + Int(extraLength) + Int(commentLength)
+            totalBytes += entrySize
+            try archive.addEntry(
+                with: entry.path,
+                type: .file,
+                uncompressedSize: Int64(entry.data.count),
+                compressionMethod: .deflate,
+                provider: { position, size in
+                    let lowerBound = Int(position)
+                    let upperBound = min(lowerBound + size, entry.data.count)
+                    guard lowerBound >= 0, lowerBound <= upperBound else {
+                        throw BackupArchiveError.invalidArchive
+                    }
+                    return entry.data.subdata(in: lowerBound..<upperBound)
+                }
+            )
         }
-        return records
-    }
-
-    private static func endOfCentralDirectoryOffset(in archive: Data) -> Int? {
-        guard archive.count >= 22 else { return nil }
-        let lowerBound = max(0, archive.count - 22 - Int(UInt16.max))
-        var offset = archive.count - 22
-        while offset >= lowerBound {
-            if archive.uint32LE(at: offset) == 0x06054b50 {
-                return offset
+        for entry in fileEntries {
+            try validate(path: entry.path)
+            guard seenPaths.insert(entry.path).inserted else {
+                throw BackupArchiveError.duplicateEntry
             }
-            offset -= 1
-        }
-        return nil
-    }
-
-    private static func entryData(record: CentralDirectoryRecord, archive: Data) throws -> Data {
-        let offset = record.localHeaderOffset
-        guard offset + 30 <= archive.count,
-              archive.uint32LE(at: offset) == 0x04034b50,
-              let fileNameLength = archive.uint16LE(at: offset + 26),
-              let extraLength = archive.uint16LE(at: offset + 28) else {
-            throw BackupArchiveError.invalidArchive
-        }
-        let dataStart = offset + 30 + Int(fileNameLength) + Int(extraLength)
-        let dataEnd = dataStart + record.compressedSize
-        guard dataEnd <= archive.count else {
-            throw BackupArchiveError.invalidArchive
-        }
-        let compressedData = archive.subdata(in: dataStart..<dataEnd)
-        return try decodedEntryData(
-            compressedData,
-            compression: record.compression,
-            uncompressedSize: record.uncompressedSize
-        )
-    }
-
-    private static func localEntries(from archive: Data) throws -> [StoredZipEntry] {
-        var entries: [StoredZipEntry] = []
-        var offset = 0
-        while offset + 30 <= archive.count {
-            guard let signature = archive.uint32LE(at: offset) else { return entries }
-            if signature != 0x04034b50 {
-                return entries
+            guard entry.size <= maximumEntryBytes,
+                  totalBytes <= maximumTotalBytes - entry.size else {
+                throw BackupArchiveError.entryTooLarge
             }
-            guard let compression = archive.uint16LE(at: offset + 8),
-                  let compressedSize = archive.uint32LE(at: offset + 18),
-                  let uncompressedSize = archive.uint32LE(at: offset + 22),
-                  let fileNameLength = archive.uint16LE(at: offset + 26),
-                  let extraLength = archive.uint16LE(at: offset + 28) else {
-                throw BackupArchiveError.invalidArchive
-            }
+            totalBytes += entry.size
 
-            let nameStart = offset + 30
-            let nameEnd = nameStart + Int(fileNameLength)
-            let dataStart = nameEnd + Int(extraLength)
-            let dataEnd = dataStart + Int(compressedSize)
-            guard nameEnd <= archive.count, dataEnd <= archive.count else {
-                throw BackupArchiveError.invalidArchive
-            }
-
-            if let fileName = String(data: archive.subdata(in: nameStart..<nameEnd), encoding: .utf8),
-               !fileName.hasSuffix("/") {
-                let compressedData = archive.subdata(in: dataStart..<dataEnd)
-                let data = try decodedEntryData(
-                    compressedData,
-                    compression: compression,
-                    uncompressedSize: Int(uncompressedSize)
+            let handle = try FileHandle(forReadingFrom: entry.fileURL)
+            do {
+                try archive.addEntry(
+                    with: entry.path,
+                    type: .file,
+                    uncompressedSize: Int64(entry.size),
+                    compressionMethod: .deflate,
+                    provider: { position, size in
+                        try handle.seek(toOffset: UInt64(position))
+                        return try handle.read(upToCount: size) ?? Data()
+                    }
                 )
-                entries.append(StoredZipEntry(path: fileName, data: data))
+                try handle.close()
+            } catch {
+                try? handle.close()
+                throw error
             }
-            offset = dataEnd
+        }
+    }
+
+    static func extractEntry(named path: String, from archive: Data) throws -> Data? {
+        try extractEntries(from: archive, matching: [path]).first?.data
+    }
+
+    static func extractEntries(
+        from archive: Data,
+        matching paths: Set<String>? = nil
+    ) throws -> [StoredZipEntry] {
+        let zip = try Archive(data: archive, accessMode: .read)
+        let entries = try limitedEntries(in: zip)
+        try validate(entries: entries)
+        return try entries.compactMap { entry in
+            guard entry.type == .file,
+                  paths?.contains(entry.path) ?? true else {
+                return nil
+            }
+            var data = Data()
+            data.reserveCapacity(Int(entry.uncompressedSize))
+            _ = try zip.extract(
+                entry,
+                bufferSize: extractionBufferSize,
+                skipCRC32: false
+            ) { chunk in
+                guard data.count <= Int(Self.maximumEntryBytes) - chunk.count else {
+                    throw BackupArchiveError.entryTooLarge
+                }
+                data.append(chunk)
+            }
+            return StoredZipEntry(path: entry.path, data: data)
+        }
+    }
+
+    static func extractEntries(
+        from archive: Data,
+        to destinations: [String: URL]
+    ) throws {
+        guard !destinations.isEmpty else { return }
+        let zip = try Archive(data: archive, accessMode: .read)
+        let entries = try limitedEntries(in: zip)
+        try validate(entries: entries)
+        let entriesByPath = Dictionary(uniqueKeysWithValues: entries.map { ($0.path, $0) })
+
+        for path in destinations.keys.sorted() {
+            guard let destination = destinations[path],
+                  let entry = entriesByPath[path],
+                  entry.type == .file else {
+                let relativePath = path.hasPrefix("downloads/")
+                    ? String(path.dropFirst("downloads/".count))
+                    : path
+                throw BackupArchiveError.missingDownloadFile(relativePath)
+            }
+            try FileManager.default.createDirectory(
+                at: destination.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            let temporaryURL = destination.deletingLastPathComponent()
+                .appendingPathComponent(".\(UUID().uuidString).part")
+            guard FileManager.default.createFile(
+                atPath: temporaryURL.path,
+                contents: nil
+            ) else {
+                throw BackupArchiveError.invalidArchive
+            }
+            let handle = try FileHandle(forWritingTo: temporaryURL)
+            do {
+                _ = try zip.extract(
+                    entry,
+                    bufferSize: extractionBufferSize,
+                    skipCRC32: false
+                ) { chunk in
+                    try handle.write(contentsOf: chunk)
+                }
+                try handle.close()
+                try FileManager.default.moveItem(at: temporaryURL, to: destination)
+            } catch {
+                try? handle.close()
+                try? FileManager.default.removeItem(at: temporaryURL)
+                throw error
+            }
+        }
+    }
+
+    private static func limitedEntries(in archive: Archive) throws -> [Entry] {
+        var entries = [Entry]()
+        entries.reserveCapacity(min(maximumEntryCount, 256))
+        for entry in archive {
+            guard entries.count < maximumEntryCount else {
+                throw BackupArchiveError.tooManyEntries
+            }
+            entries.append(entry)
         }
         return entries
     }
 
-    private static func decodedEntryData(_ data: Data, compression: UInt16, uncompressedSize: Int) throws -> Data {
-        switch compression {
-        case 0:
-            return data
-        case 8:
-            return try inflateRawDeflate(data, uncompressedSize: uncompressedSize)
-        default:
-            throw BackupArchiveError.unsupportedCompression
+    private static func validate(entries: [Entry]) throws {
+        guard entries.count <= maximumEntryCount else {
+            throw BackupArchiveError.tooManyEntries
         }
-    }
-
-    private static func inflateRawDeflate(_ data: Data, uncompressedSize: Int) throws -> Data {
-        guard uncompressedSize >= 0 else { throw BackupArchiveError.invalidArchive }
-        if data.isEmpty {
-            return Data()
-        }
-
-        var stream = z_stream()
-        let version = ZLIB_VERSION
-        let initStatus = inflateInit2_(&stream, -MAX_WBITS, version, Int32(MemoryLayout<z_stream>.size))
-        guard initStatus == Z_OK else {
-            throw BackupArchiveError.unsupportedCompression
-        }
-        defer {
-            inflateEnd(&stream)
-        }
-
-        var output = Data(count: uncompressedSize)
-        let outputCapacity = output.count
-        let status = data.withUnsafeBytes { sourceBuffer in
-            output.withUnsafeMutableBytes { destinationBuffer -> Int32 in
-                guard let source = sourceBuffer.bindMemory(to: Bytef.self).baseAddress,
-                      let destination = destinationBuffer.bindMemory(to: Bytef.self).baseAddress else {
-                    return Z_BUF_ERROR
+        var paths = Set<String>()
+        var totalBytes: UInt64 = 0
+        for entry in entries {
+            try validate(path: entry.path)
+            guard paths.insert(entry.path).inserted else {
+                throw BackupArchiveError.duplicateEntry
+            }
+            let size = entry.uncompressedSize
+            guard size <= maximumEntryBytes,
+                  totalBytes <= maximumTotalBytes - size else {
+                throw BackupArchiveError.entryTooLarge
+            }
+            totalBytes += size
+            if size > 0 {
+                guard entry.compressedSize > 0,
+                      size / max(entry.compressedSize, 1) <= maximumCompressionRatio else {
+                    throw BackupArchiveError.suspiciousCompressionRatio
                 }
-                stream.next_in = UnsafeMutablePointer<Bytef>(mutating: source)
-                stream.avail_in = uInt(data.count)
-                stream.next_out = destination
-                stream.avail_out = uInt(outputCapacity)
-                return inflate(&stream, Z_FINISH)
             }
         }
-        guard status == Z_STREAM_END else {
-            throw BackupArchiveError.invalidArchive
-        }
-        output.count = Int(stream.total_out)
-        return output
     }
 
-    private static func deflateRawDeflate(_ data: Data) throws -> Data {
-        var stream = z_stream()
-        let version = ZLIB_VERSION
-        let initStatus = deflateInit2_(
-            &stream,
-            Z_DEFAULT_COMPRESSION,
-            Z_DEFLATED,
-            -MAX_WBITS,
-            MAX_MEM_LEVEL,
-            Z_DEFAULT_STRATEGY,
-            version,
-            Int32(MemoryLayout<z_stream>.size)
-        )
-        guard initStatus == Z_OK else {
-            throw BackupArchiveError.unsupportedCompression
+    private static func validate(path: String) throws {
+        guard !path.isEmpty,
+              !path.hasPrefix("/"),
+              !path.hasPrefix("\\"),
+              !path.contains("\\"),
+              !path.split(separator: "/", omittingEmptySubsequences: false).contains(where: {
+                  $0.isEmpty || $0 == "." || $0 == ".."
+              }) else {
+            throw BackupArchiveError.invalidPath
         }
-        defer {
-            deflateEnd(&stream)
-        }
-
-        let outputCapacity = Int(deflateBound(&stream, uLong(data.count)))
-        var output = Data(count: max(outputCapacity, 1))
-        let outputCount = output.count
-        let status = data.withUnsafeBytes { sourceBuffer in
-            output.withUnsafeMutableBytes { destinationBuffer -> Int32 in
-                if data.count > 0 {
-                    guard let source = sourceBuffer.bindMemory(to: Bytef.self).baseAddress else {
-                        return Z_BUF_ERROR
-                    }
-                    stream.next_in = UnsafeMutablePointer<Bytef>(mutating: source)
-                }
-                guard let destination = destinationBuffer.bindMemory(to: Bytef.self).baseAddress else {
-                    return Z_BUF_ERROR
-                }
-                stream.avail_in = uInt(data.count)
-                stream.next_out = destination
-                stream.avail_out = uInt(outputCount)
-                return deflate(&stream, Z_FINISH)
-            }
-        }
-        guard status == Z_STREAM_END else {
-            throw BackupArchiveError.unsupportedCompression
-        }
-        output.count = Int(stream.total_out)
-        return output
     }
+
 }
 
-enum BackupArchiveError: LocalizedError {
+nonisolated enum BackupArchiveError: LocalizedError {
     case invalidPath
     case entryTooLarge
+    case tooManyEntries
+    case duplicateEntry
+    case suspiciousCompressionRatio
     case invalidArchive
     case missingManifest
+    case unsupportedVersion(Int)
     case unsupportedCompression
     case sqliteFailure
+    case invalidPayload(String)
+    case missingDownloadFile(String)
+    case rollbackFailed
 
     var errorDescription: String? {
         switch self {
@@ -1447,68 +1517,28 @@ enum BackupArchiveError: LocalizedError {
             "备份文件路径无效。"
         case .entryTooLarge:
             "备份内容过大，无法导出。"
+        case .tooManyEntries:
+            "备份文件包含过多条目。"
+        case .duplicateEntry:
+            "备份文件包含重复条目。"
+        case .suspiciousCompressionRatio:
+            "备份文件的压缩比例异常。"
         case .invalidArchive:
             "备份文件已损坏。"
         case .missingManifest:
             "这不是可导入的 PicaX 备份。"
+        case .unsupportedVersion(let version):
+            "不支持此备份格式版本（\(version)）。"
         case .unsupportedCompression:
             "暂不支持此备份压缩格式。"
         case .sqliteFailure:
             "备份数据写入失败。"
+        case .invalidPayload(let key):
+            "备份中的数据项“\(key)”已损坏或缺失。"
+        case .missingDownloadFile(let path):
+            "备份缺少下载文件“\(path)”。"
+        case .rollbackFailed:
+            "恢复失败，且原下载目录未能自动还原；临时恢复目录已保留，请勿继续导入。"
         }
-    }
-}
-
-private enum CRC32 {
-    private static let table: [UInt32] = (0..<256).map { value in
-        var crc = UInt32(value)
-        for _ in 0..<8 {
-            if crc & 1 == 1 {
-                crc = (crc >> 1) ^ 0xedb88320
-            } else {
-                crc >>= 1
-            }
-        }
-        return crc
-    }
-
-    static func checksum(_ data: Data) -> UInt32 {
-        var crc: UInt32 = 0xffffffff
-        for byte in data {
-            let index = Int((crc ^ UInt32(byte)) & 0xff)
-            crc = (crc >> 8) ^ table[index]
-        }
-        return crc ^ 0xffffffff
-    }
-}
-
-private extension Data {
-    mutating func appendUInt16LE(_ value: UInt16) {
-        append(contentsOf: [
-            UInt8(truncatingIfNeeded: value),
-            UInt8(truncatingIfNeeded: value >> 8)
-        ])
-    }
-
-    mutating func appendUInt32LE(_ value: UInt32) {
-        append(contentsOf: [
-            UInt8(truncatingIfNeeded: value),
-            UInt8(truncatingIfNeeded: value >> 8),
-            UInt8(truncatingIfNeeded: value >> 16),
-            UInt8(truncatingIfNeeded: value >> 24)
-        ])
-    }
-
-    func uint16LE(at offset: Int) -> UInt16? {
-        guard offset >= 0, offset + 2 <= count else { return nil }
-        return UInt16(self[offset]) | (UInt16(self[offset + 1]) << 8)
-    }
-
-    func uint32LE(at offset: Int) -> UInt32? {
-        guard offset >= 0, offset + 4 <= count else { return nil }
-        return UInt32(self[offset])
-            | (UInt32(self[offset + 1]) << 8)
-            | (UInt32(self[offset + 2]) << 16)
-            | (UInt32(self[offset + 3]) << 24)
     }
 }

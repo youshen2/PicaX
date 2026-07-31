@@ -1,7 +1,7 @@
 import CryptoKit
 import Foundation
 
-struct WatchComicAPIClient {
+struct WatchComicAPIClient: Sendable {
     private let session: URLSession
 
     nonisolated init(session: URLSession = .shared) {

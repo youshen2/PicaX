@@ -3,12 +3,26 @@ import Combine
 import Foundation
 import WatchConnectivity
 
+nonisolated private final class WatchConnectivityReply: @unchecked Sendable {
+    private let handler: ([String: Any]) -> Void
+
+    init(_ handler: @escaping ([String: Any]) -> Void) {
+        self.handler = handler
+    }
+
+    func send(_ message: [String: Any]) {
+        handler(message)
+    }
+}
+
 @MainActor
 final class PhoneWatchAccountSyncService: NSObject, ObservableObject {
     @Published private(set) var activationState: WCSessionActivationState = .notActivated
     @Published private(set) var lastErrorMessage: String?
 
     private var latestSnapshot = WatchAccountSnapshot.empty
+    private var syncTask: Task<Void, Never>?
+    private let syncStateStore = PhoneWatchSyncStateStore()
 
     func activate() {
         guard WCSession.isSupported() else { return }
@@ -21,16 +35,38 @@ final class PhoneWatchAccountSyncService: NSObject, ObservableObject {
         }
     }
 
-    func sync(platformAccountService: PlatformAccountService, syncsLocalFavorites: Bool, syncsReadLater: Bool) {
-        sync(snapshot: WatchAccountSnapshot(
-            platformAccountService: platformAccountService,
-            syncsLocalFavorites: syncsLocalFavorites,
-            syncsReadLater: syncsReadLater
-        ))
+    func sync(
+        platformAccountService: PlatformAccountService,
+        syncsLocalFavorites: Bool,
+        syncsReadLater: Bool,
+        syncsReadingHistory: Bool
+    ) {
+        let accounts = platformAccountService.accounts
+        syncTask?.cancel()
+        syncTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: 250_000_000)
+                try Task.checkCancellation()
+                let snapshot = try await Task.detached(priority: .utility) {
+                    try WatchAccountSnapshot(
+                        accounts: accounts,
+                        syncsLocalFavorites: syncsLocalFavorites,
+                        syncsReadLater: syncsReadLater,
+                        syncsReadingHistory: syncsReadingHistory
+                    )
+                }.value
+                try Task.checkCancellation()
+                self?.sync(snapshot: snapshot)
+            } catch is CancellationError {
+                return
+            } catch {
+                self?.lastErrorMessage = error.localizedDescription
+            }
+        }
     }
 
     func sync(snapshot: WatchAccountSnapshot) {
-        latestSnapshot = snapshot
+        latestSnapshot = reconciled(snapshot)
         activate()
         sendLatestSnapshot()
     }
@@ -46,14 +82,6 @@ final class PhoneWatchAccountSyncService: NSObject, ObservableObject {
             try session.updateApplicationContext(message)
         } catch {
             lastErrorMessage = error.localizedDescription
-        }
-
-        if session.isReachable {
-            session.sendMessage(message, replyHandler: nil) { [weak self] error in
-                Task { @MainActor in
-                    self?.lastErrorMessage = error.localizedDescription
-                }
-            }
         }
     }
 
@@ -73,9 +101,10 @@ extension PhoneWatchAccountSyncService: WCSessionDelegate {
         activationDidCompleteWith activationState: WCSessionActivationState,
         error: Error?
     ) {
+        let errorMessage = error?.localizedDescription
         Task { @MainActor in
             self.activationState = activationState
-            self.lastErrorMessage = error?.localizedDescription
+            self.lastErrorMessage = errorMessage
             self.sendLatestSnapshot()
         }
     }
@@ -88,6 +117,7 @@ extension PhoneWatchAccountSyncService: WCSessionDelegate {
     }
 
     nonisolated func session(_ session: WCSession, didReceiveMessage message: [String: Any]) {
+        let message = WatchAccountSyncEnvelope.receivedMessage(from: message)
         Task { @MainActor in
             if WatchAccountSyncEnvelope.isSnapshotRequest(message) {
                 self.sendLatestSnapshot()
@@ -96,6 +126,9 @@ extension PhoneWatchAccountSyncService: WCSessionDelegate {
                 self.sendLatestSnapshot()
             } else if WatchAccountSyncEnvelope.isReadLaterSync(message) {
                 self.mergeReadLater(from: message)
+                self.sendLatestSnapshot()
+            } else if WatchAccountSyncEnvelope.isReadingHistorySync(message) {
+                self.mergeReadingHistory(from: message)
                 self.sendLatestSnapshot()
             }
         }
@@ -106,112 +139,171 @@ extension PhoneWatchAccountSyncService: WCSessionDelegate {
         didReceiveMessage message: [String: Any],
         replyHandler: @escaping ([String: Any]) -> Void
     ) {
+        let message = WatchAccountSyncEnvelope.receivedMessage(from: message)
+        let reply = WatchConnectivityReply(replyHandler)
         Task { @MainActor in
             if WatchAccountSyncEnvelope.isSnapshotRequest(message) {
-                let reply = WatchAccountSyncEnvelope.message(for: self.latestSnapshot)
-                replyHandler(reply)
-                self.sendLatestSnapshot()
+                reply.send(WatchAccountSyncEnvelope.message(for: self.latestSnapshot))
             } else if WatchAccountSyncEnvelope.isLocalFavoritesSync(message) {
                 self.mergeLocalFavorites(from: message)
-                let reply = WatchAccountSyncEnvelope.message(for: self.latestSnapshot)
-                replyHandler(reply)
-                self.sendLatestSnapshot()
+                reply.send(WatchAccountSyncEnvelope.message(for: self.latestSnapshot))
             } else if WatchAccountSyncEnvelope.isReadLaterSync(message) {
                 self.mergeReadLater(from: message)
-                let reply = WatchAccountSyncEnvelope.message(for: self.latestSnapshot)
-                replyHandler(reply)
-                self.sendLatestSnapshot()
+                reply.send(WatchAccountSyncEnvelope.message(for: self.latestSnapshot))
+            } else if WatchAccountSyncEnvelope.isReadingHistorySync(message) {
+                self.mergeReadingHistory(from: message)
+                reply.send(WatchAccountSyncEnvelope.message(for: self.latestSnapshot))
             } else {
-                replyHandler([:])
+                reply.send([:])
             }
         }
     }
 
-    private func mergeLocalFavorites(from message: [String: Any]) {
+    private func mergeLocalFavorites(from message: WatchAccountSyncMessage) {
         guard WatchConnectivitySettings.syncsLocalFavorites() else {
             latestSnapshot.localFavorites = []
+            latestSnapshot.localFavoriteDeletions = []
             latestSnapshot.updatedAt = Date()
             return
         }
         guard let incoming = WatchAccountSyncEnvelope.localFavorites(from: message) else { return }
-        let deletions = WatchAccountSyncEnvelope.localFavoriteDeletions(from: message)
-        var deletionMap: [String: Date] = [:]
-        for deletion in deletions {
-            if let old = deletionMap[deletion.syncID] {
-                deletionMap[deletion.syncID] = max(old, deletion.deletedAt)
-            } else {
-                deletionMap[deletion.syncID] = deletion.deletedAt
-            }
+        do {
+            let current = try PicaXSQLiteStore.loadLocalFavoritesOrThrow(folderID: "default")
+                .map(WatchLocalFavoriteItem.init)
+            let result = syncStateStore.reconcileLocalFavorites(
+                current: current,
+                incoming: incoming,
+                incomingDeletions: WatchAccountSyncEnvelope.localFavoriteDeletions(from: message)
+            )
+            try PicaXSQLiteStore.replaceLocalFavoritesOrThrow(
+                result.items.compactMap(StoredLocalFavorite.init),
+                folderID: "default"
+            )
+            syncStateStore.commitLocalFavorites(result)
+            latestSnapshot.localFavorites = result.items
+            latestSnapshot.localFavoriteDeletions = result.deletions
+            latestSnapshot.updatedAt = Date()
+            lastErrorMessage = nil
+            NotificationCenter.default.post(name: .picaxLocalFavoritesDidChange, object: nil)
+        } catch {
+            lastErrorMessage = error.localizedDescription
         }
-
-        let existing = PicaXSQLiteStore.loadLocalFavorites(folderID: "default")
-        let incomingFavorites = incoming.compactMap(StoredLocalFavorite.init)
-        var merged: [String: StoredLocalFavorite] = [:]
-
-        for favorite in existing + incomingFavorites {
-            if let deletedAt = deletionMap[favorite.syncID],
-               deletedAt >= (favorite.favoriteDate ?? .distantPast) {
-                merged.removeValue(forKey: favorite.syncID)
-                continue
-            }
-            if let old = merged[favorite.syncID] {
-                merged[favorite.syncID] = favorite.isNewer(than: old) ? favorite : old
-            } else {
-                merged[favorite.syncID] = favorite
-            }
-        }
-
-        PicaXSQLiteStore.replaceLocalFavorites(Array(merged.values), folderID: "default")
-        latestSnapshot.localFavorites = PicaXSQLiteStore.loadLocalFavorites(folderID: "default").map(WatchLocalFavoriteItem.init)
-        latestSnapshot.updatedAt = Date()
     }
 
-    private func mergeReadLater(from message: [String: Any]) {
+    private func mergeReadLater(from message: WatchAccountSyncMessage) {
         guard WatchConnectivitySettings.syncsReadLater() else {
             latestSnapshot.readLater = []
+            latestSnapshot.readLaterDeletions = []
             latestSnapshot.updatedAt = Date()
             return
         }
         guard let incoming = WatchAccountSyncEnvelope.readLater(from: message) else { return }
-        let deletions = WatchAccountSyncEnvelope.readLaterDeletions(from: message)
-        var deletionMap: [String: Date] = [:]
-        for deletion in deletions {
-            if let old = deletionMap[deletion.syncID] {
-                deletionMap[deletion.syncID] = max(old, deletion.deletedAt)
-            } else {
-                deletionMap[deletion.syncID] = deletion.deletedAt
-            }
+        do {
+            let current = try PicaXSQLiteStore.loadReadLaterOrThrow().map(WatchReadLaterItem.init)
+            let result = syncStateStore.reconcileReadLater(
+                current: current,
+                incoming: incoming,
+                incomingDeletions: WatchAccountSyncEnvelope.readLaterDeletions(from: message)
+            )
+            try PicaXSQLiteStore.replaceReadLaterOrThrow(
+                result.items.compactMap(ReadLaterRecord.init)
+            )
+            syncStateStore.commitReadLater(result)
+            latestSnapshot.readLater = result.items
+            latestSnapshot.readLaterDeletions = result.deletions
+            latestSnapshot.updatedAt = Date()
+            lastErrorMessage = nil
+            NotificationCenter.default.post(name: .picaxReadLaterDidChange, object: nil)
+        } catch {
+            lastErrorMessage = error.localizedDescription
         }
+    }
 
-        let existing = PicaXSQLiteStore.loadReadLater()
-        let incomingRecords = incoming.compactMap(ReadLaterRecord.init)
-        var merged: [String: ReadLaterRecord] = [:]
-
-        for record in existing + incomingRecords {
-            if let deletedAt = deletionMap[record.id],
-               deletedAt >= record.addedAt {
-                merged.removeValue(forKey: record.id)
-                continue
-            }
-            if let old = merged[record.id] {
-                merged[record.id] = record.isNewer(than: old) ? record : old
-            } else {
-                merged[record.id] = record
-            }
+    private func mergeReadingHistory(from message: WatchAccountSyncMessage) {
+        guard WatchConnectivitySettings.syncsReadingHistory() else {
+            latestSnapshot.readingHistory = []
+            latestSnapshot.readingHistoryDeletions = []
+            latestSnapshot.updatedAt = Date()
+            return
         }
+        guard let incoming = WatchAccountSyncEnvelope.readingHistory(from: message) else {
+            return
+        }
+        do {
+            let current = try PicaXSQLiteStore.loadReadingHistoryOrThrow()
+                .map(WatchReadingHistoryRecord.init)
+            let result = syncStateStore.reconcileReadingHistory(
+                current: current,
+                incoming: incoming,
+                incomingDeletions: WatchAccountSyncEnvelope.readingHistoryDeletions(from: message)
+            )
+            try PicaXSQLiteStore.replaceReadingHistoryOrThrow(
+                result.items.compactMap(ReadingHistoryRecord.init)
+            )
+            syncStateStore.commitReadingHistory(result)
+            latestSnapshot.readingHistory = result.items
+            latestSnapshot.readingHistoryDeletions = result.deletions
+            latestSnapshot.updatedAt = Date()
+            lastErrorMessage = nil
+            NotificationCenter.default.post(name: .picaxReadingHistoryDidChange, object: nil)
+        } catch {
+            lastErrorMessage = error.localizedDescription
+        }
+    }
 
-        PicaXSQLiteStore.replaceReadLater(Array(merged.values))
-        latestSnapshot.readLater = PicaXSQLiteStore.loadReadLater().map(WatchReadLaterItem.init)
-        latestSnapshot.updatedAt = Date()
+    private func reconciled(_ snapshot: WatchAccountSnapshot) -> WatchAccountSnapshot {
+        var snapshot = snapshot
+        if WatchConnectivitySettings.syncsLocalFavorites() {
+            let result = syncStateStore.reconcileLocalFavorites(current: snapshot.localFavorites)
+            syncStateStore.commitLocalFavorites(result)
+            snapshot.localFavorites = result.items
+            snapshot.localFavoriteDeletions = result.deletions
+        } else {
+            snapshot.localFavorites = []
+            snapshot.localFavoriteDeletions = []
+        }
+        if WatchConnectivitySettings.syncsReadLater() {
+            let result = syncStateStore.reconcileReadLater(current: snapshot.readLater)
+            syncStateStore.commitReadLater(result)
+            snapshot.readLater = result.items
+            snapshot.readLaterDeletions = result.deletions
+        } else {
+            snapshot.readLater = []
+            snapshot.readLaterDeletions = []
+        }
+        if WatchConnectivitySettings.syncsReadingHistory() {
+            let result = syncStateStore.reconcileReadingHistory(current: snapshot.readingHistory)
+            syncStateStore.commitReadingHistory(result)
+            snapshot.readingHistory = result.items
+            snapshot.readingHistoryDeletions = result.deletions
+        } else {
+            snapshot.readingHistory = []
+            snapshot.readingHistoryDeletions = []
+        }
+        snapshot.updatedAt = Date()
+        return snapshot
     }
 }
 
 private extension WatchAccountSnapshot {
-    init(platformAccountService: PlatformAccountService, syncsLocalFavorites: Bool, syncsReadLater: Bool) {
-        let localFavorites = syncsLocalFavorites ? PicaXSQLiteStore.loadLocalFavorites(folderID: "default").map(WatchLocalFavoriteItem.init) : []
-        let readLater = syncsReadLater ? PicaXSQLiteStore.loadReadLater().map(WatchReadLaterItem.init) : []
+    nonisolated init(
+        accounts: [ComicPlatform: PlatformAccount],
+        syncsLocalFavorites: Bool,
+        syncsReadLater: Bool,
+        syncsReadingHistory: Bool
+    ) throws {
+        let localFavorites = syncsLocalFavorites
+            ? try PicaXSQLiteStore.loadLocalFavoritesOrThrow(folderID: "default")
+                .map(WatchLocalFavoriteItem.init)
+            : []
+        let readLater = syncsReadLater
+            ? try PicaXSQLiteStore.loadReadLaterOrThrow().map(WatchReadLaterItem.init)
+            : []
+        let readingHistory = syncsReadingHistory
+            ? try PicaXSQLiteStore.loadReadingHistoryOrThrow().map(WatchReadingHistoryRecord.init)
+            : []
         let platformAccounts = ComicPlatform.allCases.compactMap { platform -> WatchPlatformAccount? in
-            guard let account = platformAccountService.account(for: platform) else { return nil }
+            guard let account = accounts[platform] else { return nil }
             return WatchPlatformAccount(
                 id: platform.id,
                 platformID: platform.id,
@@ -223,7 +315,13 @@ private extension WatchAccountSnapshot {
                 loggedInAt: account.loggedInAt
             )
         }
-        self.init(updatedAt: Date(), platformAccounts: platformAccounts, localFavorites: localFavorites, readLater: readLater)
+        self.init(
+            updatedAt: Date(),
+            platformAccounts: platformAccounts,
+            localFavorites: localFavorites,
+            readLater: readLater,
+            readingHistory: readingHistory
+        )
     }
 }
 
@@ -301,9 +399,6 @@ private extension StoredLocalFavorite {
         )
     }
 
-    func isNewer(than other: StoredLocalFavorite) -> Bool {
-        (favoriteDate ?? .distantPast) >= (other.favoriteDate ?? .distantPast)
-    }
 }
 
 private extension WatchReadLaterItem {
@@ -341,8 +436,61 @@ private extension ReadLaterRecord {
         )
     }
 
-    func isNewer(than other: ReadLaterRecord) -> Bool {
-        addedAt >= other.addedAt
+}
+
+private extension WatchReadingHistoryRecord {
+    nonisolated init(_ record: ReadingHistoryRecord) {
+        let progress = record.progress
+        self.init(
+            comicID: record.item.id,
+            platformID: record.item.platform.id,
+            title: record.item.title,
+            subtitle: record.item.subtitle,
+            coverURLString: record.item.coverURLString,
+            tags: record.item.tags,
+            pageCount: record.item.pageCount,
+            favoriteDate: record.item.favoriteDate,
+            viewedAt: record.viewedAt,
+            progress: WatchReadingProgress(
+                chapterIndex: progress?.chapterIndex ?? 0,
+                pageIndex: progress?.pageIndex ?? 0,
+                totalPages: progress?.totalPages ?? record.item.pageCount ?? 0,
+                totalChapters: progress?.totalChapters ?? 1
+            )
+        )
+    }
+}
+
+private extension ReadingHistoryRecord {
+    init?(_ record: WatchReadingHistoryRecord) {
+        guard let platform = ComicPlatform(rawValue: record.platformID) else { return nil }
+        let reachedChapterEnd = record.progress.totalPages > 0
+            && record.progress.pageIndex >= record.progress.totalPages - 1
+        let reachedBookEnd = reachedChapterEnd
+            && record.progress.chapterIndex >= max(record.progress.totalChapters - 1, 0)
+        self.init(
+            item: ComicListItem(
+                id: record.comicID,
+                platform: platform,
+                title: record.title,
+                subtitle: record.subtitle,
+                coverURLString: record.coverURLString ?? "",
+                tags: record.tags,
+                pageCount: record.pageCount,
+                likesCount: nil,
+                favoriteDate: record.favoriteDate
+            ),
+            viewedAt: record.viewedAt,
+            progress: ReadingProgress(
+                status: reachedBookEnd ? .finished : .reading,
+                chapterIndex: max(record.progress.chapterIndex, 0),
+                pageIndex: max(record.progress.pageIndex, 0),
+                totalPages: max(record.progress.totalPages, 0),
+                totalChapters: max(record.progress.totalChapters, 1),
+                readChapterIndexes: reachedChapterEnd ? [max(record.progress.chapterIndex, 0)] : [],
+                updatedAt: record.viewedAt
+            )
+        )
     }
 }
 #endif

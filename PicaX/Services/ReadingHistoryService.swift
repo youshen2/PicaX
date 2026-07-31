@@ -6,6 +6,32 @@ struct ReadingHistoryRecord: Identifiable, Equatable, Codable, Sendable {
     var viewedAt: Date
     var progress: ReadingProgress?
 
+    private enum CodingKeys: String, CodingKey {
+        case item
+        case viewedAt
+        case progress
+    }
+
+    nonisolated init(item: ComicListItem, viewedAt: Date, progress: ReadingProgress?) {
+        self.item = item
+        self.viewedAt = viewedAt
+        self.progress = progress
+    }
+
+    nonisolated init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        item = try container.decode(ComicListItem.self, forKey: .item)
+        viewedAt = try container.decode(Date.self, forKey: .viewedAt)
+        progress = try container.decodeIfPresent(ReadingProgress.self, forKey: .progress)
+    }
+
+    nonisolated func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(item, forKey: .item)
+        try container.encode(viewedAt, forKey: .viewedAt)
+        try container.encodeIfPresent(progress, forKey: .progress)
+    }
+
     var id: String {
         item.readingHistoryID
     }
@@ -49,7 +75,7 @@ struct ReadingHistoryRecord: Identifiable, Equatable, Codable, Sendable {
     }()
 }
 
-struct ReadingProgress: Equatable, Codable, Sendable {
+nonisolated struct ReadingProgress: Equatable, Codable, Sendable {
     var status: ReadingProgressStatus
     var chapterIndex: Int
     var pageIndex: Int
@@ -59,7 +85,7 @@ struct ReadingProgress: Equatable, Codable, Sendable {
     var updatedAt: Date
 }
 
-enum ReadingProgressStatus: String, Codable, Sendable {
+nonisolated enum ReadingProgressStatus: String, Codable, Sendable {
     case viewed
     case reading
     case finished
@@ -164,6 +190,7 @@ final class ReadingHistoryService: ObservableObject {
     func remove(_ record: ReadingHistoryRecord) {
         records.removeAll { $0.id == record.id }
         PicaXSQLiteStore.deleteReadingHistory(id: record.id)
+        NotificationCenter.default.post(name: .picaxReadingHistoryDidChange, object: nil)
     }
 
     func clearReadingProgress() {
@@ -173,6 +200,7 @@ final class ReadingHistoryService: ObservableObject {
             return updated
         }
         PicaXSQLiteStore.replaceReadingHistory(records)
+        NotificationCenter.default.post(name: .picaxReadingHistoryDidChange, object: nil)
     }
 
     private func upsert(item: ComicListItem, update: (inout ReadingHistoryRecord) -> Void) {
@@ -200,16 +228,19 @@ final class ReadingHistoryService: ObservableObject {
         for removedID in previousIDs.subtracting(currentIDs) {
             PicaXSQLiteStore.deleteReadingHistory(id: removedID)
         }
+        NotificationCenter.default.post(name: .picaxReadingHistoryDidChange, object: nil)
     }
 
     func clear() {
         records.removeAll()
         PicaXSQLiteStore.clearReadingHistory()
+        NotificationCenter.default.post(name: .picaxReadingHistoryDidChange, object: nil)
     }
 
     func trimToCurrentLimit() {
         trimToLimit()
         PicaXSQLiteStore.replaceReadingHistory(records)
+        NotificationCenter.default.post(name: .picaxReadingHistoryDidChange, object: nil)
     }
 
     func reloadFromDefaults() {
@@ -230,9 +261,31 @@ final class ReadingHistoryService: ObservableObject {
     }
 }
 
-struct ReadLaterRecord: Identifiable, Equatable, Codable {
+struct ReadLaterRecord: Identifiable, Equatable, Codable, Sendable {
     let item: ComicListItem
     var addedAt: Date
+
+    private enum CodingKeys: String, CodingKey {
+        case item
+        case addedAt
+    }
+
+    nonisolated init(item: ComicListItem, addedAt: Date) {
+        self.item = item
+        self.addedAt = addedAt
+    }
+
+    nonisolated init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        item = try container.decode(ComicListItem.self, forKey: .item)
+        addedAt = try container.decode(Date.self, forKey: .addedAt)
+    }
+
+    nonisolated func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(item, forKey: .item)
+        try container.encode(addedAt, forKey: .addedAt)
+    }
 
     var id: String {
         item.readingHistoryID

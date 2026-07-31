@@ -2,7 +2,7 @@ import Combine
 import CoreGraphics
 import Foundation
 import ImageIO
-import zlib
+import ZIPFoundation
 #if os(iOS)
 import UIKit
 #endif
@@ -252,7 +252,6 @@ struct DownloadPDFExport {
 enum DownloadArchiveExportError: LocalizedError {
     case noImages
     case invalidArchivePath
-    case entryTooLarge
     case tooManyEntries
 
     var errorDescription: String? {
@@ -261,8 +260,6 @@ enum DownloadArchiveExportError: LocalizedError {
             "没有可导出的漫画图片。"
         case .invalidArchivePath:
             "ZIP 内部文件路径无效。"
-        case .entryTooLarge:
-            "漫画文件过大，无法导出为 ZIP。"
         case .tooManyEntries:
             "漫画图片数量过多，无法导出为 ZIP。"
         }
@@ -371,10 +368,36 @@ private final class DownloadBackgroundExecutionController {
 }
 #endif
 
+private struct DownloadTaskObservationSignature: Equatable {
+    let id: String
+    let status: ComicDownloadTaskStatus
+    let errorMessage: String?
+}
+
+@MainActor
+final class DownloadTaskStore: ObservableObject {
+    @Published fileprivate(set) var tasks: [ComicDownloadTask]
+
+    init(tasks: [ComicDownloadTask] = []) {
+        self.tasks = tasks
+    }
+
+    func task(for item: ComicListItem) -> ComicDownloadTask? {
+        tasks.first {
+            $0.item.platform == item.platform && $0.item.id == item.id
+        }
+    }
+}
+
 @MainActor
 final class DownloadService: ObservableObject {
     @Published private(set) var records: [DownloadRecord] = []
-    @Published private(set) var tasks: [ComicDownloadTask] = []
+    let taskStore: DownloadTaskStore
+
+    private(set) var tasks: [ComicDownloadTask] {
+        get { taskStore.tasks }
+        set { taskStore.tasks = newValue }
+    }
 
     private let defaults: UserDefaults
     private let contentService: ComicContentService
@@ -382,6 +405,7 @@ final class DownloadService: ObservableObject {
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
     private var workerTask: Task<Void, Never>?
+    private var taskStructureCancellable: AnyCancellable?
     private var lastTaskProgressPublicationDate = Date.distantPast
     private var lastProgressPresentationRefreshDate = Date.distantPast
     private var accountProvider: ((ComicPlatform) -> PlatformAccount?)?
@@ -403,6 +427,7 @@ final class DownloadService: ObservableObject {
         self.defaults = defaults
         self.contentService = contentService ?? ComicContentService()
         self.fileManager = fileManager
+        self.taskStore = DownloadTaskStore(tasks: Self.loadTasks(defaults: defaults, decoder: decoder))
         if defaults.object(forKey: DownloadSettingsKey.homeLimit) == nil {
             defaults.set(8, forKey: DownloadSettingsKey.homeLimit)
         }
@@ -443,7 +468,21 @@ final class DownloadService: ObservableObject {
             )
         }
         records = PicaXSQLiteStore.loadDownloadRecords()
-        tasks = Self.loadTasks(defaults: defaults, decoder: decoder)
+        taskStructureCancellable = taskStore.$tasks
+            .map { tasks in
+                tasks.map {
+                    DownloadTaskObservationSignature(
+                        id: $0.id,
+                        status: $0.status,
+                        errorMessage: $0.errorMessage
+                    )
+                }
+            }
+            .removeDuplicates()
+            .dropFirst()
+            .sink { [weak self] _ in
+                self?.objectWillChange.send()
+            }
     }
 
     deinit {
@@ -767,7 +806,7 @@ final class DownloadService: ObservableObject {
             while activeTaskIDs.count < maxConcurrentDownloads,
                   let taskID = nextQueuedDownloadTaskID(excluding: activeTaskIDs) {
                 activeTaskIDs.insert(taskID)
-                group.addTask { @MainActor [weak self] in
+                group.addTask { [weak self] in
                     await self?.runTask(id: taskID)
                     return taskID
                 }
@@ -784,7 +823,7 @@ final class DownloadService: ObservableObject {
                 while activeTaskIDs.count < maxConcurrentDownloads,
                       let taskID = nextQueuedDownloadTaskID(excluding: activeTaskIDs) {
                     activeTaskIDs.insert(taskID)
-                    group.addTask { @MainActor [weak self] in
+                    group.addTask { [weak self] in
                         await self?.runTask(id: taskID)
                         return taskID
                     }
@@ -1069,7 +1108,7 @@ final class DownloadService: ObservableObject {
                 let urlString = images[pageIndex].urlString
                 nextPageIndex += 1
 
-                group.addTask { @MainActor [weak self] in
+                group.addTask { [weak self] in
                     guard let self else { throw CancellationError() }
                     return try await self.downloadChapterImage(
                         urlString: urlString,
@@ -1619,155 +1658,38 @@ private struct StreamingZipEntry {
 }
 
 private enum StreamingZipArchive {
-    private struct CentralDirectoryRecord {
-        let fileName: Data
-        let crc32: UInt32
-        let size: UInt32
-        let offset: UInt32
-    }
-
     nonisolated static func write(entries: [StreamingZipEntry], to outputURL: URL) throws {
         guard entries.count <= Int(UInt16.max) else {
             throw DownloadArchiveExportError.tooManyEntries
         }
 
         try? FileManager.default.removeItem(at: outputURL)
-        FileManager.default.createFile(atPath: outputURL.path, contents: nil)
-        let handle = try FileHandle(forWritingTo: outputURL)
-        var offset: UInt32 = 0
-        var centralRecords: [CentralDirectoryRecord] = []
-
+        let archive = try Archive(url: outputURL, accessMode: .create)
         do {
             for entry in entries {
-                let fileName = try fileNameData(for: entry.archivePath)
-                let data = try Data(contentsOf: entry.sourceURL)
-                let size = try uint32Size(data.count)
-                let entryOffset = offset
-                let crc32 = DownloadExportCRC32.checksum(data)
-
-                var header = Data()
-                header.appendUInt32LE(0x04034b50)
-                header.appendUInt16LE(10)
-                header.appendUInt16LE(0)
-                header.appendUInt16LE(0)
-                header.appendUInt16LE(0)
-                header.appendUInt16LE(0)
-                header.appendUInt32LE(crc32)
-                header.appendUInt32LE(size)
-                header.appendUInt32LE(size)
-                header.appendUInt16LE(UInt16(fileName.count))
-                header.appendUInt16LE(0)
-                header.append(fileName)
-                try write(header, to: handle, offset: &offset)
-                try write(data, to: handle, offset: &offset)
-
-                centralRecords.append(CentralDirectoryRecord(
-                    fileName: fileName,
-                    crc32: crc32,
-                    size: size,
-                    offset: entryOffset
-                ))
+                try Task.checkCancellation()
+                try validate(path: entry.archivePath)
+                try archive.addEntry(
+                    with: entry.archivePath,
+                    fileURL: entry.sourceURL,
+                    compressionMethod: .deflate,
+                    bufferSize: 64 * 1024
+                )
             }
-
-            let centralDirectoryOffset = offset
-            var centralDirectory = Data()
-            for record in centralRecords {
-                centralDirectory.appendUInt32LE(0x02014b50)
-                centralDirectory.appendUInt16LE(20)
-                centralDirectory.appendUInt16LE(10)
-                centralDirectory.appendUInt16LE(0)
-                centralDirectory.appendUInt16LE(0)
-                centralDirectory.appendUInt16LE(0)
-                centralDirectory.appendUInt16LE(0)
-                centralDirectory.appendUInt32LE(record.crc32)
-                centralDirectory.appendUInt32LE(record.size)
-                centralDirectory.appendUInt32LE(record.size)
-                centralDirectory.appendUInt16LE(UInt16(record.fileName.count))
-                centralDirectory.appendUInt16LE(0)
-                centralDirectory.appendUInt16LE(0)
-                centralDirectory.appendUInt16LE(0)
-                centralDirectory.appendUInt16LE(0)
-                centralDirectory.appendUInt32LE(0)
-                centralDirectory.appendUInt32LE(record.offset)
-                centralDirectory.append(record.fileName)
-            }
-
-            let centralDirectorySize = try uint32Size(centralDirectory.count)
-            try write(centralDirectory, to: handle, offset: &offset)
-
-            let entryCount = UInt16(centralRecords.count)
-            var footer = Data()
-            footer.appendUInt32LE(0x06054b50)
-            footer.appendUInt16LE(0)
-            footer.appendUInt16LE(0)
-            footer.appendUInt16LE(entryCount)
-            footer.appendUInt16LE(entryCount)
-            footer.appendUInt32LE(centralDirectorySize)
-            footer.appendUInt32LE(centralDirectoryOffset)
-            footer.appendUInt16LE(0)
-            try write(footer, to: handle, offset: &offset)
-
-            try handle.close()
         } catch {
-            try? handle.close()
             try? FileManager.default.removeItem(at: outputURL)
             throw error
         }
     }
 
-    private nonisolated static func write(_ data: Data, to handle: FileHandle, offset: inout UInt32) throws {
-        guard UInt64(offset) + UInt64(data.count) <= UInt64(UInt32.max) else {
-            throw DownloadArchiveExportError.entryTooLarge
-        }
-        try handle.write(contentsOf: data)
-        offset += UInt32(data.count)
-    }
-
-    private nonisolated static func fileNameData(for path: String) throws -> Data {
+    private nonisolated static func validate(path: String) throws {
         guard !path.isEmpty,
               !path.hasPrefix("/"),
-              !path.split(separator: "/").contains(".."),
-              let data = path.data(using: .utf8),
-              data.count <= Int(UInt16.max) else {
+              !path.contains("\\"),
+              !path.split(separator: "/", omittingEmptySubsequences: false).contains(where: {
+                  $0.isEmpty || $0 == "." || $0 == ".."
+              }) else {
             throw DownloadArchiveExportError.invalidArchivePath
         }
-        return data
-    }
-
-    private nonisolated static func uint32Size(_ value: Int) throws -> UInt32 {
-        guard value <= Int(UInt32.max) else {
-            throw DownloadArchiveExportError.entryTooLarge
-        }
-        return UInt32(value)
-    }
-}
-
-private enum DownloadExportCRC32 {
-    nonisolated static func checksum(_ data: Data) -> UInt32 {
-        let initialCRC = crc32(0, nil, 0)
-        return data.withUnsafeBytes { buffer in
-            guard let baseAddress = buffer.bindMemory(to: Bytef.self).baseAddress else {
-                return UInt32(truncatingIfNeeded: initialCRC)
-            }
-            return UInt32(truncatingIfNeeded: crc32(initialCRC, baseAddress, uInt(data.count)))
-        }
-    }
-}
-
-private extension Data {
-    nonisolated mutating func appendUInt16LE(_ value: UInt16) {
-        append(contentsOf: [
-            UInt8(truncatingIfNeeded: value),
-            UInt8(truncatingIfNeeded: value >> 8)
-        ])
-    }
-
-    nonisolated mutating func appendUInt32LE(_ value: UInt32) {
-        append(contentsOf: [
-            UInt8(truncatingIfNeeded: value),
-            UInt8(truncatingIfNeeded: value >> 8),
-            UInt8(truncatingIfNeeded: value >> 16),
-            UInt8(truncatingIfNeeded: value >> 24)
-        ])
     }
 }

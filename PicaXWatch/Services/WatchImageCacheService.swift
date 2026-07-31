@@ -4,7 +4,7 @@ import Foundation
 import ImageIO
 import libwebp
 
-struct WatchCacheUsage: Equatable {
+struct WatchCacheUsage: Equatable, Sendable {
     let diskBytes: Int64
 
     var formatted: String {
@@ -15,6 +15,8 @@ struct WatchCacheUsage: Equatable {
 enum WatchImageCacheService {
     nonisolated static let defaultMaxDiskSizeMB = 120
     nonisolated private static let lock = NSLock()
+    nonisolated private static let requestCoalescer = AsyncRequestCoalescer<Data>()
+    nonisolated(unsafe) private static var isTrimScheduled = false
     private static let session: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
@@ -24,26 +26,36 @@ enum WatchImageCacheService {
     }()
 
     @MainActor
-    static func configure(defaults: UserDefaults = .standard) {
+    @discardableResult
+    static func configure(defaults: UserDefaults = .standard) -> Task<Void, Never> {
         if defaults.object(forKey: WatchSettingsKey.imageCacheMaxDiskSizeMB) == nil {
             defaults.set(defaultMaxDiskSizeMB, forKey: WatchSettingsKey.imageCacheMaxDiskSizeMB)
         }
-        trimIfNeeded(maxBytes: max(defaults.integer(forKey: WatchSettingsKey.imageCacheMaxDiskSizeMB), 20) * 1024 * 1024)
-    }
-
-    @MainActor
-    static func clear() {
-        withLock {
-            try? FileManager.default.removeItem(at: cacheDirectoryURL)
-            prepareDirectory()
+        let maxBytes = max(
+            defaults.integer(forKey: WatchSettingsKey.imageCacheMaxDiskSizeMB),
+            20
+        ) * 1024 * 1024
+        return Task.detached(priority: .utility) {
+            trimIfNeeded(maxBytes: maxBytes)
         }
     }
 
     @MainActor
-    static var usage: WatchCacheUsage {
-        withLock {
-            WatchCacheUsage(diskBytes: directorySize(at: cacheDirectoryURL))
-        }
+    static func clear() async {
+        await Task.detached(priority: .utility) {
+            withLock {
+                try? FileManager.default.removeItem(at: cacheDirectoryURL)
+                prepareDirectory()
+            }
+        }.value
+    }
+
+    nonisolated static func usage() async -> WatchCacheUsage {
+        await Task.detached(priority: .utility) {
+            withLock {
+                WatchCacheUsage(diskBytes: directorySize(at: cacheDirectoryURL))
+            }
+        }.value
     }
 
     nonisolated static func data(for urlString: String, storesInCache: Bool = true) async throws -> Data {
@@ -63,7 +75,21 @@ enum WatchImageCacheService {
                 try Data(contentsOf: url)
             }.value
         }
+        let key = "\(url.absoluteString)#store=\(storesInCache)#read=\(readsFromCache)"
+        return try await requestCoalescer.value(for: key) {
+            try await loadRemoteData(
+                for: url,
+                storesInCache: storesInCache,
+                readsFromCache: readsFromCache
+            )
+        }
+    }
 
+    private nonisolated static func loadRemoteData(
+        for url: URL,
+        storesInCache: Bool,
+        readsFromCache: Bool
+    ) async throws -> Data {
         let cacheEnabled = UserDefaults.standard.object(forKey: WatchSettingsKey.imageCacheEnabled) == nil
             ? true
             : UserDefaults.standard.bool(forKey: WatchSettingsKey.imageCacheEnabled)
@@ -94,10 +120,6 @@ enum WatchImageCacheService {
             guard FileManager.default.fileExists(atPath: fileURL.path) else {
                 return nil
             }
-            guard isReadableImageFile(fileURL) else {
-                try? FileManager.default.removeItem(at: fileURL)
-                return nil
-            }
             touch(fileURL)
             return fileURL
         }
@@ -114,19 +136,21 @@ enum WatchImageCacheService {
         if forceRefresh {
             removeCachedFile(for: url)
         }
-        let data = try await data(for: url, storesInCache: true, readsFromCache: false)
-        return try await Task.detached(priority: .utility) {
-            try withLock {
+        let data = try await data(for: url, storesInCache: false, readsFromCache: false)
+        return try await storeFile(data, for: url)
+    }
+
+    private nonisolated static func storeFile(_ data: Data, for url: URL) async throws -> URL {
+        try await Task.detached(priority: .utility) {
+            let fileURL = try withLock {
                 prepareDirectory()
                 let fileURL = cacheFileURL(for: url)
                 try data.write(to: fileURL, options: .atomic)
                 touch(fileURL)
-                let maxMB = UserDefaults.standard.object(forKey: WatchSettingsKey.imageCacheMaxDiskSizeMB) == nil
-                    ? defaultMaxDiskSizeMB
-                    : UserDefaults.standard.integer(forKey: WatchSettingsKey.imageCacheMaxDiskSizeMB)
-                trimIfNeededLocked(maxBytes: max(maxMB, 20) * 1024 * 1024)
                 return fileURL
             }
+            requestDeferredTrim()
+            return fileURL
         }.value
     }
 
@@ -160,11 +184,8 @@ enum WatchImageCacheService {
                 let fileURL = cacheFileURL(for: url)
                 try? data.write(to: fileURL, options: .atomic)
                 touch(fileURL)
-                let maxMB = UserDefaults.standard.object(forKey: WatchSettingsKey.imageCacheMaxDiskSizeMB) == nil
-                    ? defaultMaxDiskSizeMB
-                    : UserDefaults.standard.integer(forKey: WatchSettingsKey.imageCacheMaxDiskSizeMB)
-                trimIfNeededLocked(maxBytes: max(maxMB, 20) * 1024 * 1024)
             }
+            requestDeferredTrim()
         }.value
     }
 
@@ -219,13 +240,6 @@ enum WatchImageCacheService {
             return false
         }
         return CGImageSourceCreateImageAtIndex(source, 0, nil) != nil
-    }
-
-    private nonisolated static func isReadableImageFile(_ fileURL: URL) -> Bool {
-        guard let data = try? Data(contentsOf: fileURL) else {
-            return false
-        }
-        return isReadableImageData(data)
     }
 
     private nonisolated static func removeCachedFile(for url: URL) {
@@ -284,6 +298,27 @@ enum WatchImageCacheService {
         }
     }
 
+    private nonisolated static func requestDeferredTrim() {
+        let shouldSchedule = withLock {
+            guard !isTrimScheduled else { return false }
+            isTrimScheduled = true
+            return true
+        }
+        guard shouldSchedule else { return }
+
+        Task.detached(priority: .utility) {
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            let maxMB = UserDefaults.standard.object(forKey: WatchSettingsKey.imageCacheMaxDiskSizeMB) == nil
+                ? defaultMaxDiskSizeMB
+                : UserDefaults.standard.integer(forKey: WatchSettingsKey.imageCacheMaxDiskSizeMB)
+            withLock {
+                prepareDirectory()
+                trimIfNeededLocked(maxBytes: max(maxMB, 20) * 1024 * 1024)
+                isTrimScheduled = false
+            }
+        }
+    }
+
     private nonisolated static func trimIfNeededLocked(maxBytes: Int) {
         var files = cacheFiles()
         var total = files.reduce(Int64(0)) { $0 + $1.byteCount }
@@ -326,7 +361,7 @@ enum WatchImageCacheService {
     }
 }
 
-struct WatchDiskFile {
+nonisolated struct WatchDiskFile: Sendable {
     let url: URL
     let byteCount: Int64
     let modifiedAt: Date

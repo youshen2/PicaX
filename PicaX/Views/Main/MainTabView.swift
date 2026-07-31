@@ -104,13 +104,15 @@ struct MainTabView: View {
 
 struct MainTabView_Previews: PreviewProvider {
     static var previews: some View {
+        let downloadService = DownloadService(defaults: .preview)
+
         MainTabView()
-            .environmentObject(AccountService(store: AccountStore(defaults: .preview)))
             .environmentObject(PlatformAccountService())
             .environmentObject(ReadingHistoryService(defaults: .preview))
             .environmentObject(ReadLaterService(defaults: .preview))
             .environmentObject(ReadingDurationService(defaults: .preview))
-            .environmentObject(DownloadService(defaults: .preview))
+            .environmentObject(downloadService)
+            .environmentObject(downloadService.taskStore)
             .environmentObject(BlockingKeywordService(defaults: .preview))
             .environmentObject(SearchHistoryService(defaults: .preview))
             .environmentObject(FollowUpdatesService(defaults: .preview))

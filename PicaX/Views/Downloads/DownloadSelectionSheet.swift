@@ -3,6 +3,7 @@ import SwiftUI
 struct DownloadSelectionSheet: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var downloadService: DownloadService
+    @EnvironmentObject private var downloadTaskStore: DownloadTaskStore
     @AppStorage(DownloadSettingsKey.downloadsCommentsByDefault) private var downloadsCommentsByDefault = false
 
     let detail: ComicDetailInfo
@@ -31,17 +32,37 @@ struct DownloadSelectionSheet: View {
 
                     Section {
                         ForEach(Array(detail.chapters.enumerated()), id: \.element.id) { index, chapter in
-                            DownloadChapterSelectionRow(
-                                chapter: chapter,
-                                index: index,
-                                isSelected: selectedIndexes.contains(index),
-                                isDownloaded: currentDownloadedIndexes.contains(index),
-                                isDisabled: currentTask != nil
-                            )
-                            .contentShape(Rectangle())
-                            .onTapGesture {
+                            let isDownloaded = currentDownloadedIndexes.contains(index)
+                            let isDisabled = currentTask != nil
+                            let isSelected = selectedIndexes.contains(index)
+
+                            Button {
                                 toggle(index)
+                            } label: {
+                                DownloadChapterSelectionRow(
+                                    chapter: chapter,
+                                    index: index,
+                                    isSelected: isSelected,
+                                    isDownloaded: isDownloaded,
+                                    isDisabled: isDisabled
+                                )
+                                .contentShape(Rectangle())
                             }
+                            .buttonStyle(.plain)
+                            .disabled(isDownloaded || isDisabled)
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel(chapter.title)
+                            .accessibilityValue(
+                                isDownloaded
+                                    ? "已下载"
+                                    : (isSelected ? "已选择" : "未选择")
+                            )
+                            .accessibilityHint(
+                                isDisabled
+                                    ? "已有下载任务，当前不可更改"
+                                    : (isDownloaded ? "该章节已下载" : "轻点切换选择状态")
+                            )
+                            .accessibilityAddTraits(isSelected ? .isSelected : [])
                         }
                     } header: {
                         Text(detail.item.title)
@@ -101,7 +122,7 @@ struct DownloadSelectionSheet: View {
     }
 
     private var activeTask: ComicDownloadTask? {
-        downloadService.task(for: detail.item)
+        downloadTaskStore.task(for: detail.item)
     }
 
     private var availableIndexes: Set<Int> {
@@ -148,12 +169,12 @@ private struct DownloadChapterSelectionRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(chapter.title)
                     .foregroundStyle(isUnavailable ? .secondary : .primary)
-                    .lineLimit(1)
+                    .lineLimit(2)
 
                 Text(subtitle)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .lineLimit(2)
             }
 
             Spacer()
@@ -183,6 +204,8 @@ private struct DownloadChapterSelectionRow: View {
 }
 
 private struct DownloadSelectionFooter: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     let message: String?
     let selectedCount: Int
     let canDownloadAll: Bool
@@ -217,39 +240,60 @@ private struct DownloadSelectionFooter: View {
     private var buttons: some View {
         if #available(iOS 26, macOS 26, visionOS 26, *) {
             GlassEffectContainer(spacing: 12) {
-                HStack(spacing: 12) {
-                    glassButton(
-                        title: isActive ? "下载中" : "下载全部",
-                        isProminent: false,
-                        isEnabled: canDownloadAll,
-                        action: downloadAll
-                    )
-
-                    glassButton(
-                        title: selectedCount > 0 ? "下载选中 \(selectedCount)" : "下载选中",
-                        isProminent: true,
-                        isEnabled: canDownloadSelected,
-                        action: downloadSelected
-                    )
+                if dynamicTypeSize.isAccessibilitySize {
+                    VStack(spacing: 12) {
+                        glassButtons
+                    }
+                } else {
+                    HStack(spacing: 12) {
+                        glassButtons
+                    }
                 }
+            }
+        } else if dynamicTypeSize.isAccessibilitySize {
+            VStack(spacing: 12) {
+                fallbackButtons
             }
         } else {
             HStack(spacing: 12) {
-                fallbackButton(
-                    title: isActive ? "下载中" : "下载全部",
-                    isProminent: false,
-                    isEnabled: canDownloadAll,
-                    action: downloadAll
-                )
-
-                fallbackButton(
-                    title: selectedCount > 0 ? "下载选中 \(selectedCount)" : "下载选中",
-                    isProminent: true,
-                    isEnabled: canDownloadSelected,
-                    action: downloadSelected
-                )
+                fallbackButtons
             }
         }
+    }
+
+    @available(iOS 26, macOS 26, visionOS 26, *)
+    @ViewBuilder
+    private var glassButtons: some View {
+        glassButton(
+            title: isActive ? "下载中" : "下载全部",
+            isProminent: false,
+            isEnabled: canDownloadAll,
+            action: downloadAll
+        )
+
+        glassButton(
+            title: selectedCount > 0 ? "下载选中 \(selectedCount)" : "下载选中",
+            isProminent: true,
+            isEnabled: canDownloadSelected,
+            action: downloadSelected
+        )
+    }
+
+    @ViewBuilder
+    private var fallbackButtons: some View {
+        fallbackButton(
+            title: isActive ? "下载中" : "下载全部",
+            isProminent: false,
+            isEnabled: canDownloadAll,
+            action: downloadAll
+        )
+
+        fallbackButton(
+            title: selectedCount > 0 ? "下载选中 \(selectedCount)" : "下载选中",
+            isProminent: true,
+            isEnabled: canDownloadSelected,
+            action: downloadSelected
+        )
     }
 
     @available(iOS 26, macOS 26, visionOS 26, *)

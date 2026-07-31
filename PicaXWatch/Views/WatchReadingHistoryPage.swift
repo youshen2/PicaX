@@ -1,7 +1,9 @@
 import SwiftUI
 
 struct WatchReadingHistoryPage: View {
+    @EnvironmentObject private var accountSyncStore: WatchAccountSyncStore
     @State private var records: [WatchReadingHistoryRecord] = []
+    @State private var showsClearConfirmation = false
 
     private let store = WatchReadingHistoryStore()
 
@@ -23,6 +25,7 @@ struct WatchReadingHistoryPage: View {
                             store.remove(records[index])
                         }
                         reload()
+                        accountSyncStore.syncReadingHistory()
                     }
                 }
             }
@@ -30,8 +33,7 @@ struct WatchReadingHistoryPage: View {
             if !records.isEmpty {
                 Section("操作") {
                     Button(role: .destructive) {
-                        store.clear()
-                        reload()
+                        showsClearConfirmation = true
                     } label: {
                         Label("清空阅读记录", systemImage: "trash")
                     }
@@ -41,6 +43,16 @@ struct WatchReadingHistoryPage: View {
         .navigationTitle("阅读记录")
         .onAppear {
             reload()
+        }
+        .alert("清空阅读记录？", isPresented: $showsClearConfirmation) {
+            Button("清空", role: .destructive) {
+                store.clear()
+                reload()
+                accountSyncStore.syncReadingHistory()
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("手表上的全部阅读记录会被删除，并在下次同步时合并到 iPhone。")
         }
     }
 

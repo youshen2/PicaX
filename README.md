@@ -18,14 +18,14 @@ alt="Get it on GitHub" align="center" height="80" /></a>
 
 | 平台 / 系统 | 支持情况 |
 | --- | --- |
-| iOS 15 | 支持主应用核心功能 |
+| iOS 15.2 | 支持主应用核心功能 |
 | iOS 16.0 | 使用兼容导航实现，支持主应用核心功能 |
 | iOS 16.1+ | 支持下载进度 Live Activity |
 | iOS 17+ | 启用 SwiftUI `NavigationStack` 导航能力 |
 | iOS 26+ | 在上述功能基础上启用 Liquid Glass 视觉效果 |
 | watchOS 9+ | 支持配套 Apple Watch 应用。 |
 
-主应用最低部署版本为 iOS 15.0。Live Activity 扩展最低需要 iOS 16.1，但不会阻止主应用安装或运行在 iOS 15、iOS 16.0 上。
+主应用最低部署版本为 iOS 15.2。Live Activity 扩展最低需要 iOS 16.1，但不会阻止主应用安装或运行在 iOS 15.2 至 iOS 16.0。
 
 ## 支持的漫画源
 
@@ -122,7 +122,7 @@ alt="Get it on GitHub" align="center" height="80" /></a>
 
 3. 选择 `PicaX` scheme，并选择 iOS 模拟器、真机、macOS 或 visionOS 目标进行构建运行。
 
-项目当前部署目标为 iOS 15.0 / watchOS 9.0 / macOS 26.0 / visionOS 26.0，Live Activity 扩展的部署目标为 iOS 16.1。由于项目包含 iOS 26、macOS 26 和 visionOS 26 API 的条件适配，构建时需要 Xcode 26 或更新版本；生成的 iOS 主应用仍可运行在 iOS 15 及更高版本。
+项目当前部署目标为 iOS 15.2 / watchOS 9.0 / macOS 26.0 / visionOS 26.0，Live Activity 扩展的部署目标为 iOS 16.1。由于项目包含 iOS 26、macOS 26 和 visionOS 26 API 的条件适配，构建时需要 Xcode 26 或更新版本；生成的 iOS 主应用仍可运行在 iOS 15.2 及更高版本。
 
 ### Telegram CI 发布
 

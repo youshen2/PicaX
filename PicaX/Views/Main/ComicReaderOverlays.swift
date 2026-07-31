@@ -4,7 +4,7 @@ import SwiftUI
 import UIKit
 #endif
 
-enum ReaderSettingsKey {
+nonisolated enum ReaderSettingsKey {
     static let progressStyle = "settings.reader.progressStyle"
     static let progressPosition = "settings.reader.progressPosition"
     static let showsPageLabel = "settings.reader.showsPageLabel"

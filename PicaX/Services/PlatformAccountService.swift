@@ -5,8 +5,8 @@ import Foundation
 final class PlatformAccountService: ObservableObject {
     @Published private(set) var accounts: [ComicPlatform: PlatformAccount]
 
-    init() {
-        accounts = PicaXSQLiteStore.loadPlatformAccounts()
+    init(defaults: UserDefaults = .standard) {
+        accounts = PicaXSQLiteStore.loadPlatformAccounts(defaults: defaults)
     }
 
     var loggedInAccounts: [PlatformAccount] {
@@ -21,14 +21,14 @@ final class PlatformAccountService: ObservableObject {
         accounts[platform] != nil
     }
 
-    func saveValidatedAccount(_ account: PlatformAccount) {
+    func saveValidatedAccount(_ account: PlatformAccount) throws {
+        try PicaXSQLiteStore.upsertPlatformAccountOrThrow(account)
         accounts[account.platform] = account
-        PicaXSQLiteStore.upsertPlatformAccount(account)
     }
 
-    func logout(platform: ComicPlatform) {
+    func logout(platform: ComicPlatform) throws {
+        try PicaXSQLiteStore.deletePlatformAccountOrThrow(platform: platform)
         accounts[platform] = nil
-        PicaXSQLiteStore.deletePlatformAccount(platform: platform)
     }
 
     func reloadFromDefaults() {

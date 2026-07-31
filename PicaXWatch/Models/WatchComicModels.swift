@@ -1,6 +1,6 @@
 import Foundation
 
-struct WatchComicItem: Identifiable, Hashable, Codable {
+nonisolated struct WatchComicItem: Identifiable, Hashable, Codable, Sendable {
     let id: String
     let platform: WatchComicPlatform
     let title: String
@@ -14,9 +14,13 @@ struct WatchComicItem: Identifiable, Hashable, Codable {
         guard let coverURLString, !coverURLString.isEmpty else { return nil }
         return URL(string: coverURLString)
     }
+
+    var searchResultID: String {
+        "\(platform.id)-\(id)"
+    }
 }
 
-struct WatchCategoryItem: Identifiable, Hashable, Codable {
+nonisolated struct WatchCategoryItem: Identifiable, Hashable, Codable, Sendable {
     let title: String
     let query: String
     let platform: WatchComicPlatform
@@ -28,14 +32,14 @@ struct WatchCategoryItem: Identifiable, Hashable, Codable {
     }
 }
 
-struct WatchFavoriteFolder: Identifiable, Hashable, Codable {
+nonisolated struct WatchFavoriteFolder: Identifiable, Hashable, Codable, Sendable {
     let id: String
     let title: String
     let subtitle: String
     let platform: WatchComicPlatform
 }
 
-struct WatchComicDetailInfo: Identifiable, Hashable, Codable {
+nonisolated struct WatchComicDetailInfo: Identifiable, Hashable, Codable, Sendable {
     let item: WatchComicItem
     let description: String
     let metadata: [WatchDetailMetadata]
@@ -47,7 +51,7 @@ struct WatchComicDetailInfo: Identifiable, Hashable, Codable {
     var id: String { item.id }
 }
 
-struct WatchDetailMetadata: Identifiable, Hashable, Codable {
+nonisolated struct WatchDetailMetadata: Identifiable, Hashable, Codable, Sendable {
     let title: String
     let value: String
 
@@ -56,14 +60,14 @@ struct WatchDetailMetadata: Identifiable, Hashable, Codable {
     }
 }
 
-struct WatchTagGroup: Identifiable, Hashable, Codable {
+nonisolated struct WatchTagGroup: Identifiable, Hashable, Codable, Sendable {
     let title: String
     let tags: [WatchTagItem]
 
     var id: String { title }
 }
 
-struct WatchTagItem: Identifiable, Hashable, Codable {
+nonisolated struct WatchTagItem: Identifiable, Hashable, Codable, Sendable {
     let title: String
     let query: String
     let platform: WatchComicPlatform
@@ -73,13 +77,13 @@ struct WatchTagItem: Identifiable, Hashable, Codable {
     }
 }
 
-struct WatchChapterItem: Identifiable, Hashable, Codable {
+nonisolated struct WatchChapterItem: Identifiable, Hashable, Codable, Sendable {
     let id: String
     let title: String
     let subtitle: String?
 }
 
-struct WatchChapterImage: Identifiable, Hashable, Codable {
+nonisolated struct WatchChapterImage: Identifiable, Hashable, Codable, Sendable {
     let id: String
     let urlString: String
 
@@ -88,7 +92,7 @@ struct WatchChapterImage: Identifiable, Hashable, Codable {
     }
 }
 
-enum WatchSearchTarget: Hashable, Identifiable, Codable {
+nonisolated enum WatchSearchTarget: Hashable, Identifiable, Codable, Sendable {
     case aggregate([WatchComicPlatform])
     case platform(WatchComicPlatform)
 
@@ -150,7 +154,7 @@ enum WatchSearchTarget: Hashable, Identifiable, Codable {
     }
 }
 
-struct WatchSearchOptions: Equatable {
+struct WatchSearchOptions: Equatable, Sendable {
     var picacgSort = "dd"
     var nhentaiSort = "date"
     var jmComicSort = "mr"
@@ -217,7 +221,7 @@ struct WatchSearchOptions: Equatable {
     }
 }
 
-enum WatchSearchLanguage: String, CaseIterable, Identifiable {
+enum WatchSearchLanguage: String, CaseIterable, Identifiable, Sendable {
     case chinese
     case japanese
     case english

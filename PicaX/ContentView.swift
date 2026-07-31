@@ -6,7 +6,6 @@ import UIKit
 struct ContentView: View {
     @Environment(\.openURL) private var openURL
     @EnvironmentObject private var appSettings: AppSettings
-    @EnvironmentObject private var accountService: AccountService
     @AppStorage(AppAppearanceSettingsKey.colorScheme) private var colorScheme = AppAppearanceMode.system.rawValue
     @AppStorage(AppAppearanceSettingsKey.usesSmoothComicDetailTransitions) private var usesSmoothComicDetailTransitions = true
     @AppStorage(AppBehaviorSettingsKey.checksUpdatesOnLaunch) private var checksUpdatesOnLaunch = true
@@ -157,14 +156,16 @@ private struct ApplicationRecommendationShareSheet: UIViewControllerRepresentabl
 
 struct ContentView_Previews: PreviewProvider {
     static var previews: some View {
+        let downloadService = DownloadService(defaults: .preview)
+
         ContentView()
             .environmentObject(AppSettings(defaults: .preview))
-            .environmentObject(AccountService(store: AccountStore(defaults: .preview)))
             .environmentObject(PlatformAccountService())
             .environmentObject(ReadingHistoryService(defaults: .preview))
             .environmentObject(ReadLaterService(defaults: .preview))
             .environmentObject(ReadingDurationService(defaults: .preview))
-            .environmentObject(DownloadService(defaults: .preview))
+            .environmentObject(downloadService)
+            .environmentObject(downloadService.taskStore)
             .environmentObject(BlockingKeywordService(defaults: .preview))
             .environmentObject(SearchHistoryService(defaults: .preview))
             .environmentObject(FollowUpdatesService(defaults: .preview))
