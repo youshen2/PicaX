@@ -80,6 +80,8 @@ final class BlockingKeywordService: ObservableObject {
         switch tag.platform {
         case .jmComic:
             add(tag.displayTitle, scope: .jmComic)
+        case .nhentai, .eHentai:
+            add("tag:\(tag.query)", scope: .common)
         default:
             add("tag:\(tag.displayTitle)", scope: .common)
         }
