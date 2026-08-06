@@ -9,6 +9,8 @@ struct ComicListSection: View {
     @AppStorage(ReadFilterSettingsKey.hidesReadComicsInLists) private var hidesReadComicsInLists = false
     @AppStorage(ReadFilterSettingsKey.hidesReadLaterComicsInLists) private var hidesReadLaterComicsInLists = false
     @AppStorage(ReadFilterSettingsKey.hiddenProgressThreshold) private var hiddenProgressThreshold = 100
+    @AppStorage(ComicTitleMatchingSettingsKey.isEnabled) private var matchesComicTitles = ComicTitleMatchingSettingsKey.defaultIsEnabled
+    @AppStorage(ComicTitleMatchingSettingsKey.similarityThreshold) private var comicTitleSimilarityThreshold = ComicTitleMatchingSettingsKey.defaultSimilarityThreshold
     @AppStorage(ComicListSettingsKey.showsReadingProgress) private var showsListReadingProgress = true
     @AppStorage(ComicListSettingsKey.showsFavoriteState) private var showsListFavoriteState = true
     @AppStorage(ComicListSettingsKey.showsTags) private var showsListTags = true
@@ -74,6 +76,7 @@ struct ComicListSection: View {
         let usesSnapshot = snapshotIsCurrent || keepsStaleSnapshot
         let visibleComics = usesSnapshot ? snapshot.visibleComics : []
         let readingRecordsByID = usesSnapshot ? snapshot.readingRecordsByID : [:]
+        let crossPlatformReadingIDs = usesSnapshot ? snapshot.crossPlatformReadingIDs : []
         let displayTagsByID = usesSnapshot ? snapshot.displayTagsByID : [:]
         let totalVisibleCount = visibleComics.count
         let displayCount = renderedCount(for: totalVisibleCount)
@@ -81,6 +84,7 @@ struct ComicListSection: View {
             from: visibleComics,
             count: displayCount,
             readingRecordsByID: readingRecordsByID,
+            crossPlatformReadingIDs: crossPlatformReadingIDs,
             displayTagsByID: displayTagsByID
         )
         let readingListComics = readAllComics ?? (usesSnapshot ? visibleComics : [])
@@ -576,8 +580,14 @@ struct ComicListSection: View {
 
     private func makeSnapshotRequest() -> ComicListSnapshotRequest {
         let readingRecordsByID = readingHistory.activeReadingRecordsByID
+        let readingHistoryItems = readingHistory.records.map(\.item)
         let readLaterIDs = readLater.allRecordIDs
+        let readLaterItems = readLater.records.map(\.item)
         let blockingMatcher = blockingKeywords.commonKeywordMatcher
+        let titleMatchingConfiguration = ComicTitleMatchingConfiguration(
+            isEnabled: matchesComicTitles,
+            similarityThreshold: comicTitleSimilarityThreshold
+        )
         return ComicListSnapshotRequest(
             key: ComicListSnapshotKey(
                 comics: comics,
@@ -590,18 +600,22 @@ struct ComicListSection: View {
                 hidesReadComicsInLists: hidesReadComicsInLists,
                 hidesReadLaterComicsInLists: hidesReadLaterComicsInLists,
                 hiddenProgressThreshold: hiddenProgressThreshold,
+                titleMatchingConfiguration: titleMatchingConfiguration,
                 tagDisplayVersion: tagDisplayVersion
             ),
             comics: comics,
             readingRecordsByID: readingRecordsByID,
+            readingHistoryItems: readingHistoryItems,
             readLaterIDs: readLaterIDs,
+            readLaterItems: readLaterItems,
             blockingMatcher: blockingMatcher,
             appliesBlocking: appliesBlocking,
             appliesReadProgressFilter: appliesReadProgressFilter,
             appliesReadLaterFilter: appliesReadLaterFilter,
             hidesReadComicsInLists: hidesReadComicsInLists,
             hidesReadLaterComicsInLists: hidesReadLaterComicsInLists,
-            hiddenProgressThreshold: hiddenProgressThreshold
+            hiddenProgressThreshold: hiddenProgressThreshold,
+            titleMatchingConfiguration: titleMatchingConfiguration
         )
     }
 
@@ -632,6 +646,7 @@ struct ComicListSection: View {
         from visibleComics: [ComicListItem],
         count: Int,
         readingRecordsByID: [String: ReadingHistoryRecord],
+        crossPlatformReadingIDs: Set<String>,
         displayTagsByID: [String: [String]]
     ) -> [ComicListDisplayedRow] {
         let displayCount = min(max(count, 0), visibleComics.count)
@@ -644,12 +659,18 @@ struct ComicListSection: View {
                 ComicListDisplayedRow(
                     item: comic,
                     hasReadingProgress: readingRecord != nil,
-                    readingProgressText: showsListReadingProgress ? readingRecord?.progressText : nil,
+                    readingProgressText: showsListReadingProgress
+                        ? readingRecord?.progressText ?? crossPlatformReadingText(for: comic, IDs: crossPlatformReadingIDs)
+                        : nil,
                     displayTags: displayTagsByID[comic.readingHistoryID]
                 )
             )
         }
         return rows
+    }
+
+    private func crossPlatformReadingText(for comic: ComicListItem, IDs: Set<String>) -> String? {
+        IDs.contains(comic.readingHistoryID) ? "已在别的平台阅读" : nil
     }
 
     private func renderedCount(for totalVisibleCount: Int) -> Int {
@@ -1371,6 +1392,7 @@ private struct ComicListSnapshotKey: Hashable, Sendable {
     let hidesReadComicsInLists: Bool
     let hidesReadLaterComicsInLists: Bool
     let hiddenProgressThreshold: Int
+    let titleMatchingConfiguration: ComicTitleMatchingConfiguration
     let tagDisplayVersion: Int
 
     static let empty = ComicListSnapshotKey(
@@ -1386,6 +1408,7 @@ private struct ComicListSnapshotKey: Hashable, Sendable {
         hidesReadComicsInLists: false,
         hidesReadLaterComicsInLists: false,
         hiddenProgressThreshold: 0,
+        titleMatchingConfiguration: ComicTitleMatchingConfiguration(isEnabled: false),
         tagDisplayVersion: 0
     )
 
@@ -1400,6 +1423,7 @@ private struct ComicListSnapshotKey: Hashable, Sendable {
         hidesReadComicsInLists: Bool,
         hidesReadLaterComicsInLists: Bool,
         hiddenProgressThreshold: Int,
+        titleMatchingConfiguration: ComicTitleMatchingConfiguration,
         tagDisplayVersion: Int
     ) {
         let filtersReadProgress = appliesReadProgressFilter && hidesReadComicsInLists
@@ -1416,6 +1440,7 @@ private struct ComicListSnapshotKey: Hashable, Sendable {
         self.hidesReadComicsInLists = filtersReadProgress
         self.hidesReadLaterComicsInLists = filtersReadLater
         self.hiddenProgressThreshold = filtersReadProgress ? hiddenProgressThreshold : 0
+        self.titleMatchingConfiguration = titleMatchingConfiguration
         self.tagDisplayVersion = tagDisplayVersion
     }
 
@@ -1432,6 +1457,7 @@ private struct ComicListSnapshotKey: Hashable, Sendable {
         hidesReadComicsInLists: Bool,
         hidesReadLaterComicsInLists: Bool,
         hiddenProgressThreshold: Int,
+        titleMatchingConfiguration: ComicTitleMatchingConfiguration,
         tagDisplayVersion: Int
     ) {
         self.comicsCount = comicsCount
@@ -1446,6 +1472,7 @@ private struct ComicListSnapshotKey: Hashable, Sendable {
         self.hidesReadComicsInLists = hidesReadComicsInLists
         self.hidesReadLaterComicsInLists = hidesReadLaterComicsInLists
         self.hiddenProgressThreshold = hiddenProgressThreshold
+        self.titleMatchingConfiguration = titleMatchingConfiguration
         self.tagDisplayVersion = tagDisplayVersion
     }
 
@@ -1461,6 +1488,7 @@ private struct ComicListSnapshotKey: Hashable, Sendable {
               hidesReadComicsInLists == requestKey.hidesReadComicsInLists,
               hidesReadLaterComicsInLists == requestKey.hidesReadLaterComicsInLists,
               hiddenProgressThreshold == requestKey.hiddenProgressThreshold,
+              titleMatchingConfiguration == requestKey.titleMatchingConfiguration,
               blockingFingerprint == requestKey.blockingFingerprint else {
             return false
         }
@@ -1507,6 +1535,7 @@ private struct ComicListSnapshotKey: Hashable, Sendable {
             hasher.combine(comic.pageCount)
             hasher.combine(comic.likesCount)
             hasher.combine(comic.favoriteDate?.timeIntervalSinceReferenceDate)
+            hasher.combine(comic.language)
             hasher.combine(comic.tags.count)
             for tag in comic.tags {
                 hasher.combine(tag)
@@ -1531,6 +1560,7 @@ private struct ComicListSourceItemIdentity: Hashable, Sendable {
     let pageCount: Int?
     let likesCount: Int?
     let favoriteDate: Date?
+    let language: String?
 
     nonisolated init(item: ComicListItem) {
         platform = item.platform
@@ -1542,6 +1572,7 @@ private struct ComicListSourceItemIdentity: Hashable, Sendable {
         pageCount = item.pageCount
         likesCount = item.likesCount
         favoriteDate = item.favoriteDate
+        language = item.language
     }
 
     nonisolated static func == (lhs: ComicListSourceItemIdentity, rhs: ComicListSourceItemIdentity) -> Bool {
@@ -1554,6 +1585,7 @@ private struct ComicListSourceItemIdentity: Hashable, Sendable {
             && lhs.pageCount == rhs.pageCount
             && lhs.likesCount == rhs.likesCount
             && lhs.favoriteDate == rhs.favoriteDate
+            && lhs.language == rhs.language
     }
 
     nonisolated func hash(into hasher: inout Hasher) {
@@ -1566,6 +1598,7 @@ private struct ComicListSourceItemIdentity: Hashable, Sendable {
         hasher.combine(pageCount)
         hasher.combine(likesCount)
         hasher.combine(favoriteDate)
+        hasher.combine(language)
     }
 }
 
@@ -1573,7 +1606,9 @@ private struct ComicListSnapshotRequest: Sendable {
     let key: ComicListSnapshotKey
     let comics: [ComicListItem]
     let readingRecordsByID: [String: ReadingHistoryRecord]
+    let readingHistoryItems: [ComicListItem]
     let readLaterIDs: Set<String>
+    let readLaterItems: [ComicListItem]
     let blockingMatcher: BlockingKeywordMatcher
     let appliesBlocking: Bool
     let appliesReadProgressFilter: Bool
@@ -1581,12 +1616,14 @@ private struct ComicListSnapshotRequest: Sendable {
     let hidesReadComicsInLists: Bool
     let hidesReadLaterComicsInLists: Bool
     let hiddenProgressThreshold: Int
+    let titleMatchingConfiguration: ComicTitleMatchingConfiguration
 }
 
 private struct ComicListRenderSnapshot: Sendable {
     let key: ComicListSnapshotKey
     let visibleComics: [ComicListItem]
     let readingRecordsByID: [String: ReadingHistoryRecord]
+    let crossPlatformReadingIDs: Set<String>
     let displayTagsByID: [String: [String]]
     let contentIdentity: ComicListContentIdentity
 
@@ -1594,6 +1631,7 @@ private struct ComicListRenderSnapshot: Sendable {
         key: .empty,
         visibleComics: [],
         readingRecordsByID: [:],
+        crossPlatformReadingIDs: [],
         displayTagsByID: [:],
         contentIdentity: .empty
     )
@@ -1605,6 +1643,31 @@ private struct ComicListRenderSnapshot: Sendable {
     nonisolated static func make(for request: ComicListSnapshotRequest) throws -> ComicListRenderSnapshot {
         var visibleComics: [ComicListItem] = []
         visibleComics.reserveCapacity(request.comics.count)
+        var crossPlatformReadingIDs = Set<String>()
+
+        let hiddenReadItems = request.readingRecordsByID.values.compactMap { record in
+            shouldHideReadComic(
+                record.item,
+                record: record,
+                hidesReadComicsInLists: request.hidesReadComicsInLists,
+                hiddenProgressThreshold: request.hiddenProgressThreshold
+            ) ? record.item : nil
+        }
+        let hiddenReadTitleIndex = try expandedTitleIndex(
+            seedItems: hiddenReadItems,
+            bridgeItems: request.comics,
+            configuration: request.titleMatchingConfiguration
+        )
+        let readLaterTitleIndex = try expandedTitleIndex(
+            seedItems: request.hidesReadLaterComicsInLists ? request.readLaterItems : [],
+            bridgeItems: request.comics,
+            configuration: request.titleMatchingConfiguration
+        )
+        let readingHistoryTitleIndex = try expandedTitleIndex(
+            seedItems: request.readingHistoryItems,
+            bridgeItems: request.comics,
+            configuration: request.titleMatchingConfiguration
+        )
 
         for (index, comic) in request.comics.enumerated() {
             if index.isMultiple(of: 64), Task.isCancelled {
@@ -1614,29 +1677,67 @@ private struct ComicListRenderSnapshot: Sendable {
                 continue
             }
             if request.appliesReadProgressFilter,
+               request.hidesReadComicsInLists,
                shouldHideReadComic(
-                    comic,
-                    record: request.readingRecordsByID[comic.readingHistoryID],
-                    hidesReadComicsInLists: request.hidesReadComicsInLists,
-                    hiddenProgressThreshold: request.hiddenProgressThreshold
-               ) {
+                   comic,
+                   record: request.readingRecordsByID[comic.readingHistoryID],
+                   hidesReadComicsInLists: true,
+                   hiddenProgressThreshold: request.hiddenProgressThreshold
+               ) || hiddenReadTitleIndex.containsMatch(for: comic, requiresDifferentPlatform: true) {
                 continue
             }
             if request.appliesReadLaterFilter,
                request.hidesReadLaterComicsInLists,
-               request.readLaterIDs.contains(comic.readingHistoryID) {
+               request.readLaterIDs.contains(comic.readingHistoryID)
+                    || readLaterTitleIndex.containsMatch(for: comic, requiresDifferentPlatform: true) {
                 continue
             }
             visibleComics.append(comic)
+            if request.readingRecordsByID[comic.readingHistoryID] == nil,
+               readingHistoryTitleIndex.containsMatch(for: comic, requiresDifferentPlatform: true) {
+                crossPlatformReadingIDs.insert(comic.readingHistoryID)
+            }
         }
 
         return ComicListRenderSnapshot(
             key: request.key,
             visibleComics: visibleComics,
             readingRecordsByID: request.readingRecordsByID,
+            crossPlatformReadingIDs: crossPlatformReadingIDs,
             displayTagsByID: ComicListTagDisplayResolver.displayTagsByID(for: visibleComics),
             contentIdentity: makeContentIdentity(for: visibleComics)
         )
+    }
+
+    private nonisolated static func expandedTitleIndex(
+        seedItems: [ComicListItem],
+        bridgeItems: [ComicListItem],
+        configuration: ComicTitleMatchingConfiguration
+    ) throws -> ComicTitleMatchIndex {
+        var index = ComicTitleMatchIndex(items: seedItems, configuration: configuration)
+        guard configuration.isEnabled, !seedItems.isEmpty else { return index }
+
+        var remainingItems = bridgeItems
+        var insertedBridge = true
+        while insertedBridge, !remainingItems.isEmpty {
+            insertedBridge = false
+            var unmatchedItems: [ComicListItem] = []
+            unmatchedItems.reserveCapacity(remainingItems.count)
+
+            for (itemIndex, item) in remainingItems.enumerated() {
+                if itemIndex.isMultiple(of: 64), Task.isCancelled {
+                    throw CancellationError()
+                }
+                guard index.containsMatch(for: item, requiresDifferentPlatform: true),
+                      index.insertBridge(item) else {
+                    unmatchedItems.append(item)
+                    continue
+                }
+                insertedBridge = true
+            }
+            remainingItems = unmatchedItems
+        }
+        return index
     }
 
     private nonisolated static func makeContentIdentity(for visibleComics: [ComicListItem]) -> ComicListContentIdentity {

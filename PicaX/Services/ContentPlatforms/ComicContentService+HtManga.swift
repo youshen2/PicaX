@@ -178,7 +178,8 @@ extension ComicContentService {
             tags: tagGroups.flatMap { $0.tags.map(\.title) },
             pageCount: pages ?? item.pageCount,
             likesCount: nil,
-            favoriteDate: item.favoriteDate
+            favoriteDate: item.favoriteDate,
+            language: item.language
         )
         return ComicDetailInfo(
             item: detailItem,

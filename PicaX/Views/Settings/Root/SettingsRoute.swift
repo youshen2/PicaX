@@ -130,7 +130,7 @@ enum SettingsRoute: String, CaseIterable, Hashable, Identifiable {
         case .search:
             ["默认搜索源", "搜索历史", "聚合搜索", "补全", "标签", "E-Hentai", "中文", "英文", "翻译"]
         case .comicList:
-            ["布局", "瀑布流", "已读隐藏", "稍后再读", "阅读进度", "收藏状态", "标签", "热度"]
+            ["布局", "瀑布流", "已读隐藏", "稍后再读", "阅读进度", "收藏状态", "标签", "热度", "漫画名称", "标题相似度", "跨平台阅读记录"]
         case .comicDetail:
             ["封面颜色", "章节排序", "章节分区", "内容顺序"]
         case .reader:

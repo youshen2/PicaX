@@ -412,6 +412,7 @@ private extension WatchReadLaterItem {
             tags: record.item.tags,
             pageCount: record.item.pageCount,
             likesCount: record.item.likesCount,
+            language: record.item.language,
             addedAt: record.addedAt
         )
     }
@@ -430,7 +431,8 @@ private extension ReadLaterRecord {
                 tags: item.tags,
                 pageCount: item.pageCount,
                 likesCount: item.likesCount,
-                favoriteDate: nil
+                favoriteDate: nil,
+                language: item.language
             ),
             addedAt: item.addedAt
         )
@@ -450,6 +452,7 @@ private extension WatchReadingHistoryRecord {
             tags: record.item.tags,
             pageCount: record.item.pageCount,
             favoriteDate: record.item.favoriteDate,
+            language: record.item.language,
             viewedAt: record.viewedAt,
             progress: WatchReadingProgress(
                 chapterIndex: progress?.chapterIndex ?? 0,
@@ -478,7 +481,8 @@ private extension ReadingHistoryRecord {
                 tags: record.tags,
                 pageCount: record.pageCount,
                 likesCount: nil,
-                favoriteDate: record.favoriteDate
+                favoriteDate: record.favoriteDate,
+                language: record.language
             ),
             viewedAt: record.viewedAt,
             progress: ReadingProgress(

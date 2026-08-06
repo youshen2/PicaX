@@ -87,7 +87,8 @@ extension ComicContentService {
             tags: tagGroups.flatMap { $0.tags.map(\.title) },
             pageCount: files.count,
             likesCount: nil,
-            favoriteDate: item.favoriteDate
+            favoriteDate: item.favoriteDate,
+            language: language.nilIfEmpty ?? item.language
         )
 
         var relatedItems = [ComicListItem]()
@@ -139,6 +140,7 @@ extension ComicContentService {
         let artist = html.firstRegexCapture(#"<div[^>]*class="[^"]*artist-list[^"]*"[^>]*>.*?<a[^>]*>(.*?)</a>"#)?.htmlDecoded ?? "N/A"
         let coverSource = html.firstRegexCapture(#"<div[^>]*class="[^"]*(?:dj-img1|cg-img1)[^"]*"[^>]*>.*?<source[^>]+data-srcset="([^"]+)""#)
         let tags = hitomiBriefTags(html)
+        let language = hitomiTableValue(html, label: "Language")
         let item = ComicListItem(
             id: absoluteURL(linkPath, baseURL: hitomiPublicBaseURL),
             platform: .hitomi,
@@ -148,12 +150,13 @@ extension ComicContentService {
             tags: tags.map(\.title),
             pageCount: nil,
             likesCount: nil,
-            favoriteDate: nil
+            favoriteDate: nil,
+            language: language
         )
         return HitomiBrief(
             item: item,
             type: hitomiTableValue(html, label: "Type"),
-            language: hitomiTableValue(html, label: "Language"),
+            language: language,
             tags: tags,
             updatedText: html.firstRegexCapture(#"<div[^>]*class="[^"]*dj-content[^"]*"[^>]*>.*?<p[^>]*>(.*?)</p>"#)?.htmlDecoded
         )

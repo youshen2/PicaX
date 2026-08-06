@@ -11,6 +11,7 @@ struct ComicListItem: Identifiable, Equatable, Codable, Sendable {
     let pageCount: Int?
     let likesCount: Int?
     let favoriteDate: Date?
+    let language: String?
 
     private enum CodingKeys: String, CodingKey {
         case id
@@ -22,6 +23,7 @@ struct ComicListItem: Identifiable, Equatable, Codable, Sendable {
         case pageCount
         case likesCount
         case favoriteDate
+        case language
     }
 
     nonisolated init(
@@ -33,7 +35,8 @@ struct ComicListItem: Identifiable, Equatable, Codable, Sendable {
         tags: [String],
         pageCount: Int?,
         likesCount: Int?,
-        favoriteDate: Date?
+        favoriteDate: Date?,
+        language: String? = nil
     ) {
         self.id = id
         self.platform = platform
@@ -44,6 +47,7 @@ struct ComicListItem: Identifiable, Equatable, Codable, Sendable {
         self.pageCount = pageCount
         self.likesCount = likesCount
         self.favoriteDate = favoriteDate
+        self.language = language?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
     }
 
     nonisolated init(from decoder: Decoder) throws {
@@ -57,6 +61,7 @@ struct ComicListItem: Identifiable, Equatable, Codable, Sendable {
         pageCount = try container.decodeIfPresent(Int.self, forKey: .pageCount)
         likesCount = try container.decodeIfPresent(Int.self, forKey: .likesCount)
         favoriteDate = try container.decodeIfPresent(Date.self, forKey: .favoriteDate)
+        language = try container.decodeIfPresent(String.self, forKey: .language)
     }
 
     nonisolated func encode(to encoder: Encoder) throws {
@@ -70,6 +75,7 @@ struct ComicListItem: Identifiable, Equatable, Codable, Sendable {
         try container.encodeIfPresent(pageCount, forKey: .pageCount)
         try container.encodeIfPresent(likesCount, forKey: .likesCount)
         try container.encodeIfPresent(favoriteDate, forKey: .favoriteDate)
+        try container.encodeIfPresent(language, forKey: .language)
     }
 
     nonisolated var target: String { id }

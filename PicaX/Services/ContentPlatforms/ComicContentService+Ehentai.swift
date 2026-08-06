@@ -136,8 +136,18 @@ extension ComicContentService {
             tags: tags.map(\.title),
             pageCount: nil,
             likesCount: nil,
-            favoriteDate: favoriteDate
+            favoriteDate: favoriteDate,
+            language: ehentaiGalleryLanguage(from: block)
         )
+    }
+
+    func ehentaiGalleryLanguage(from block: String) -> String? {
+        block.firstRegexCapture(#"title="language:([^"]+)""#)?.htmlDecoded
+            ?? block.firstRegexCapture(#"f_search=language(?:%3A|:)([^&"]+)"#)
+                .map { value in
+                    let decoded = value.replacingOccurrences(of: "+", with: " ")
+                    return decoded.removingPercentEncoding ?? decoded
+                }
     }
 
     func ehentaiGalleryTags(from block: String) -> [ComicTagReference] {
@@ -267,7 +277,8 @@ extension ComicContentService {
             tags: tagGroups.flatMap { $0.tags.map(\.title) },
             pageCount: pages ?? item.pageCount,
             likesCount: item.likesCount,
-            favoriteDate: item.favoriteDate
+            favoriteDate: item.favoriteDate,
+            language: ehentaiGalleryLanguage(from: html) ?? item.language
         )
         return ComicDetailInfo(
             item: detailItem,

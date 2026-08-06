@@ -178,7 +178,8 @@ extension ComicContentService {
                 tags: nhentaiListTags(from: doc, tagRecords: tagRecords),
                 pageCount: doc.intValue(for: "num_pages"),
                 likesCount: nil,
-                favoriteDate: favoriteDate
+                favoriteDate: favoriteDate,
+                language: nhentaiLanguage(from: tagRecords)
             )
         }
         PicaXSQLiteStore.upsertNhentaiTagNames(cachedTagRecords)
@@ -218,7 +219,8 @@ extension ComicContentService {
             tags: tagGroups.flatMap { $0.tags.map(\.title) },
             pageCount: json.intValue(for: "num_pages"),
             likesCount: json.intValue(for: "num_favorites"),
-            favoriteDate: item.favoriteDate
+            favoriteDate: item.favoriteDate,
+            language: nhentaiLanguage(from: nhentaiTagNameRecords(from: tags)) ?? item.language
         )
         return ComicDetailInfo(
             item: detailItem,
@@ -236,6 +238,10 @@ extension ComicContentService {
             return tagIDs.prefix(6).map { "tag:\($0)" }
         }
         return tagRecords.prefix(6).map(\.name)
+    }
+
+    func nhentaiLanguage(from tagRecords: [StoredNhentaiTagName]) -> String? {
+        tagRecords.first { $0.group.lowercased() == "language" }?.name
     }
 
     func nhentaiTagIDs(from doc: [String: Any]) -> [Int] {

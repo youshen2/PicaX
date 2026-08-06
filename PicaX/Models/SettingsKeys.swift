@@ -440,6 +440,13 @@ enum ReadFilterSettingsKey {
     nonisolated static let hiddenProgressThreshold = "settings.readFilter.hiddenProgressThreshold"
 }
 
+enum ComicTitleMatchingSettingsKey {
+    nonisolated static let isEnabled = "settings.comicTitleMatching.isEnabled"
+    nonisolated static let similarityThreshold = "settings.comicTitleMatching.similarityThreshold"
+    nonisolated static let defaultIsEnabled = true
+    nonisolated static let defaultSimilarityThreshold = 95
+}
+
 enum SearchHistorySettingsKey {
     nonisolated static let records = "picax.searchHistory.records"
     nonisolated static let isEnabled = "settings.searchHistory.isEnabled"

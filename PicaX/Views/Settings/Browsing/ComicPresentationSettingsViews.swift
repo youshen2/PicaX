@@ -10,12 +10,22 @@ struct ComicListSettingsView: View {
     @AppStorage(ReadFilterSettingsKey.hidesReadComicsInLists) private var hidesReadComicsInLists = false
     @AppStorage(ReadFilterSettingsKey.hidesReadLaterComicsInLists) private var hidesReadLaterComicsInLists = false
     @AppStorage(ReadFilterSettingsKey.hiddenProgressThreshold) private var hiddenProgressThreshold = 100
+    @AppStorage(ComicTitleMatchingSettingsKey.isEnabled) private var matchesComicTitles = ComicTitleMatchingSettingsKey.defaultIsEnabled
+    @AppStorage(ComicTitleMatchingSettingsKey.similarityThreshold) private var comicTitleSimilarityThreshold = ComicTitleMatchingSettingsKey.defaultSimilarityThreshold
 
     private var hiddenProgressThresholdBinding: Binding<Double> {
         Binding {
             Double(hiddenProgressThreshold)
         } set: { value in
             hiddenProgressThreshold = min(max(Int(value.rounded()), 0), 100)
+        }
+    }
+
+    private var comicTitleSimilarityThresholdBinding: Binding<Double> {
+        Binding {
+            Double(comicTitleSimilarityThreshold)
+        } set: { value in
+            comicTitleSimilarityThreshold = min(max(Int(value.rounded()), 50), 100)
         }
     }
 
@@ -55,6 +65,27 @@ struct ComicListSettingsView: View {
                 Text("显示内容")
             } footer: {
                 Text("这些开关只影响漫画列表条目上的附加内容，不会影响阅读记录、收藏数据或详情页。")
+            }
+
+            Section {
+                Toggle("按名称识别跨平台记录", isOn: $matchesComicTitles)
+
+                if matchesComicTitles {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text("名称相似度阈值")
+                            Spacer()
+                            Text("\(comicTitleSimilarityThreshold)%")
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Slider(value: comicTitleSimilarityThresholdBinding, in: 50...100, step: 1)
+                    }
+                }
+            } header: {
+                Text("跨平台阅读记录")
+            } footer: {
+                Text("默认开启。标题达到阈值且语言相同时，会在开启“显示阅读进度”后标记“已在别的平台阅读”，并辅助“隐藏已读内容”和“隐藏稍后再读内容”判断；不会合并搜索结果，也不会跨平台复用章节或页码。无法识别语言时仍按标题匹配。")
             }
 
             Section {

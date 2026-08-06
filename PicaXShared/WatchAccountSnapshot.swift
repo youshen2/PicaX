@@ -279,6 +279,7 @@ nonisolated struct WatchReadLaterItem: Codable, Equatable, Identifiable, Hashabl
     var tags: [String]
     var pageCount: Int?
     var likesCount: Int?
+    var language: String?
     var addedAt: Date
 
     nonisolated init(
@@ -290,6 +291,7 @@ nonisolated struct WatchReadLaterItem: Codable, Equatable, Identifiable, Hashabl
         tags: [String],
         pageCount: Int?,
         likesCount: Int?,
+        language: String? = nil,
         addedAt: Date
     ) {
         self.id = id
@@ -300,6 +302,7 @@ nonisolated struct WatchReadLaterItem: Codable, Equatable, Identifiable, Hashabl
         self.tags = tags
         self.pageCount = pageCount
         self.likesCount = likesCount
+        self.language = language
         self.addedAt = addedAt
     }
 
@@ -341,6 +344,7 @@ nonisolated struct WatchReadingHistoryRecord: Identifiable, Hashable, Codable, S
     var tags: [String]
     var pageCount: Int?
     var favoriteDate: Date?
+    var language: String?
     var viewedAt: Date
     var progress: WatchReadingProgress
 
@@ -357,6 +361,7 @@ nonisolated struct WatchReadingHistoryRecord: Identifiable, Hashable, Codable, S
         tags: [String],
         pageCount: Int?,
         favoriteDate: Date?,
+        language: String? = nil,
         viewedAt: Date,
         progress: WatchReadingProgress
     ) {
@@ -368,6 +373,7 @@ nonisolated struct WatchReadingHistoryRecord: Identifiable, Hashable, Codable, S
         self.tags = tags
         self.pageCount = pageCount
         self.favoriteDate = favoriteDate
+        self.language = language
         self.viewedAt = viewedAt
         self.progress = progress
     }
@@ -381,6 +387,7 @@ nonisolated struct WatchReadingHistoryRecord: Identifiable, Hashable, Codable, S
         case tags
         case pageCount
         case favoriteDate
+        case language
         case viewedAt
         case progress
         case item
@@ -397,6 +404,7 @@ nonisolated struct WatchReadingHistoryRecord: Identifiable, Hashable, Codable, S
             tags = legacyItem.tags
             pageCount = legacyItem.pageCount
             favoriteDate = legacyItem.favoriteDate
+            language = nil
         } else {
             comicID = try container.decode(String.self, forKey: .comicID)
             platformID = try container.decode(String.self, forKey: .platformID)
@@ -406,6 +414,7 @@ nonisolated struct WatchReadingHistoryRecord: Identifiable, Hashable, Codable, S
             tags = try container.decodeIfPresent([String].self, forKey: .tags) ?? []
             pageCount = try container.decodeIfPresent(Int.self, forKey: .pageCount)
             favoriteDate = try container.decodeIfPresent(Date.self, forKey: .favoriteDate)
+            language = try container.decodeIfPresent(String.self, forKey: .language)
         }
         viewedAt = try container.decode(Date.self, forKey: .viewedAt)
         progress = try container.decode(WatchReadingProgress.self, forKey: .progress)
@@ -421,6 +430,7 @@ nonisolated struct WatchReadingHistoryRecord: Identifiable, Hashable, Codable, S
         try container.encode(tags, forKey: .tags)
         try container.encodeIfPresent(pageCount, forKey: .pageCount)
         try container.encodeIfPresent(favoriteDate, forKey: .favoriteDate)
+        try container.encodeIfPresent(language, forKey: .language)
         try container.encode(viewedAt, forKey: .viewedAt)
         try container.encode(progress, forKey: .progress)
     }
