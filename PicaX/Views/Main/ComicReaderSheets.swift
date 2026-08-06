@@ -279,7 +279,11 @@ struct ReaderChapterPickerSheet: View {
                     }
                     #endif
 
-                    ToolbarItem(placement: .picaxTopBarTrailing) {
+                    ToolbarItemGroup(placement: .picaxTopBarTrailing) {
+                        if selectedTab == .readingList, let listContext {
+                            readingOrderMenu(listContext)
+                        }
+
                         Button {
                             dismiss()
                         } label: {
@@ -290,6 +294,28 @@ struct ReaderChapterPickerSheet: View {
                 }
         }
         .picaxSensitiveImageContent(selectedTab == .readingList && listContext?.entries.isEmpty == false)
+    }
+
+    private func readingOrderMenu(_ listContext: ComicReaderListContext) -> some View {
+        Menu {
+            Picker(
+                "阅读顺序",
+                selection: Binding(
+                    get: { listContext.order },
+                    set: { listContext.changeOrder($0) }
+                )
+            ) {
+                ForEach(ReadingListOrder.allCases) { order in
+                    Label(order.title, systemImage: order.systemImage)
+                        .tag(order)
+                }
+            }
+        } label: {
+            Image(systemName: listContext.order.systemImage)
+        }
+        .accessibilityLabel("阅读顺序")
+        .accessibilityValue(listContext.order.title)
+        .disabled(listContext.entries.count < 2)
     }
 
     @ViewBuilder

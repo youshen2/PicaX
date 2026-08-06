@@ -99,8 +99,7 @@ struct ReadLaterListPage: View {
 
     let service: ComicContentService
     @State private var readingListRequest: ReadingListRequest?
-    @State private var clearSelection: ReadLaterClearSelection?
-    @State private var downloadFeedback: ReadLaterDownloadFeedback?
+    @State private var presentedAlert: ReadLaterAlert?
 
     var body: some View {
         List {
@@ -153,14 +152,14 @@ struct ReadLaterListPage: View {
 
                 Menu {
                     Button(role: .destructive) {
-                        clearSelection = .downloaded(fullyDownloadedReadLaterIDs)
+                        presentedAlert = .clear(.downloaded(fullyDownloadedReadLaterIDs))
                     } label: {
                         Label("仅清空已下载", systemImage: "checkmark.circle")
                     }
                     .disabled(fullyDownloadedReadLaterIDs.isEmpty)
 
                     Button(role: .destructive) {
-                        clearSelection = .all
+                        presentedAlert = .clear(.all)
                     } label: {
                         Label("清空全部", systemImage: "trash")
                     }
@@ -171,22 +170,24 @@ struct ReadLaterListPage: View {
                 .disabled(readLater.records.isEmpty)
             }
         }
-        .alert(item: $clearSelection) { selection in
-            Alert(
-                title: Text(selection.title),
-                message: Text(selection.message),
-                primaryButton: .destructive(Text(selection.confirmationTitle)) {
-                    clear(selection)
-                },
-                secondaryButton: .cancel(Text("取消"))
-            )
-        }
-        .alert(item: $downloadFeedback) { feedback in
-            Alert(
-                title: Text(feedback.title),
-                message: Text(feedback.message),
-                dismissButton: .default(Text("好"))
-            )
+        .alert(item: $presentedAlert) { alert in
+            switch alert {
+            case .clear(let selection):
+                Alert(
+                    title: Text(selection.title),
+                    message: Text(selection.message),
+                    primaryButton: .destructive(Text(selection.confirmationTitle)) {
+                        clear(selection)
+                    },
+                    secondaryButton: .cancel(Text("取消"))
+                )
+            case .downloadFeedback(let feedback):
+                Alert(
+                    title: Text(feedback.title),
+                    message: Text(feedback.message),
+                    dismissButton: .default(Text("好"))
+                )
+            }
         }
     }
 
@@ -205,7 +206,7 @@ struct ReadLaterListPage: View {
         for result in results {
             summary.record(result)
         }
-        downloadFeedback = summary.feedback(total: readLater.records.count)
+        presentedAlert = .downloadFeedback(summary.feedback(total: readLater.records.count))
     }
 
     private var fullyDownloadedReadLaterIDs: Set<String> {
@@ -322,6 +323,20 @@ private struct ReadLaterDownloadFeedback: Identifiable {
     let id = UUID()
     let title: String
     let message: String
+}
+
+private enum ReadLaterAlert: Identifiable {
+    case clear(ReadLaterClearSelection)
+    case downloadFeedback(ReadLaterDownloadFeedback)
+
+    var id: String {
+        switch self {
+        case .clear(let selection):
+            "clear-\(selection.id)"
+        case .downloadFeedback(let feedback):
+            "download-feedback-\(feedback.id.uuidString)"
+        }
+    }
 }
 
 private struct ReadLaterDownloadSummary {

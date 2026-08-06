@@ -101,11 +101,13 @@ struct ReadingListRequest: Identifiable, Hashable {
 struct ComicReaderListContext {
     let title: String
     let entries: [ReadingListEntry]
+    let order: ReadingListOrder
     let currentEntryID: String?
     let currentIndex: Int
     let totalCount: Int
     let canMovePrevious: Bool
     let canMoveNext: Bool
+    let changeOrder: (ReadingListOrder) -> Void
     let selectEntry: (ReadingListEntry) -> Void
     let removeEntries: (IndexSet) -> Void
     let movePrevious: () -> Void
@@ -119,8 +121,10 @@ struct ReadingListReaderPage: View {
 
     let request: ReadingListRequest
     let service: ComicContentService
+    private let sourceIndexes: [ReadingListEntry.ID: Int]
 
     @State private var entries: [ReadingListEntry]
+    @State private var order = ReadingListOrder.ascending
     @State private var currentEntryID: String?
     @State private var loadedEntry: LoadedReadingListEntry?
     @State private var isLoading = false
@@ -131,6 +135,11 @@ struct ReadingListReaderPage: View {
     init(request: ReadingListRequest, service: ComicContentService) {
         self.request = request
         self.service = service
+        var sourceIndexes = [ReadingListEntry.ID: Int]()
+        for (index, entry) in request.entries.enumerated() where sourceIndexes[entry.id] == nil {
+            sourceIndexes[entry.id] = index
+        }
+        self.sourceIndexes = sourceIndexes
         _entries = State(initialValue: request.entries)
         _currentEntryID = State(initialValue: request.entries.indices.contains(request.startIndex) ? request.entries[request.startIndex].id : nil)
     }
@@ -259,16 +268,23 @@ struct ReadingListReaderPage: View {
         return ComicReaderListContext(
             title: request.title,
             entries: entries,
+            order: order,
             currentEntryID: entryID,
             currentIndex: index,
             totalCount: entries.count,
             canMovePrevious: !isLoading && index > 0,
             canMoveNext: !isLoading && index + 1 < entries.count,
+            changeOrder: changeOrder,
             selectEntry: selectEntry,
             removeEntries: removeEntries,
             movePrevious: movePrevious,
             moveNext: moveNext
         )
+    }
+
+    private func changeOrder(_ newOrder: ReadingListOrder) {
+        order = newOrder
+        entries = newOrder.ordered(entries, sourceIndexes: sourceIndexes)
     }
 
     @MainActor
