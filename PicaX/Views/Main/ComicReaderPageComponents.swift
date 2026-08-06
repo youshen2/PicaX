@@ -112,6 +112,8 @@ struct ReaderOptionsMenu: View {
     @Binding var smoothContinuousAutoPaging: Bool
     @Binding var autoPagingTurnsChapter: Bool
     @Binding var wholeBookContinuousReading: Bool
+    @Binding var wholeBookContinuesReadingList: Bool
+    let showsWholeBookReadingListContinuation: Bool
     let deletesLocalDownloadOnExit: Bool?
     let onToggleAutoPaging: () -> Void
     let onToggleBurnAfterReading: () -> Void
@@ -184,6 +186,13 @@ struct ReaderOptionsMenu: View {
                     Label("整卷连续阅读", systemImage: "rectangle.stack.fill")
                 }
                 .disabled(readingMode == .pageCurl)
+
+                if showsWholeBookReadingListContinuation {
+                    Toggle(isOn: $wholeBookContinuesReadingList) {
+                        Label("自动连续下一本书", systemImage: "books.vertical.fill")
+                    }
+                    .disabled(!wholeBookContinuousReading || readingMode == .pageCurl)
+                }
 
                 Button(action: onOpenDetail) {
                     Label("打开详情页", systemImage: "info.circle")

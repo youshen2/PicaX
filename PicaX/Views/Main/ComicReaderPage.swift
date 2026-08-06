@@ -26,6 +26,7 @@ struct ComicReaderPage: View {
     @AppStorage(ReaderSettingsKey.progressBottomInset) private var progressBottomInset = 0.0
     @AppStorage(ReaderSettingsKey.readingMode) private var readingMode = ReaderReadingMode.topToBottomContinuous.rawValue
     @AppStorage(ReaderSettingsKey.wholeBookContinuousReading) private var wholeBookContinuousReading = false
+    @AppStorage(ReaderSettingsKey.wholeBookContinuesReadingList) private var wholeBookContinuesReadingList = false
     @AppStorage(ReaderSettingsKey.imageSpacing) private var imageSpacing = 0.0
     @AppStorage(ReaderSettingsKey.firstImageTopPadding) private var firstImageTopPadding = 115.0
     @AppStorage(ReaderSettingsKey.lastImageBottomPadding) private var lastImageBottomPadding = 0.0
@@ -228,6 +229,8 @@ struct ComicReaderPage: View {
                         smoothContinuousAutoPaging: $smoothContinuousAutoPaging,
                         autoPagingTurnsChapter: $autoPagingTurnsChapter,
                         wholeBookContinuousReading: $wholeBookContinuousReading,
+                        wholeBookContinuesReadingList: $wholeBookContinuesReadingList,
+                        showsWholeBookReadingListContinuation: hasReadingList,
                         deletesLocalDownloadOnExit: deletesLocalDownloadOnExit?.wrappedValue,
                         onToggleAutoPaging: toggleAutoPaging,
                         onToggleBurnAfterReading: toggleBurnAfterReading,
@@ -684,6 +687,7 @@ struct ComicReaderPage: View {
                     autoPagingInterval: boundedAutoPageInterval,
                     autoPagingDistancePercent: boundedAutoPageDistancePercent,
                     smoothContinuousAutoPaging: smoothContinuousAutoPaging,
+                    automaticallyContinuesToNextBook: wholeBookContinuesReadingList && listContext?.canMoveNext == true,
                     progressJumpRequest: $progressJumpRequest,
                     onToggleUI: { toggleReaderUI() },
                     onPositionChange: { chapterIndex, pageIndex, pageCount in
@@ -755,10 +759,10 @@ struct ComicReaderPage: View {
     }
 
     private func handleWholeBookEndReached() {
-        if (!isAutoPaging || autoPagingTurnsChapter),
+        if wholeBookContinuesReadingList,
+           (!isAutoPaging || autoPagingTurnsChapter),
            moveReadingList(
                .next,
-               respectsAutoAdvanceSetting: true,
                completedCurrentBook: true
            ) {
             return

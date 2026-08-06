@@ -10,6 +10,7 @@ struct ReaderSettingsView: View {
     @AppStorage(ReaderSettingsKey.progressBottomInset) private var progressBottomInset = 0.0
     @AppStorage(ReaderSettingsKey.readingMode) private var readingMode = ReaderReadingMode.topToBottomContinuous.rawValue
     @AppStorage(ReaderSettingsKey.wholeBookContinuousReading) private var wholeBookContinuousReading = false
+    @AppStorage(ReaderSettingsKey.wholeBookContinuesReadingList) private var wholeBookContinuesReadingList = false
     @AppStorage(ReaderSettingsKey.imageSpacing) private var imageSpacing = 0.0
     @AppStorage(ReaderSettingsKey.firstImageTopPadding) private var firstImageTopPadding = 115.0
     @AppStorage(ReaderSettingsKey.lastImageBottomPadding) private var lastImageBottomPadding = 0.0
@@ -89,6 +90,8 @@ struct ReaderSettingsView: View {
 
                 Toggle("整卷连续阅读", isOn: $wholeBookContinuousReading)
                     .disabled(selectedReadingMode == .pageCurl)
+                Toggle("自动连续下一本书", isOn: $wholeBookContinuesReadingList)
+                    .disabled(!wholeBookContinuousReading || selectedReadingMode == .pageCurl)
                 Toggle("深色模式下降低图片亮度", isOn: $reducesImageBrightnessInDarkMode)
             } header: {
                 Text("阅读")
@@ -220,11 +223,11 @@ struct ReaderSettingsView: View {
 
                 Toggle("切换完成后显示书名", isOn: $showsReadingListBookToast)
 
-                Toggle("章节边界自动切换书籍", isOn: $readingListAutoAdvancesAtBoundary)
+                Toggle("按章节阅读时自动切换书籍", isOn: $readingListAutoAdvancesAtBoundary)
             } header: {
                 Text("批量阅读")
             } footer: {
-                Text("批量阅读切换书籍时会保留当前阅读器并显示加载提示，加载完成后再切换内容。关闭自动切换后，底栏上一章/下一章按钮仍可在书籍边界手动切换。")
+                Text("批量阅读切换书籍时会保留当前阅读器并显示加载提示，加载完成后再切换内容。此开关用于按章节阅读；整卷连续阅读使用“阅读”分区中的独立开关。关闭后，底栏上一章/下一章按钮仍可在书籍边界手动切换。")
             }
 
             Section {
@@ -372,6 +375,9 @@ struct ReaderSettingsView: View {
             descriptions.append("仿真翻页按章节阅读，不支持整卷连续阅读。")
         } else if wholeBookContinuousReading {
             descriptions.append("下一章会提前追加到当前章节末尾，直到全书结束。")
+            if wholeBookContinuesReadingList {
+                descriptions.append("从阅读列表进入时，读完全书后会自动打开下一本书。")
+            }
         }
         return descriptions.joined(separator: "\n")
     }

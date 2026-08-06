@@ -43,6 +43,7 @@ struct ReaderWholeBookContinuousView: View {
     let autoPagingInterval: Double
     let autoPagingDistancePercent: Int
     let smoothContinuousAutoPaging: Bool
+    let automaticallyContinuesToNextBook: Bool
     @Binding var progressJumpRequest: ReaderProgressJumpRequest?
     let onToggleUI: () -> Void
     let onPositionChange: (Int, Int, Int) -> Void
@@ -58,6 +59,7 @@ struct ReaderWholeBookContinuousView: View {
     @State private var scrollTracker = ReaderContinuousScrollTracker()
     @State private var isAutoPagingTurnInFlight = false
     @State private var visiblePageIDs = Set<ReaderWholeBookPageID>()
+    @State private var hasReportedBookEnd = false
 
     init(
         item: ComicListItem,
@@ -92,6 +94,7 @@ struct ReaderWholeBookContinuousView: View {
         autoPagingInterval: Double,
         autoPagingDistancePercent: Int,
         smoothContinuousAutoPaging: Bool,
+        automaticallyContinuesToNextBook: Bool,
         progressJumpRequest: Binding<ReaderProgressJumpRequest?>,
         onToggleUI: @escaping () -> Void,
         onPositionChange: @escaping (Int, Int, Int) -> Void,
@@ -129,6 +132,7 @@ struct ReaderWholeBookContinuousView: View {
         self.autoPagingInterval = autoPagingInterval
         self.autoPagingDistancePercent = autoPagingDistancePercent
         self.smoothContinuousAutoPaging = smoothContinuousAutoPaging
+        self.automaticallyContinuesToNextBook = automaticallyContinuesToNextBook
         _progressJumpRequest = progressJumpRequest
         self.onToggleUI = onToggleUI
         self.onPositionChange = onPositionChange
@@ -215,7 +219,7 @@ struct ReaderWholeBookContinuousView: View {
                 }
                 .padding(.vertical, 10)
                 .readerContinuousScrollBridge(scrollBridge) { metrics in
-                    scrollTracker.updateMetrics(metrics)
+                    handleScrollMetrics(metrics)
                 }
             }
             .coordinateSpace(name: coordinateSpaceName)
@@ -282,6 +286,11 @@ struct ReaderWholeBookContinuousView: View {
                     proxy.scrollTo(pageID, anchor: .top)
                 }
                 onPositionChange(request.chapterIndex, pageIndex, section.images.count)
+            }
+            .onChange(of: automaticallyContinuesToNextBook) { isEnabled in
+                if isEnabled {
+                    continueToNextBookIfNeeded()
+                }
             }
             .readerContinuousZoom(
                 configuration: zoomConfiguration,
@@ -498,8 +507,39 @@ struct ReaderWholeBookContinuousView: View {
             scrollTracker.updateScrollY(targetY)
         }
         if direction == .next, targetY >= maxY - 4 {
-            requestNextChapter()
+            if hasReachedBookEnd {
+                reportBookEndIfNeeded()
+            } else {
+                requestNextChapter()
+            }
         }
+    }
+
+    private func handleScrollMetrics(_ metrics: ReaderScrollMetrics) {
+        scrollTracker.updateMetrics(metrics)
+        let maxY = max(metrics.contentHeight - metrics.visibleHeight, 0)
+        guard metrics.offsetY >= maxY - 4 else {
+            hasReportedBookEnd = false
+            return
+        }
+        guard metrics.isUserInteracting else { return }
+        continueToNextBookIfNeeded()
+    }
+
+    private func continueToNextBookIfNeeded() {
+        guard automaticallyContinuesToNextBook,
+              hasReachedBookEnd,
+              scrollTracker.hasContentMetrics,
+              scrollTracker.scrollY >= scrollTracker.maxScrollY(fallbackViewportHeight: displaySize.height) - 4 else {
+            return
+        }
+        reportBookEndIfNeeded()
+    }
+
+    private func reportBookEndIfNeeded() {
+        guard !hasReportedBookEnd else { return }
+        hasReportedBookEnd = true
+        onReachedBookEnd()
     }
 
     private func handleAutoPageTick() {
@@ -524,7 +564,7 @@ struct ReaderWholeBookContinuousView: View {
             isAutoPagingTurnInFlight = false
             guard isAutoPaging, targetY >= maxY - 4 else { return }
             if hasReachedBookEnd {
-                onReachedBookEnd()
+                reportBookEndIfNeeded()
             } else {
                 requestNextChapter()
             }
@@ -556,7 +596,7 @@ struct ReaderWholeBookContinuousView: View {
 
         guard targetY >= maxY - 0.5 else { return }
         if hasReachedBookEnd {
-            onReachedBookEnd()
+            reportBookEndIfNeeded()
         } else {
             requestNextChapter()
         }

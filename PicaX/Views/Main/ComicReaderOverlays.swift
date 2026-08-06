@@ -14,6 +14,7 @@ nonisolated enum ReaderSettingsKey {
     static let progressBottomInset = "settings.reader.progressBottomInset"
     static let readingMode = "settings.reader.readingMode"
     static let wholeBookContinuousReading = "settings.reader.wholeBookContinuousReading"
+    static let wholeBookContinuesReadingList = "settings.reader.wholeBookContinuesReadingList"
     static let imageSpacing = "settings.reader.imageSpacing"
     static let firstImageTopPadding = "settings.reader.firstImageTopPadding"
     static let lastImageBottomPadding = "settings.reader.lastImageBottomPadding"
