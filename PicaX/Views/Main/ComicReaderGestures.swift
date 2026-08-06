@@ -174,9 +174,17 @@ struct ReaderInteractionGestureModifier: ViewModifier {
             return
         }
 
-        if tapPagingEnabled, let direction = tapPageDirection(at: location) {
-            turnPage(tapPagingInverted ? direction.inverted : direction)
-            return
+        if let direction = tapPageDirection(at: location) {
+            if tapPagingEnabled {
+                turnPage(tapPagingInverted ? direction.inverted : direction)
+                return
+            }
+
+            // UIPageViewController's page-curl style owns its edge-tap page turns.
+            // Keep the outer reader tap gesture from toggling chrome for the same tap.
+            if readingMode == .pageCurl {
+                return
+            }
         }
 
         if mode == .single {
