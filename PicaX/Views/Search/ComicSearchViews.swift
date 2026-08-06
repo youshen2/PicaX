@@ -103,6 +103,7 @@ struct ComicSearchPage: View {
     @EnvironmentObject private var searchHistory: SearchHistoryService
     @AppStorage(SearchSettingsKey.focusesSearchFieldOnOpen) private var focusesSearchFieldOnOpen = false
     @AppStorage(SearchSettingsKey.enablesSearchSuggestions) private var enablesSearchSuggestions = true
+    @AppStorage(SearchSettingsKey.searchesKeywordsSeparately) private var searchesKeywordsSeparately = false
     @AppStorage(SearchSettingsKey.suggestionSelectionBehavior) private var suggestionSelectionBehavior = SearchSuggestionSelectionBehavior.fill.rawValue
     @AppStorage(SearchSettingsKey.defaultTargetMode) private var defaultTargetMode = SearchDefaultTargetMode.platform.rawValue
     @AppStorage(SearchSettingsKey.defaultPlatform) private var defaultSearchPlatformID = ComicPlatform.picacg.rawValue
@@ -221,6 +222,10 @@ struct ComicSearchPage: View {
             guard viewModel.hasSearched else { return }
             startSearch(force: true)
         }
+        .onChange(of: searchesKeywordsSeparately) { _ in
+            guard viewModel.hasSearched else { return }
+            startSearch(force: true)
+        }
         .toolbar {
             ToolbarItemGroup(placement: .picaxTopBarTrailing) {
                 Button {
@@ -234,8 +239,10 @@ struct ComicSearchPage: View {
                 ComicSearchTargetMenu(
                     selectedTarget: selectedSearchTarget,
                     aggregatePlatforms: aggregatePlatforms,
+                    searchesKeywordsSeparately: searchesKeywordsSeparately,
                     onSelectTarget: { selectedSearchTarget = $0 },
-                    onToggleAggregatePlatform: toggleAggregatePlatform
+                    onToggleAggregatePlatform: toggleAggregatePlatform,
+                    onSetSearchesKeywordsSeparately: { searchesKeywordsSeparately = $0 }
                 )
                 .equatable()
 
@@ -283,6 +290,7 @@ struct ComicSearchPage: View {
             keyword: trimmedKeyword,
             accounts: searchAccounts,
             options: searchOptions,
+            searchesKeywordsSeparately: searchesKeywordsSeparately,
             force: force
         )
     }
@@ -494,16 +502,29 @@ struct ComicSearchPage: View {
 private struct ComicSearchTargetMenu: View, Equatable {
     let selectedTarget: ComicSearchTarget
     let aggregatePlatforms: Set<ComicPlatform>
+    let searchesKeywordsSeparately: Bool
     let onSelectTarget: (ComicSearchTarget) -> Void
     let onToggleAggregatePlatform: (ComicPlatform) -> Void
+    let onSetSearchesKeywordsSeparately: (Bool) -> Void
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.selectedTarget == rhs.selectedTarget
             && lhs.aggregatePlatforms == rhs.aggregatePlatforms
+            && lhs.searchesKeywordsSeparately == rhs.searchesKeywordsSeparately
     }
 
     var body: some View {
         Menu {
+            Section("搜索方式") {
+                Toggle(
+                    "按空格拆分关键词",
+                    isOn: Binding(
+                        get: { searchesKeywordsSeparately },
+                        set: onSetSearchesKeywordsSeparately
+                    )
+                )
+            }
+
             Section("聚合搜索") {
                 Button {
                     onSelectTarget(aggregateSearchTarget)
@@ -546,7 +567,7 @@ private struct ComicSearchTargetMenu: View, Equatable {
         } label: {
             Image(systemName: selectedTarget.systemImage)
         }
-        .accessibilityLabel("选择平台")
+        .accessibilityLabel("搜索选项")
     }
 
     private var aggregateSearchTarget: ComicSearchTarget {
@@ -930,250 +951,6 @@ private final class ComicTagComicsViewModel: ObservableObject {
 }
 
 private enum ComicTagComicsLoadState {
-    case idle
-    case loading
-    case loaded([ComicListItem])
-    case failed(String)
-}
-
-@MainActor
-private final class ComicSearchViewModel: ObservableObject {
-    @Published private(set) var state: ComicSearchLoadState = .idle
-    @Published private(set) var isLoadingMore = false
-    @Published private(set) var hasMore = false
-    @Published private(set) var hasSearched = false
-
-    private let service: ComicContentService
-    private var currentPage = 0
-    private var currentPages: [ComicPlatform: Int] = [:]
-    private var platformHasMore: [ComicPlatform: Bool] = [:]
-    private var loadedIDs = Set<String>()
-    private var currentTarget: ComicSearchTarget?
-    private var currentKeyword = ""
-    private var currentOptions = ComicSearchAdvancedOptions()
-    private var requestGeneration = 0
-
-    init(service: ComicContentService) {
-        self.service = service
-    }
-
-    func trimmedKeyword(_ keyword: String) -> String {
-        keyword.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    func search(
-        target: ComicSearchTarget,
-        keyword: String,
-        accounts: [ComicPlatform: PlatformAccount],
-        options: ComicSearchAdvancedOptions,
-        force: Bool = false
-    ) async {
-        let trimmed = trimmedKeyword(keyword)
-        guard !trimmed.isEmpty else {
-            reset()
-            return
-        }
-        if case .loaded = state, !force, currentTarget == target, currentKeyword == trimmed, currentOptions == options {
-            return
-        }
-
-        requestGeneration &+= 1
-        let generation = requestGeneration
-        state = .loading
-        hasSearched = true
-        hasMore = false
-        isLoadingMore = false
-        currentPage = 0
-        currentPages.removeAll()
-        platformHasMore.removeAll()
-        loadedIDs.removeAll()
-        currentTarget = target
-        currentKeyword = trimmed
-        currentOptions = options
-
-        let responses = await fetchSearchPages(
-            platforms: target.platforms,
-            keyword: trimmed,
-            accounts: accounts,
-            pages: Dictionary(uniqueKeysWithValues: target.platforms.map { ($0, 1) }),
-            options: options
-        )
-        guard generation == requestGeneration, !Task.isCancelled else { return }
-
-        var groupsByPlatform: [ComicPlatform: [ComicListItem]] = [:]
-        var failures: [String] = []
-        for response in responses {
-            currentPages[response.platform] = response.items == nil ? 0 : 1
-            platformHasMore[response.platform] = !(response.items?.isEmpty ?? true)
-            if let items = response.items {
-                groupsByPlatform[response.platform] = items
-            } else if let message = response.errorMessage {
-                failures.append("\(response.platform.title): \(message)")
-            }
-        }
-        let groups = target.platforms.compactMap { groupsByPlatform[$0] }
-
-        currentPage = 1
-        let uniqueResult: ComicListUniqueResult
-        do {
-            uniqueResult = try await ComicListBackgroundProcessing.interleavedUniqueItems(
-                from: groups,
-                loadedIDs: loadedIDs,
-                identity: .platformAndID
-            )
-        } catch where error.isTaskCancellation {
-            return
-        } catch {
-            uniqueResult = ComicListUniqueResult(items: [], loadedIDs: loadedIDs)
-        }
-        guard generation == requestGeneration, !Task.isCancelled else { return }
-        loadedIDs = uniqueResult.loadedIDs
-        let comics = uniqueResult.items
-        hasMore = platformHasMore.values.contains(true)
-        if !comics.isEmpty || failures.count < target.platforms.count {
-            state = .loaded(comics)
-        } else {
-            state = .failed(failures.joined(separator: "\n"))
-        }
-    }
-
-    func loadMore(accounts: [ComicPlatform: PlatformAccount]) async {
-        guard hasMore, !isLoadingMore, case .loaded(let comics) = state, let target = currentTarget, !currentKeyword.isEmpty else {
-            return
-        }
-
-        let generation = requestGeneration
-        let keyword = currentKeyword
-        let options = currentOptions
-        let platforms = target.platforms.filter { platformHasMore[$0] == true }
-        let pages = Dictionary(uniqueKeysWithValues: platforms.map { platform in
-            (platform, (currentPages[platform] ?? currentPage) + 1)
-        })
-
-        isLoadingMore = true
-        defer {
-            if generation == requestGeneration {
-                isLoadingMore = false
-            }
-        }
-
-        let responses = await fetchSearchPages(
-            platforms: platforms,
-            keyword: keyword,
-            accounts: accounts,
-            pages: pages,
-            options: options
-        )
-        guard generation == requestGeneration, !Task.isCancelled else { return }
-
-        var groupsByPlatform: [ComicPlatform: [ComicListItem]] = [:]
-        for response in responses {
-            guard let items = response.items else {
-                platformHasMore[response.platform] = false
-                continue
-            }
-            currentPages[response.platform] = pages[response.platform]
-            platformHasMore[response.platform] = !items.isEmpty
-            groupsByPlatform[response.platform] = items
-        }
-        let groups = platforms.compactMap { groupsByPlatform[$0] }
-
-        currentPage += 1
-        let uniqueResult: ComicListUniqueResult
-        do {
-            uniqueResult = try await ComicListBackgroundProcessing.interleavedUniqueItems(
-                from: groups,
-                loadedIDs: loadedIDs,
-                identity: .platformAndID
-            )
-        } catch where error.isTaskCancellation {
-            return
-        } catch {
-            uniqueResult = ComicListUniqueResult(items: [], loadedIDs: loadedIDs)
-        }
-        guard generation == requestGeneration, !Task.isCancelled else { return }
-        loadedIDs = uniqueResult.loadedIDs
-        let uniqueComics = uniqueResult.items
-        hasMore = platformHasMore.values.contains(true)
-        guard !uniqueComics.isEmpty else {
-            if !hasMore {
-                state = .loaded(comics)
-            }
-            return
-        }
-        state = .loaded(comics + uniqueComics)
-    }
-
-    func cancelCurrentSearch() {
-        requestGeneration &+= 1
-        isLoadingMore = false
-    }
-
-    private func fetchSearchPages(
-        platforms: [ComicPlatform],
-        keyword: String,
-        accounts: [ComicPlatform: PlatformAccount],
-        pages: [ComicPlatform: Int],
-        options: ComicSearchAdvancedOptions
-    ) async -> [PlatformSearchResponse] {
-        let service = service
-        return await withTaskGroup(of: PlatformSearchResponse.self) { group in
-            for platform in platforms {
-                group.addTask {
-                    do {
-                        let items = try await service.searchComics(
-                            platform: platform,
-                            keyword: keyword,
-                            account: accounts[platform],
-                            page: pages[platform] ?? 1,
-                            options: options
-                        )
-                        return PlatformSearchResponse(
-                            platform: platform,
-                            items: items,
-                            errorMessage: nil
-                        )
-                    } catch {
-                        return PlatformSearchResponse(
-                            platform: platform,
-                            items: nil,
-                            errorMessage: error.isTaskCancellation ? nil : error.localizedDescription
-                        )
-                    }
-                }
-            }
-
-            var responses: [PlatformSearchResponse] = []
-            for await response in group {
-                responses.append(response)
-            }
-            return responses
-        }
-    }
-
-    private func reset() {
-        requestGeneration &+= 1
-        state = .idle
-        isLoadingMore = false
-        hasMore = false
-        currentPage = 0
-        currentPages.removeAll()
-        platformHasMore.removeAll()
-        loadedIDs.removeAll()
-        currentTarget = nil
-        currentKeyword = ""
-        currentOptions = ComicSearchAdvancedOptions()
-    }
-
-}
-
-private struct PlatformSearchResponse: Sendable {
-    let platform: ComicPlatform
-    let items: [ComicListItem]?
-    let errorMessage: String?
-}
-
-private enum ComicSearchLoadState {
     case idle
     case loading
     case loaded([ComicListItem])

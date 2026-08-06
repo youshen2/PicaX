@@ -7,6 +7,7 @@ struct SearchSettingsView: View {
 
     @AppStorage(SearchSettingsKey.focusesSearchFieldOnOpen) private var focusesSearchFieldOnOpen = false
     @AppStorage(SearchSettingsKey.enablesSearchSuggestions) private var enablesSearchSuggestions = true
+    @AppStorage(SearchSettingsKey.searchesKeywordsSeparately) private var searchesKeywordsSeparately = false
     @AppStorage(SearchSettingsKey.translatesChineseSearchTerms) private var translatesChineseSearchTerms = true
     @AppStorage(SearchSettingsKey.suggestionSelectionBehavior) private var suggestionSelectionBehavior = SearchSuggestionSelectionBehavior.fill.rawValue
     @AppStorage(SearchSettingsKey.defaultTargetMode) private var defaultTargetMode = SearchDefaultTargetMode.platform.rawValue
@@ -71,6 +72,12 @@ struct SearchSettingsView: View {
                 Toggle("进入搜索页自动聚焦", isOn: $focusesSearchFieldOnOpen)
             } footer: {
                 Text("关闭后，打开搜索页不会自动弹出键盘；从标签或已下载详情进入并带有关键词时仍会自动搜索。")
+            }
+
+            Section {
+                Toggle("按空格拆分关键词", isOn: $searchesKeywordsSeparately)
+            } footer: {
+                Text("开启后会按空格拆分关键词并依次搜索，完成后去重合并结果；聚合搜索、中文标签翻译和高级选项照常生效。")
             }
 
             Section {

@@ -225,6 +225,7 @@ enum DownloadSettingsKey {
 enum SearchSettingsKey {
     nonisolated static let focusesSearchFieldOnOpen = "settings.search.focusesSearchFieldOnOpen"
     nonisolated static let enablesSearchSuggestions = "settings.search.enablesSearchSuggestions"
+    nonisolated static let searchesKeywordsSeparately = "settings.search.searchesKeywordsSeparately"
     nonisolated static let translatesChineseSearchTerms = "settings.search.translatesChineseSearchTerms"
     nonisolated static let suggestionSelectionBehavior = "settings.search.suggestionSelectionBehavior"
     nonisolated static let defaultTargetMode = "settings.search.defaultTargetMode"
