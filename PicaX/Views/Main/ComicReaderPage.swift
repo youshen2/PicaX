@@ -181,7 +181,7 @@ struct ComicReaderPage: View {
                     initialTab: tab,
                     listContext: listContext,
                     onSelectReadingListEntry: { entry in
-                        listContext?.selectEntry(entry)
+                        selectReadingListEntry(entry)
                     }
                 ) { index in
                     presentedChapterSheetTab = nil
@@ -201,7 +201,7 @@ struct ComicReaderPage: View {
                 }
                 Button("取消", role: .cancel) {}
             } message: {
-                Text("退出当前阅读器后，将删除这本漫画的本地下载文件和下载记录。收藏与阅读历史会保留。")
+                Text(burnAfterReadingConfirmationMessage)
             }
     }
 
@@ -400,6 +400,28 @@ struct ComicReaderPage: View {
         return viewModel.isCurrentPageNearChapterEnd(pageThreshold: boundedChapterEndPageThreshold)
     }
 
+    private var hasFinishedCurrentBook: Bool {
+        guard !viewModel.canLoadNextChapter,
+              case .loaded(let images) = viewModel.state,
+              !images.isEmpty else {
+            return false
+        }
+        if wholeBookContinuousReading {
+            guard !detail.chapters.isEmpty,
+                  viewModel.currentChapterIndex >= detail.chapters.count - 1 else {
+                return false
+            }
+            return viewModel.currentPageIndex >= max(viewModel.currentChapterPageCount - 1, 0)
+        }
+        switch readerReadingMode {
+        case .topToBottomContinuous:
+            return reachedContinuousBottom(in: images)
+        case .topToBottom, .leftToRight, .rightToLeft:
+            let finalPageIndex = pagedCommentPageIndex(for: images) ?? max(images.count - 1, 0)
+            return pagedPageIndex >= finalPageIndex
+        }
+    }
+
     private var containsChapterImages: Bool {
         if case .loaded(let images) = viewModel.state {
             return !images.isEmpty
@@ -450,7 +472,7 @@ struct ComicReaderPage: View {
                     isChapterEndActionInFlight = false
                     return
                 }
-                _ = moveReadingList(.next)
+                _ = moveReadingList(.next, completedCurrentBook: hasFinishedCurrentBook)
             }
             isChapterEndActionInFlight = false
         }
@@ -561,12 +583,23 @@ struct ComicReaderPage: View {
         presentChapterSheet(.readingList)
     }
 
+    private func selectReadingListEntry(_ entry: ReadingListEntry) {
+        guard let listContext else { return }
+        let destinationIndex = listContext.entries.firstIndex { $0.id == entry.id }
+        if hasFinishedCurrentBook,
+           destinationIndex.map({ $0 > listContext.currentIndex }) == true {
+            listContext.selectEntryAfterFinishingCurrent(entry)
+        } else {
+            listContext.selectEntry(entry)
+        }
+    }
+
     private func moveToPreviousBook() {
         _ = moveReadingList(.previous)
     }
 
     private func moveToNextBook() {
-        _ = moveReadingList(.next)
+        _ = moveReadingList(.next, completedCurrentBook: hasFinishedCurrentBook)
     }
 
     private func requestPreviousChapter() {
@@ -716,6 +749,14 @@ struct ComicReaderPage: View {
     }
 
     private func handleWholeBookEndReached() {
+        if (!isAutoPaging || autoPagingTurnsChapter),
+           moveReadingList(
+               .next,
+               respectsAutoAdvanceSetting: true,
+               completedCurrentBook: true
+           ) {
+            return
+        }
         if isAutoPaging {
             stopAutoPaging(toast: "已读完全书")
         } else {
@@ -1331,7 +1372,12 @@ struct ComicReaderPage: View {
             return true
         }
 
-        if autoPagingTurnsChapter, moveReadingList(.next, respectsAutoAdvanceSetting: true) {
+        if autoPagingTurnsChapter,
+           moveReadingList(
+               .next,
+               respectsAutoAdvanceSetting: true,
+               completedCurrentBook: true
+           ) {
             return true
         }
 
@@ -1461,7 +1507,12 @@ struct ComicReaderPage: View {
             return
         }
 
-        if autoPagingTurnsChapter, moveReadingList(.next, respectsAutoAdvanceSetting: true) {
+        if autoPagingTurnsChapter,
+           moveReadingList(
+               .next,
+               respectsAutoAdvanceSetting: true,
+               completedCurrentBook: true
+           ) {
             isAutoPagingTurnInFlight = false
             return
         }
@@ -1533,7 +1584,11 @@ struct ComicReaderPage: View {
         switch direction {
         case .next:
             guard viewModel.canLoadNextChapter else {
-                return moveReadingList(.next, respectsAutoAdvanceSetting: true)
+                return moveReadingList(
+                    .next,
+                    respectsAutoAdvanceSetting: true,
+                    completedCurrentBook: true
+                )
             }
             await viewModel.loadNextChapter(
                 account: platformAccounts.account(for: detail.item.platform),
@@ -1555,7 +1610,11 @@ struct ComicReaderPage: View {
     }
 
     @MainActor
-    private func moveReadingList(_ direction: ReaderPageTurnDirection, respectsAutoAdvanceSetting: Bool = false) -> Bool {
+    private func moveReadingList(
+        _ direction: ReaderPageTurnDirection,
+        respectsAutoAdvanceSetting: Bool = false,
+        completedCurrentBook: Bool = false
+    ) -> Bool {
         guard let listContext else { return false }
         if respectsAutoAdvanceSetting, !readingListAutoAdvancesAtBoundary {
             return false
@@ -1568,9 +1627,20 @@ struct ComicReaderPage: View {
             return true
         case .next:
             guard listContext.canMoveNext else { return false }
-            listContext.moveNext()
+            if completedCurrentBook {
+                listContext.moveNextAfterFinishingCurrent()
+            } else {
+                listContext.moveNext()
+            }
             return true
         }
+    }
+
+    private var burnAfterReadingConfirmationMessage: String {
+        if listContext != nil {
+            return "只有读完当前漫画并成功切换到任意后续漫画后，才会自动删除上一部漫画的本地下载文件、下载记录和阅读列表项。未读完时切换或直接退出都不会删除；收藏与阅读历史会保留。"
+        }
+        return "退出当前阅读器后，将删除这本漫画的本地下载文件和下载记录。收藏与阅读历史会保留。"
     }
 
     private func updateReadingPage(_ index: Int, totalPages: Int, targetPixelWidth: Int?, force: Bool = false) {

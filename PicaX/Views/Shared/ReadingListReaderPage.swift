@@ -109,9 +109,11 @@ struct ComicReaderListContext {
     let canMoveNext: Bool
     let changeOrder: (ReadingListOrder) -> Void
     let selectEntry: (ReadingListEntry) -> Void
+    let selectEntryAfterFinishingCurrent: (ReadingListEntry) -> Void
     let removeEntries: (IndexSet) -> Void
     let movePrevious: () -> Void
     let moveNext: () -> Void
+    let moveNextAfterFinishingCurrent: () -> Void
 }
 
 struct ReadingListReaderPage: View {
@@ -131,6 +133,7 @@ struct ReadingListReaderPage: View {
     @State private var errorMessage: String?
     @State private var pendingBookToastTitle: String?
     @State private var burnAfterReadingRecordIDs = Set<String>()
+    @State private var burnAfterReadingState = ReadingListBurnAfterReadingState()
 
     init(request: ReadingListRequest, service: ComicContentService) {
         self.request = request
@@ -226,11 +229,7 @@ struct ReadingListReaderPage: View {
             historyChapterIndexResolver: historyChapterIndexResolver,
             listContext: listContext(for: loadedEntry.entryID),
             initialToastMessage: pendingBookToastTitle,
-            deletesLocalDownloadOnExit: deletesLocalDownloadOnExit,
-            shouldHandleReaderExit: {
-                currentEntryID == loadedEntry.entryID || currentEntryID == nil
-            },
-            onReaderExit: removeBurnAfterReadingDownloads
+            deletesLocalDownloadOnExit: deletesLocalDownloadOnExit
         )
         .id(loadedEntry.entryID)
     }
@@ -245,13 +244,6 @@ struct ReadingListReaderPage: View {
                 burnAfterReadingRecordIDs.remove(recordID)
             }
         }
-    }
-
-    private func removeBurnAfterReadingDownloads() {
-        guard !burnAfterReadingRecordIDs.isEmpty else { return }
-        let removingIDs = burnAfterReadingRecordIDs
-        burnAfterReadingRecordIDs.removeAll()
-        downloadService.removeRecords(withIDs: removingIDs)
     }
 
     private var showsLoadingToast: Bool {
@@ -276,9 +268,11 @@ struct ReadingListReaderPage: View {
             canMoveNext: !isLoading && index + 1 < entries.count,
             changeOrder: changeOrder,
             selectEntry: selectEntry,
+            selectEntryAfterFinishingCurrent: selectEntryAfterFinishingCurrent,
             removeEntries: removeEntries,
             movePrevious: movePrevious,
-            moveNext: moveNext
+            moveNext: moveNext,
+            moveNextAfterFinishingCurrent: moveNextAfterFinishingCurrent
         )
     }
 
@@ -313,7 +307,9 @@ struct ReadingListReaderPage: View {
                 )
             }
             loadedEntry = LoadedReadingListEntry(entry: entry, detail: detail)
+            removeCompletedDownloadIfNeeded(afterLoading: activeEntryID)
         } catch {
+            burnAfterReadingState.cancelRemoval(afterFailingToLoad: activeEntryID)
             if let previousLoadedEntry {
                 currentEntryID = previousLoadedEntry.entryID
                 pendingBookToastTitle = nil
@@ -326,10 +322,32 @@ struct ReadingListReaderPage: View {
     }
 
     private func selectEntry(_ entry: ReadingListEntry) {
+        selectEntry(entry, finishesCurrentEntry: false)
+    }
+
+    private func selectEntryAfterFinishingCurrent(_ entry: ReadingListEntry) {
+        selectEntry(entry, finishesCurrentEntry: true)
+    }
+
+    private func selectEntry(_ entry: ReadingListEntry, finishesCurrentEntry: Bool) {
         guard !isLoading else { return }
-        if currentEntryID != entry.id {
-            pendingBookToastTitle = entry.item.title
-        }
+        guard currentEntryID != entry.id else { return }
+
+        let destinationIndex = entries.firstIndex { $0.id == entry.id }
+        let currentEntry = currentIndex.flatMap { entries.indices.contains($0) ? entries[$0] : nil }
+        let movesForward = currentIndex.map { currentIndex in
+            destinationIndex.map { $0 > currentIndex } ?? false
+        } ?? false
+        let recordID = currentEntry?.downloadedRecord?.id
+        burnAfterReadingState.prepareRemoval(
+            entryID: currentEntry?.id ?? "",
+            recordID: recordID,
+            hasFinishedCurrentEntry: finishesCurrentEntry,
+            isLaterDestination: movesForward,
+            isBurnAfterReadingEnabled: recordID.map(burnAfterReadingRecordIDs.contains) ?? false,
+            destinationEntryID: entry.id
+        )
+        pendingBookToastTitle = entry.item.title
         currentEntryID = entry.id
     }
 
@@ -342,11 +360,25 @@ struct ReadingListReaderPage: View {
     }
 
     private func moveNext() {
+        moveNext(finishesCurrentEntry: false)
+    }
+
+    private func moveNextAfterFinishingCurrent() {
+        moveNext(finishesCurrentEntry: true)
+    }
+
+    private func moveNext(finishesCurrentEntry: Bool) {
         guard !isLoading else { return }
         guard let currentIndex, currentIndex + 1 < entries.count else { return }
-        let entry = entries[currentIndex + 1]
-        pendingBookToastTitle = entry.item.title
-        currentEntryID = entry.id
+        let destinationEntry = entries[currentIndex + 1]
+        selectEntry(destinationEntry, finishesCurrentEntry: finishesCurrentEntry)
+    }
+
+    private func removeCompletedDownloadIfNeeded(afterLoading entryID: String) {
+        guard let removal = burnAfterReadingState.takeRemoval(afterLoading: entryID) else { return }
+        burnAfterReadingRecordIDs.remove(removal.recordID)
+        entries.removeAll { $0.id == removal.entryID }
+        downloadService.removeRecords(withIDs: [removal.recordID])
     }
 
     private func removeEntries(at offsets: IndexSet) {
