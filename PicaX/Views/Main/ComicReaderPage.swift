@@ -383,10 +383,10 @@ struct ComicReaderPage: View {
               isAtChapterEnd else {
             return nil
         }
-        if !wholeBookContinuousReading, viewModel.canLoadNextChapter {
+        if !usesWholeBookContinuousReading, viewModel.canLoadNextChapter {
             return .nextChapter
         }
-        if wholeBookContinuousReading, viewModel.canLoadNextChapter {
+        if usesWholeBookContinuousReading, viewModel.canLoadNextChapter {
             return nil
         }
         if nextChapterButtonSwitchesBooks, hasReadingList, canMoveToNextBook {
@@ -406,7 +406,7 @@ struct ComicReaderPage: View {
               !images.isEmpty else {
             return false
         }
-        if wholeBookContinuousReading {
+        if usesWholeBookContinuousReading {
             guard !detail.chapters.isEmpty,
                   viewModel.currentChapterIndex >= detail.chapters.count - 1 else {
                 return false
@@ -416,7 +416,7 @@ struct ComicReaderPage: View {
         switch readerReadingMode {
         case .topToBottomContinuous:
             return reachedContinuousBottom(in: images)
-        case .topToBottom, .leftToRight, .rightToLeft:
+        case .topToBottom, .leftToRight, .rightToLeft, .pageCurl:
             let finalPageIndex = pagedCommentPageIndex(for: images) ?? max(images.count - 1, 0)
             return pagedPageIndex >= finalPageIndex
         }
@@ -616,7 +616,7 @@ struct ComicReaderPage: View {
 
     @ViewBuilder
     private func readerContent(images: [ComicChapterImage]) -> some View {
-        if wholeBookContinuousReading {
+        if usesWholeBookContinuousReading {
             wholeBookReaderContent(images: images)
         } else {
             standardReaderContent(images: images)
@@ -632,6 +632,12 @@ struct ComicReaderPage: View {
             verticalPagedReaderContent(images: images)
         case .leftToRight, .rightToLeft:
             horizontalPagedReaderContent(images: images)
+        case .pageCurl:
+            #if os(iOS)
+            pageCurlReaderContent(images: images)
+            #else
+            horizontalPagedReaderContent(images: images)
+            #endif
         }
     }
 
@@ -926,6 +932,116 @@ struct ComicReaderPage: View {
         }
         .ignoresSafeArea(.container)
     }
+
+    #if os(iOS)
+    @ViewBuilder
+    private func pageCurlReaderContent(images: [ComicChapterImage]) -> some View {
+        GeometryReader { geometry in
+            let targetPixelWidth = readerTargetPixelWidth(for: geometry.size.width)
+            let pageCount = images.count + (pagedCommentPageIndex(for: images) == nil ? 0 : 1)
+
+            ReaderPageCurlView(
+                pageCount: pageCount,
+                selectedIndex: $pagedPageIndex,
+                contentID: pageCurlContentID(images: images)
+            ) { index in
+                ZStack {
+                    Color.black
+
+                    if images.indices.contains(index) {
+                        ReaderImageView(
+                            image: images[index],
+                            retryCount: boundedImageRetryCount,
+                            retryInterval: boundedImageRetryInterval,
+                            targetPixelWidth: targetPixelWidth,
+                            containerSize: geometry.size,
+                            isLoadAllowed: isImageInPreloadWindow(
+                                index,
+                                around: pagedPageIndex,
+                                imageCount: images.count
+                            ),
+                            zoomConfiguration: readerZoomConfiguration,
+                            dimsImage: dimsReaderImages
+                        )
+                    } else if index == images.count,
+                              shouldShowChapterCommentsAtEnd,
+                              let chapter = currentChapter {
+                        ReaderChapterCommentsView(
+                            item: detail.item,
+                            chapter: chapter,
+                            chapterIndex: viewModel.currentChapterIndex,
+                            service: service,
+                            account: platformAccounts.account(for: detail.item.platform),
+                            localCommentsProvider: localChapterCommentsProvider
+                        )
+                    }
+                }
+                .frame(width: geometry.size.width, height: geometry.size.height)
+            }
+            .frame(width: geometry.size.width, height: geometry.size.height)
+            .background(Color.black)
+            .ignoresSafeArea(.container)
+            .readerInteractionGesture(
+                size: geometry.size,
+                mode: readerUIToggleMode,
+                tapPagingEnabled: tapPagingEnabled,
+                tapPagingEdgePercent: boundedTapPagingEdgePercent,
+                tapPagingInverted: tapPagingInverted,
+                doubleTapZoomEnabled: effectiveDoubleTapZoomEnabled,
+                readingMode: readerReadingMode,
+                toggleUI: { toggleReaderUI() },
+                turnPage: { direction in
+                    Task {
+                        await turnPage(
+                            direction,
+                            images: images,
+                            targetPixelWidth: targetPixelWidth
+                        ) { pageIndex in
+                            setPagedPageIndex(pageIndex, animated: true)
+                        }
+                    }
+                }
+            )
+            .readerAutoPaging(
+                isEnabled: isAutoPaging && !isChapterSheetPresented,
+                interval: boundedAutoPageInterval
+            ) {
+                handleAutoPageTick(images: images, targetPixelWidth: targetPixelWidth) { pageIndex in
+                    setPagedPageIndex(pageIndex, animated: true)
+                }
+            }
+            .onAppear {
+                _ = syncPagedSelection(images: images, targetPixelWidth: targetPixelWidth)
+            }
+            .onChange(of: viewModel.currentChapterIndex) { _ in
+                _ = syncPagedSelection(images: images, targetPixelWidth: targetPixelWidth)
+            }
+            .onChange(of: pagedPageIndex) { newValue in
+                if images.indices.contains(newValue) {
+                    updateReadingPage(
+                        newValue,
+                        totalPages: images.count,
+                        targetPixelWidth: targetPixelWidth
+                    )
+                }
+            }
+            .onChange(of: progressJumpRequest) { request in
+                handleProgressJumpRequest(
+                    request,
+                    images: images,
+                    targetPixelWidth: targetPixelWidth
+                ) { pageIndex in
+                    setPagedPageIndex(pageIndex, animated: true)
+                }
+            }
+        }
+        .ignoresSafeArea(.container)
+    }
+
+    private func pageCurlContentID(images: [ComicChapterImage]) -> String {
+        "page-curl-\(detail.item.platform.rawValue)-\(detail.item.id)-\(viewModel.currentChapterIndex)-\(images.count)-\(shouldShowChapterCommentsAtEnd)"
+    }
+    #endif
 
     @ViewBuilder
     private func horizontalPagedReaderContent(images: [ComicChapterImage]) -> some View {
@@ -1672,7 +1788,7 @@ struct ComicReaderPage: View {
         }
 
         let pageCount: Int
-        if wholeBookContinuousReading {
+        if usesWholeBookContinuousReading {
             pageCount = viewModel.currentChapterPageCount
         } else if case .loaded(let images) = viewModel.state {
             pageCount = images.count
@@ -2015,6 +2131,10 @@ struct ComicReaderPage: View {
         ReaderReadingMode(rawValue: readingMode) ?? .topToBottomContinuous
     }
 
+    private var usesWholeBookContinuousReading: Bool {
+        wholeBookContinuousReading && readerReadingMode != .pageCurl
+    }
+
     private var currentChapter: ComicChapter? {
         guard detail.chapters.indices.contains(viewModel.currentChapterIndex) else { return nil }
         return detail.chapters[viewModel.currentChapterIndex]
@@ -2088,12 +2208,12 @@ struct ComicReaderPage: View {
         case .topToBottomContinuous:
             continuousScrollTracker.effectiveScrollY(fallback: nil)
             candidatePage = viewModel.currentPageIndex
-        case .topToBottom, .leftToRight, .rightToLeft:
+        case .topToBottom, .leftToRight, .rightToLeft, .pageCurl:
             candidatePage = pagedPageIndex
         }
-        let pageCount = wholeBookContinuousReading ? viewModel.currentChapterPageCount : images.count
+        let pageCount = usesWholeBookContinuousReading ? viewModel.currentChapterPageCount : images.count
         let pageIndex = min(max(candidatePage, 0), max(pageCount - 1, 0))
-        if wholeBookContinuousReading {
+        if usesWholeBookContinuousReading {
             _ = viewModel.updateReadingPosition(
                 chapterIndex: viewModel.currentChapterIndex,
                 pageIndex: pageIndex,

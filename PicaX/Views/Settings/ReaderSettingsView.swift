@@ -88,6 +88,7 @@ struct ReaderSettingsView: View {
                 }
 
                 Toggle("整卷连续阅读", isOn: $wholeBookContinuousReading)
+                    .disabled(selectedReadingMode == .pageCurl)
                 Toggle("深色模式下降低图片亮度", isOn: $reducesImageBrightnessInDarkMode)
             } header: {
                 Text("阅读")
@@ -132,7 +133,7 @@ struct ReaderSettingsView: View {
                     .disabled(selectedReadingMode != .topToBottomContinuous)
 
                 Toggle("自动进入下一章", isOn: $autoPagingTurnsChapter)
-                    .disabled(wholeBookContinuousReading)
+                    .disabled(wholeBookContinuousReading && selectedReadingMode != .pageCurl)
             } header: {
                 Text("自动翻页")
             } footer: {
@@ -367,7 +368,9 @@ struct ReaderSettingsView: View {
 
     private var readingFooter: String {
         var descriptions = [selectedReadingMode.description]
-        if wholeBookContinuousReading {
+        if selectedReadingMode == .pageCurl {
+            descriptions.append("仿真翻页按章节阅读，不支持整卷连续阅读。")
+        } else if wholeBookContinuousReading {
             descriptions.append("下一章会提前追加到当前章节末尾，直到全书结束。")
         }
         return descriptions.joined(separator: "\n")

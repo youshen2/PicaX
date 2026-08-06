@@ -189,7 +189,7 @@ struct ReaderInteractionGestureModifier: ViewModifier {
         guard size.width > 0, size.height > 0 else { return nil }
 
         switch readingMode {
-        case .leftToRight:
+        case .leftToRight, .pageCurl:
             if location.x >= size.width * (1 - ratio) { return .next }
             if location.x <= size.width * ratio { return .previous }
         case .rightToLeft:

@@ -165,7 +165,7 @@ struct ReaderOptionsMenu: View {
                 Toggle(isOn: $autoPagingTurnsChapter) {
                     Label("自动进入下一章", systemImage: "arrow.down.doc")
                 }
-                .disabled(wholeBookContinuousReading)
+                .disabled(wholeBookContinuousReading && readingMode != .pageCurl)
             }
 
             if let deletesLocalDownloadOnExit {
@@ -183,6 +183,7 @@ struct ReaderOptionsMenu: View {
                 Toggle(isOn: $wholeBookContinuousReading) {
                     Label("整卷连续阅读", systemImage: "rectangle.stack.fill")
                 }
+                .disabled(readingMode == .pageCurl)
 
                 Button(action: onOpenDetail) {
                     Label("打开详情页", systemImage: "info.circle")

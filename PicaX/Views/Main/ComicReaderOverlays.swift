@@ -96,6 +96,7 @@ enum ReaderReadingMode: String, CaseIterable, Identifiable {
     case topToBottom
     case leftToRight
     case rightToLeft
+    case pageCurl
 
     var id: String { rawValue }
 
@@ -109,6 +110,8 @@ enum ReaderReadingMode: String, CaseIterable, Identifiable {
             "从左到右"
         case .rightToLeft:
             "从右到左"
+        case .pageCurl:
+            "仿真翻页（左右）"
         }
     }
 
@@ -122,6 +125,8 @@ enum ReaderReadingMode: String, CaseIterable, Identifiable {
             "单页横向分页，按左到右方向阅读。"
         case .rightToLeft:
             "单页横向分页，按右到左方向阅读。"
+        case .pageCurl:
+            "使用系统仿真卷页效果，左右滑动切换单页。"
         }
     }
 }
