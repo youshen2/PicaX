@@ -75,9 +75,7 @@ enum ComicPlatform: String, CaseIterable, Codable, Identifiable, Sendable {
 
     var loginWebsite: String? {
         switch self {
-        case .picacg:
-            "\(PlatformFeatureSettings.frontendBaseURL(for: .picacg))/web/login"
-        case .jmComic:
+        case .picacg, .jmComic:
             nil
         case .nhentai:
             "\(PlatformFeatureSettings.frontendBaseURL(for: .nhentai))/login/?next=/"

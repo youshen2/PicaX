@@ -127,7 +127,20 @@ extension ComicContentService {
             throw ComicContentError.invalidURL(path)
         }
         let headers = picacgHeaders(path: path, method: method, token: token, appChannel: appChannel)
-        return try await requestJSON(url: url, method: method, headers: headers, body: body)
+        do {
+            return try await requestJSON(url: url, method: method, headers: headers, body: body)
+        } catch {
+            throw Self.picacgRequestError(error, token: token)
+        }
+    }
+
+    nonisolated static func picacgRequestError(_ error: Error, token: String) -> Error {
+        guard !token.isEmpty,
+              case ComicContentError.server(let message) = error,
+              message == "HTTP 401" else {
+            return error
+        }
+        return ComicContentError.loginRequired("PicACG 登录已过期，请重新登录。")
     }
 
     func picacgItems(from json: [String: Any], arrayPath: [String], favoriteDate: Date? = nil) throws -> [ComicListItem] {
