@@ -82,6 +82,18 @@ struct PlatformLoginView: View {
             }
 
             Section {
+                NavigationLink {
+                    HomeComicSourceFeaturePage(
+                        platform: platform,
+                        service: service,
+                        showsAccountSection: false
+                    )
+                } label: {
+                    Label("漫画源设置", systemImage: "slider.horizontal.3")
+                }
+            }
+
+            Section {
                 if supportsPasswordLogin {
                     Button(action: beginLogin) {
                         if isLoggingIn {

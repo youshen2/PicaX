@@ -45,6 +45,13 @@ struct HomeComicSourceFeaturePage: View {
     @EnvironmentObject private var platformAccounts: PlatformAccountService
     let platform: ComicPlatform
     let service: ComicContentService
+    let showsAccountSection: Bool
+
+    init(platform: ComicPlatform, service: ComicContentService, showsAccountSection: Bool = true) {
+        self.platform = platform
+        self.service = service
+        self.showsAccountSection = showsAccountSection
+    }
 
     @AppStorage(PlatformFeatureSettingsKey.frontendBaseURL(.picacg)) private var picacgFrontendURL = PlatformFeatureSettings.defaultFrontendBaseURL(for: .picacg)
     @AppStorage(PlatformFeatureSettingsKey.frontendBaseURL(.jmComic)) private var jmFrontendURL = PlatformFeatureSettings.defaultFrontendBaseURL(for: .jmComic)
@@ -57,7 +64,9 @@ struct HomeComicSourceFeaturePage: View {
 
     var body: some View {
         List {
-            accountSection
+            if showsAccountSection {
+                accountSection
+            }
             frontendSection
 
             switch platform {
