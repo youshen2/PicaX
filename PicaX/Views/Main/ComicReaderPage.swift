@@ -81,6 +81,7 @@ struct ComicReaderPage: View {
     let listContext: ComicReaderListContext?
     let initialToastMessage: String?
     let readerUIHiddenState: Binding<Bool>?
+    let autoPagingState: Binding<Bool>?
     let deletesLocalDownloadOnExit: Binding<Bool>?
     let shouldHandleReaderExit: () -> Bool
     let onReaderExit: (() -> Void)?
@@ -93,7 +94,7 @@ struct ComicReaderPage: View {
     @State private var continuousLoadableImageIDs = Set<String>()
     @State private var pagedScrollRestoreToken = UUID()
     @State private var isRestoringPagedScrollPosition = false
-    @State private var isAutoPaging = false
+    @State private var locallyAutoPaging = false
     @State private var isAutoPagingTurnInFlight = false
     @State private var isChapterEndActionInFlight = false
     @State private var autoPagingCommentActionChapterIndex: Int?
@@ -122,6 +123,7 @@ struct ComicReaderPage: View {
         listContext: ComicReaderListContext? = nil,
         initialToastMessage: String? = nil,
         readerUIHiddenState: Binding<Bool>? = nil,
+        autoPagingState: Binding<Bool>? = nil,
         deletesLocalDownloadOnExit: Binding<Bool>? = nil,
         shouldHandleReaderExit: @escaping () -> Bool = { true },
         onReaderExit: (() -> Void)? = nil
@@ -138,6 +140,7 @@ struct ComicReaderPage: View {
         self.listContext = listContext
         self.initialToastMessage = initialToastMessage
         self.readerUIHiddenState = readerUIHiddenState
+        self.autoPagingState = autoPagingState
         self.deletesLocalDownloadOnExit = deletesLocalDownloadOnExit
         self.shouldHandleReaderExit = shouldHandleReaderExit
         self.onReaderExit = onReaderExit
@@ -326,7 +329,9 @@ struct ComicReaderPage: View {
         flushPendingHistoryRecord()
         flushReadingDurationSession()
         readerToastTask?.cancel()
-        isAutoPaging = false
+        if autoPagingState == nil {
+            locallyAutoPaging = false
+        }
         isAutoPagingTurnInFlight = false
         autoPagingCommentActionChapterIndex = nil
         if detailRequest == nil, shouldHandleReaderExit() {
@@ -1745,7 +1750,6 @@ struct ComicReaderPage: View {
         switch direction {
         case .previous:
             guard listContext.canMovePrevious else { return false }
-            isAutoPaging = false
             listContext.movePrevious()
             return true
         case .next:
@@ -2173,6 +2177,10 @@ struct ComicReaderPage: View {
         readerUIHiddenState?.wrappedValue ?? locallyHidesReaderUI
     }
 
+    private var isAutoPaging: Bool {
+        autoPagingState?.wrappedValue ?? locallyAutoPaging
+    }
+
     private var showsProgressOverlay: Bool {
         showsReaderUI || !progressFollowsUIVisibility
     }
@@ -2204,7 +2212,7 @@ struct ComicReaderPage: View {
         syncAutoPagingStartPage()
         isAutoPagingTurnInFlight = false
         withAnimation(.easeOut(duration: 0.12)) {
-            isAutoPaging = true
+            setAutoPaging(true)
             setReaderUIHidden(true)
         }
         showReaderToast("已开启自动翻页")
@@ -2213,10 +2221,18 @@ struct ComicReaderPage: View {
     private func stopAutoPaging(toast message: String? = nil) {
         isAutoPagingTurnInFlight = false
         withAnimation(.easeOut(duration: 0.12)) {
-            isAutoPaging = false
+            setAutoPaging(false)
         }
         if let message {
             showReaderToast(message)
+        }
+    }
+
+    private func setAutoPaging(_ isEnabled: Bool) {
+        if let autoPagingState {
+            autoPagingState.wrappedValue = isEnabled
+        } else {
+            locallyAutoPaging = isEnabled
         }
     }
 

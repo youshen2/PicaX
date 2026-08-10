@@ -133,6 +133,7 @@ struct ReadingListReaderPage: View {
     @State private var errorMessage: String?
     @State private var pendingBookToastTitle: String?
     @State private var hidesReaderUI = false
+    @State private var isAutoPaging = false
     @State private var burnAfterReadingState = ReadingListBurnAfterReadingState()
 
     init(request: ReadingListRequest, service: ComicContentService) {
@@ -230,6 +231,7 @@ struct ReadingListReaderPage: View {
             listContext: listContext(for: loadedEntry.entryID),
             initialToastMessage: pendingBookToastTitle,
             readerUIHiddenState: $hidesReaderUI,
+            autoPagingState: $isAutoPaging,
             deletesLocalDownloadOnExit: deletesLocalDownloadOnExit
         )
         .id(loadedEntry.entryID)
