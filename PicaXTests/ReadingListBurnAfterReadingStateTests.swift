@@ -5,12 +5,12 @@ import XCTest
 final class ReadingListBurnAfterReadingStateTests: XCTestCase {
     func testRemovalIsAvailableOnlyAfterDestinationLoads() {
         var state = ReadingListBurnAfterReadingState()
+        state.isEnabled = true
         state.prepareRemoval(
             entryID: "first-entry",
             recordID: "first-record",
             hasFinishedCurrentEntry: true,
             isLaterDestination: true,
-            isBurnAfterReadingEnabled: true,
             destinationEntryID: "later-entry"
         )
 
@@ -27,16 +27,17 @@ final class ReadingListBurnAfterReadingStateTests: XCTestCase {
             )
         )
         XCTAssertFalse(state.hasPendingRemoval)
+        XCTAssertTrue(state.isEnabled)
     }
 
     func testFailedDestinationLoadCancelsRemoval() {
         var state = ReadingListBurnAfterReadingState()
+        state.isEnabled = true
         state.prepareRemoval(
             entryID: "first-entry",
             recordID: "first-record",
             hasFinishedCurrentEntry: true,
             isLaterDestination: true,
-            isBurnAfterReadingEnabled: true,
             destinationEntryID: "second-entry"
         )
 
@@ -48,13 +49,13 @@ final class ReadingListBurnAfterReadingStateTests: XCTestCase {
 
     func testUnfinishedEntryDoesNotPrepareRemoval() {
         var state = ReadingListBurnAfterReadingState()
+        state.isEnabled = true
 
         state.prepareRemoval(
             entryID: "first-entry",
             recordID: "first-record",
             hasFinishedCurrentEntry: false,
             isLaterDestination: true,
-            isBurnAfterReadingEnabled: true,
             destinationEntryID: "second-entry"
         )
 
@@ -63,13 +64,13 @@ final class ReadingListBurnAfterReadingStateTests: XCTestCase {
 
     func testEarlierDestinationDoesNotPrepareRemoval() {
         var state = ReadingListBurnAfterReadingState()
+        state.isEnabled = true
 
         state.prepareRemoval(
             entryID: "second-entry",
             recordID: "second-record",
             hasFinishedCurrentEntry: true,
             isLaterDestination: false,
-            isBurnAfterReadingEnabled: true,
             destinationEntryID: "first-entry"
         )
 
@@ -84,7 +85,6 @@ final class ReadingListBurnAfterReadingStateTests: XCTestCase {
             recordID: "first-record",
             hasFinishedCurrentEntry: true,
             isLaterDestination: true,
-            isBurnAfterReadingEnabled: false,
             destinationEntryID: "second-entry"
         )
 
@@ -93,13 +93,13 @@ final class ReadingListBurnAfterReadingStateTests: XCTestCase {
 
     func testOnlineEntryDoesNotPrepareRemoval() {
         var state = ReadingListBurnAfterReadingState()
+        state.isEnabled = true
 
         state.prepareRemoval(
             entryID: "first-entry",
             recordID: nil,
             hasFinishedCurrentEntry: true,
             isLaterDestination: true,
-            isBurnAfterReadingEnabled: true,
             destinationEntryID: "second-entry"
         )
 

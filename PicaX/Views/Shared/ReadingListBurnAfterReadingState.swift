@@ -5,6 +5,7 @@ struct ReadingListBurnAfterReadingState {
         let destinationEntryID: String
     }
 
+    var isEnabled = false
     private var pendingRemoval: Removal?
 
     var hasPendingRemoval: Bool {
@@ -16,12 +17,11 @@ struct ReadingListBurnAfterReadingState {
         recordID: String?,
         hasFinishedCurrentEntry: Bool,
         isLaterDestination: Bool,
-        isBurnAfterReadingEnabled: Bool,
         destinationEntryID: String
     ) {
         guard hasFinishedCurrentEntry,
               isLaterDestination,
-              isBurnAfterReadingEnabled,
+              isEnabled,
               let recordID else {
             pendingRemoval = nil
             return

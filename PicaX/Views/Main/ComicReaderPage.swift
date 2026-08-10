@@ -80,12 +80,13 @@ struct ComicReaderPage: View {
     let historyChapterIndexResolver: (Int) -> Int
     let listContext: ComicReaderListContext?
     let initialToastMessage: String?
+    let readerUIHiddenState: Binding<Bool>?
     let deletesLocalDownloadOnExit: Binding<Bool>?
     let shouldHandleReaderExit: () -> Bool
     let onReaderExit: (() -> Void)?
     @StateObject private var viewModel: ComicReaderViewModel
     @State private var presentedChapterSheetTab: ReaderChapterSheetTab?
-    @State private var hidesReaderUI = false
+    @State private var locallyHidesReaderUI = false
     @State private var pagedPageIndex = 0
     @State private var continuousScrollBridge = ReaderContinuousScrollBridge()
     @State private var continuousScrollTracker = ReaderContinuousScrollTracker()
@@ -120,6 +121,7 @@ struct ComicReaderPage: View {
         historyChapterIndexResolver: @escaping (Int) -> Int = { $0 },
         listContext: ComicReaderListContext? = nil,
         initialToastMessage: String? = nil,
+        readerUIHiddenState: Binding<Bool>? = nil,
         deletesLocalDownloadOnExit: Binding<Bool>? = nil,
         shouldHandleReaderExit: @escaping () -> Bool = { true },
         onReaderExit: (() -> Void)? = nil
@@ -135,6 +137,7 @@ struct ComicReaderPage: View {
         self.historyChapterIndexResolver = historyChapterIndexResolver
         self.listContext = listContext
         self.initialToastMessage = initialToastMessage
+        self.readerUIHiddenState = readerUIHiddenState
         self.deletesLocalDownloadOnExit = deletesLocalDownloadOnExit
         self.shouldHandleReaderExit = shouldHandleReaderExit
         self.onReaderExit = onReaderExit
@@ -1758,7 +1761,7 @@ struct ComicReaderPage: View {
 
     private var burnAfterReadingConfirmationMessage: String {
         if listContext != nil {
-            return "只有读完当前漫画并成功切换到任意后续漫画后，才会自动删除上一部漫画的本地下载文件、下载记录和阅读列表项。未读完时切换或直接退出都不会删除；收藏与阅读历史会保留。"
+            return "开启后，本次“阅读全部”会一直保持阅后即焚，直到手动关闭或退出阅读器。只有读完当前漫画并成功切换到任意后续漫画后，才会自动删除上一部漫画的本地下载文件、下载记录和阅读列表项。未读完时切换或直接退出都不会删除；收藏与阅读历史会保留。"
         }
         return "退出当前阅读器后，将删除这本漫画的本地下载文件和下载记录。收藏与阅读历史会保留。"
     }
@@ -2166,6 +2169,10 @@ struct ComicReaderPage: View {
         !hidesReaderUI
     }
 
+    private var hidesReaderUI: Bool {
+        readerUIHiddenState?.wrappedValue ?? locallyHidesReaderUI
+    }
+
     private var showsProgressOverlay: Bool {
         showsReaderUI || !progressFollowsUIVisibility
     }
@@ -2176,7 +2183,15 @@ struct ComicReaderPage: View {
 
     private func toggleReaderUI() {
         withAnimation(readerChromeAnimation) {
-            hidesReaderUI.toggle()
+            setReaderUIHidden(!hidesReaderUI)
+        }
+    }
+
+    private func setReaderUIHidden(_ isHidden: Bool) {
+        if let readerUIHiddenState {
+            readerUIHiddenState.wrappedValue = isHidden
+        } else {
+            locallyHidesReaderUI = isHidden
         }
     }
 
@@ -2190,7 +2205,7 @@ struct ComicReaderPage: View {
         isAutoPagingTurnInFlight = false
         withAnimation(.easeOut(duration: 0.12)) {
             isAutoPaging = true
-            hidesReaderUI = true
+            setReaderUIHidden(true)
         }
         showReaderToast("已开启自动翻页")
     }

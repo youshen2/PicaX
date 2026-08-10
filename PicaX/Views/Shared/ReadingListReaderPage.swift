@@ -132,7 +132,7 @@ struct ReadingListReaderPage: View {
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var pendingBookToastTitle: String?
-    @State private var burnAfterReadingRecordIDs = Set<String>()
+    @State private var hidesReaderUI = false
     @State private var burnAfterReadingState = ReadingListBurnAfterReadingState()
 
     init(request: ReadingListRequest, service: ComicContentService) {
@@ -210,7 +210,7 @@ struct ReadingListReaderPage: View {
                       localChapterIndexes.indices.contains(chapterIndex) else { return chapterIndex }
                 return localChapterIndexes[chapterIndex]
             }
-            deletesLocalDownloadOnExit = burnAfterReadingBinding(for: record.id)
+            deletesLocalDownloadOnExit = $burnAfterReadingState.isEnabled
         } else {
             imageProvider = nil
             commentsProvider = nil
@@ -229,21 +229,10 @@ struct ReadingListReaderPage: View {
             historyChapterIndexResolver: historyChapterIndexResolver,
             listContext: listContext(for: loadedEntry.entryID),
             initialToastMessage: pendingBookToastTitle,
+            readerUIHiddenState: $hidesReaderUI,
             deletesLocalDownloadOnExit: deletesLocalDownloadOnExit
         )
         .id(loadedEntry.entryID)
-    }
-
-    private func burnAfterReadingBinding(for recordID: String) -> Binding<Bool> {
-        Binding {
-            burnAfterReadingRecordIDs.contains(recordID)
-        } set: { isEnabled in
-            if isEnabled {
-                burnAfterReadingRecordIDs.insert(recordID)
-            } else {
-                burnAfterReadingRecordIDs.remove(recordID)
-            }
-        }
     }
 
     private var showsLoadingToast: Bool {
@@ -344,7 +333,6 @@ struct ReadingListReaderPage: View {
             recordID: recordID,
             hasFinishedCurrentEntry: finishesCurrentEntry,
             isLaterDestination: movesForward,
-            isBurnAfterReadingEnabled: recordID.map(burnAfterReadingRecordIDs.contains) ?? false,
             destinationEntryID: entry.id
         )
         pendingBookToastTitle = entry.item.title
@@ -376,7 +364,6 @@ struct ReadingListReaderPage: View {
 
     private func removeCompletedDownloadIfNeeded(afterLoading entryID: String) {
         guard let removal = burnAfterReadingState.takeRemoval(afterLoading: entryID) else { return }
-        burnAfterReadingRecordIDs.remove(removal.recordID)
         entries.removeAll { $0.id == removal.entryID }
         downloadService.removeRecords(withIDs: [removal.recordID])
     }
