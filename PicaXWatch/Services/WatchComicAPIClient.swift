@@ -513,7 +513,8 @@ private extension WatchComicAPIClient {
             url: url,
             method: method,
             headers: headers,
-            body: body.map { Data($0.utf8) }
+            body: body.map { Data($0.utf8) },
+            methodNotAllowedMessage: "JMComic API 地址已失效（HTTP 405），请在设置的“平台账号 → JMComic → 漫画源设置”中更新 API 地址。"
         )
 
         guard let envelope = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -1674,15 +1675,25 @@ private extension WatchComicAPIClient {
         return json
     }
 
-    func requestData(url: URL, method: String = "GET", headers: [String: String] = [:], body: Data? = nil) async throws -> Data {
+    func requestData(
+        url: URL,
+        method: String = "GET",
+        headers: [String: String] = [:],
+        body: Data? = nil,
+        methodNotAllowedMessage: String? = nil
+    ) async throws -> Data {
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.httpBody = body
         headers.forEach { request.setValue($0.value, forHTTPHeaderField: $0.key) }
         let (data, response) = try await session.data(for: request)
-        if let httpResponse = response as? HTTPURLResponse,
-           !(200..<300).contains(httpResponse.statusCode) {
-            throw WatchComicAPIError.server("HTTP \(httpResponse.statusCode)")
+        if let httpResponse = response as? HTTPURLResponse {
+            if httpResponse.statusCode == 405, let methodNotAllowedMessage {
+                throw WatchComicAPIError.server(methodNotAllowedMessage)
+            }
+            guard (200..<300).contains(httpResponse.statusCode) else {
+                throw WatchComicAPIError.server("HTTP \(httpResponse.statusCode)")
+            }
         }
         return data
     }

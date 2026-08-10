@@ -354,6 +354,9 @@ extension ComicContentService {
                 let message = jmPlainErrorMessage(data) ?? "JMComic 登录状态无效。"
                 throw ComicContentError.loginRequired(message)
             }
+            if httpResponse.statusCode == 405 {
+                throw ComicContentError.server("JMComic API 地址已失效（HTTP 405），请前往“平台账号 → JMComic → 漫画源设置”更新 API 地址。")
+            }
             guard (200..<300).contains(httpResponse.statusCode) else {
                 throw ComicContentError.server("JMComic HTTP \(httpResponse.statusCode)")
             }
