@@ -614,7 +614,7 @@ private extension WatchComicAPIClient {
             .components(separatedBy: .newlines)
             .map { normalizedBaseURL($0, fallback: "") }
             .filter { !$0.isEmpty && URL(string: $0)?.host != nil }
-        return uniqueBaseURLs(configured + ["https://www.cdntwice.org", "https://www.cdnsha.org", "https://www.cdnaspa.cc", "https://www.cdnntr.cc"])
+        return uniqueBaseURLs(configured + ["https://www.cdnhjk.net", "https://www.cdngwc.cc", "https://www.cdngwc.net", "https://www.cdngwc.club"])
     }
 
     var jmImageBaseURL: String {

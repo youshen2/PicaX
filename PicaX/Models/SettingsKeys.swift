@@ -597,13 +597,13 @@ enum JmAPIEndpoint: String, CaseIterable, Identifiable {
         case .auto:
             nil
         case .cdnTwice:
-            "https://www.cdntwice.org"
+            "https://www.cdnhjk.net"
         case .cdnSha:
-            "https://www.cdnsha.org"
+            "https://www.cdngwc.cc"
         case .cdnAspa:
-            "https://www.cdnaspa.cc"
+            "https://www.cdngwc.net"
         case .cdnNtr:
-            "https://www.cdnntr.cc"
+            "https://www.cdngwc.club"
         }
     }
 
