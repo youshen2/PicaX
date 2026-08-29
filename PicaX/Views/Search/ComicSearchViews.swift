@@ -125,6 +125,8 @@ struct ComicSearchPage: View {
     @State private var searchClearGeneration = 0
     @State private var searchTask: Task<Void, Never>?
     @State private var loadMoreTask: Task<Void, Never>?
+    @State private var pendingHistoryRecord: SearchHistoryRecord?
+    @State private var currentSearchRecordsHistory = false
     @FocusState private var isSearchFocused: Bool
 
     init(
@@ -155,7 +157,7 @@ struct ComicSearchPage: View {
                 if searchHistory.isEnabled, !searchHistory.records.isEmpty {
                     SearchHistoryListView(
                         records: searchHistory.records,
-                        onSelect: applyHistory,
+                        onSelect: selectHistory,
                         onDelete: searchHistory.remove
                     )
                 } else {
@@ -261,6 +263,25 @@ struct ComicSearchPage: View {
                 startSearch(force: true)
             }
         }
+        .confirmationDialog(
+            "继续上次搜索？",
+            isPresented: Binding(
+                get: { pendingHistoryRecord != nil },
+                set: { if !$0 { pendingHistoryRecord = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: pendingHistoryRecord
+        ) { record in
+            Button("从断点继续") {
+                applyHistory(record, resumesFromBreakpoint: true)
+            }
+            Button("重新搜索") {
+                applyHistory(record, resumesFromBreakpoint: false)
+            }
+            Button("取消", role: .cancel) {}
+        } message: { _ in
+            Text("断点续搜会从各关键词、各平台上次加载位置的下一页开始。")
+        }
         .task {
             applyConfiguredDefaultTargetIfNeeded()
             if focusesSearchFieldOnOpen, viewModel.trimmedKeyword(query).isEmpty {
@@ -276,34 +297,72 @@ struct ComicSearchPage: View {
         }
     }
 
-    private func search(force: Bool = false, recordsHistory: Bool = true) async {
+    private func search(
+        force: Bool = false,
+        recordsHistory: Bool = true,
+        resumeFrom breakpoint: ComicSearchBreakpoint? = nil
+    ) async {
         let trimmedKeyword = viewModel.trimmedKeyword(query)
         guard !trimmedKeyword.isEmpty else { return }
+        let target = selectedSearchTarget
+        let options = searchOptions
+        let separatesKeywords = searchesKeywordsSeparately
+        let accounts = searchAccounts
         query = trimmedKeyword
         hiddenTagSuggestionsQuery = trimmedKeyword
         isSearchFocused = false
+        currentSearchRecordsHistory = recordsHistory
         if recordsHistory {
-            searchHistory.record(keyword: trimmedKeyword, target: selectedSearchTarget)
+            searchHistory.record(
+                keyword: trimmedKeyword,
+                target: target,
+                advancedOptions: options,
+                searchesKeywordsSeparately: separatesKeywords,
+                breakpoint: breakpoint
+            )
         }
         await viewModel.search(
-            target: selectedSearchTarget,
+            target: target,
             keyword: trimmedKeyword,
-            accounts: searchAccounts,
-            options: searchOptions,
-            searchesKeywordsSeparately: searchesKeywordsSeparately,
+            accounts: accounts,
+            options: options,
+            searchesKeywordsSeparately: separatesKeywords,
+            resumeFrom: breakpoint,
             force: force
+        )
+        guard !Task.isCancelled, recordsHistory else { return }
+        searchHistory.updateBreakpoint(
+            keyword: trimmedKeyword,
+            target: target,
+            breakpoint: viewModel.breakpoint
         )
     }
 
     private func loadMore() async {
+        let keyword = query
+        let target = selectedSearchTarget
         await viewModel.loadMore(accounts: searchAccounts)
+        guard !Task.isCancelled, currentSearchRecordsHistory else { return }
+        searchHistory.updateBreakpoint(
+            keyword: keyword,
+            target: target,
+            breakpoint: viewModel.breakpoint
+        )
     }
 
-    private func startSearch(force: Bool, recordsHistory: Bool = true) {
+    private func startSearch(
+        force: Bool,
+        recordsHistory: Bool = true,
+        resumeFrom breakpoint: ComicSearchBreakpoint? = nil
+    ) {
         searchTask?.cancel()
         loadMoreTask?.cancel()
         searchTask = Task {
-            await search(force: force, recordsHistory: recordsHistory)
+            await search(
+                force: force,
+                recordsHistory: recordsHistory,
+                resumeFrom: breakpoint
+            )
         }
     }
 
@@ -402,15 +461,27 @@ struct ComicSearchPage: View {
         selectedSearchTarget = .aggregate(ComicPlatform.allCases.filter { nextPlatforms.contains($0) })
     }
 
-    private func applyHistory(_ record: SearchHistoryRecord) {
+    private func selectHistory(_ record: SearchHistoryRecord) {
+        if record.breakpoint?.isAvailable == true {
+            pendingHistoryRecord = record
+        } else {
+            applyHistory(record, resumesFromBreakpoint: false)
+        }
+    }
+
+    private func applyHistory(_ record: SearchHistoryRecord, resumesFromBreakpoint: Bool) {
+        pendingHistoryRecord = nil
         query = record.keyword
         selectedSearchTarget = record.target.searchTarget
+        searchOptions = record.advancedOptions
+        searchesKeywordsSeparately = record.searchesKeywordsSeparately
         if let aggregatePlatformSet = record.target.aggregatePlatformSet {
             aggregatePlatforms = aggregatePlatformSet
         }
-        Task {
-            await search(force: true)
-        }
+        startSearch(
+            force: true,
+            resumeFrom: resumesFromBreakpoint ? record.breakpoint : nil
+        )
     }
 
     @ViewBuilder

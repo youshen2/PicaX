@@ -39,12 +39,29 @@ final class ComicSearchViewModel: ObservableObject {
         keyword.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    var breakpoint: ComicSearchBreakpoint? {
+        guard let target = currentTarget else { return nil }
+        let requests = currentKeywords.flatMap { keyword in
+            target.platforms.compactMap { platform -> ComicSearchBreakpoint.Request? in
+                let key = ComicSearchRequestKey(keyword: keyword, platform: platform)
+                guard requestHasMore[key] == true else { return nil }
+                return ComicSearchBreakpoint.Request(
+                    keyword: keyword,
+                    platform: platform,
+                    nextPage: (currentPages[key] ?? 0) + 1
+                )
+            }
+        }
+        return requests.isEmpty ? nil : ComicSearchBreakpoint(requests: requests)
+    }
+
     func search(
         target: ComicSearchTarget,
         keyword: String,
         accounts: [ComicPlatform: PlatformAccount],
         options: ComicSearchAdvancedOptions,
         searchesKeywordsSeparately: Bool,
+        resumeFrom breakpoint: ComicSearchBreakpoint? = nil,
         force: Bool = false
     ) async {
         let trimmed = trimmedKeyword(keyword)
@@ -58,6 +75,7 @@ final class ComicSearchViewModel: ObservableObject {
         }
         if case .loaded = state,
            !force,
+           breakpoint == nil,
            currentTarget == target,
            currentKeyword == trimmed,
            currentOptions == options,
@@ -82,15 +100,40 @@ final class ComicSearchViewModel: ObservableObject {
 
         var comics: [ComicListItem] = []
         var failures: [String] = []
+        var requestCount = 0
+        let resumePages = breakpoint.map { breakpoint in
+            Dictionary(
+                breakpoint.requests.map {
+                    (ComicSearchRequestKey(keyword: $0.keyword, platform: $0.platform), $0.nextPage)
+                },
+                uniquingKeysWith: max
+            )
+        }
 
         for searchKeyword in keywords {
             guard generation == requestGeneration, !Task.isCancelled else { return }
 
+            let platforms = target.platforms.filter { platform in
+                guard let resumePages else { return true }
+                return resumePages[ComicSearchRequestKey(keyword: searchKeyword, platform: platform)] != nil
+            }
+            guard !platforms.isEmpty else { continue }
+            let pages = Dictionary(uniqueKeysWithValues: platforms.map { platform in
+                let key = ComicSearchRequestKey(keyword: searchKeyword, platform: platform)
+                return (platform, resumePages?[key] ?? 1)
+            })
+            requestCount += platforms.count
+            for platform in platforms {
+                let key = ComicSearchRequestKey(keyword: searchKeyword, platform: platform)
+                currentPages[key] = (pages[platform] ?? 1) - 1
+                requestHasMore[key] = true
+            }
+
             let responses = await fetchSearchPages(
-                platforms: target.platforms,
+                platforms: platforms,
                 keyword: searchKeyword,
                 accounts: accounts,
-                pages: Dictionary(uniqueKeysWithValues: target.platforms.map { ($0, 1) }),
+                pages: pages,
                 options: options
             )
             guard generation == requestGeneration, !Task.isCancelled else { return }
@@ -98,16 +141,16 @@ final class ComicSearchViewModel: ObservableObject {
             var groupsByPlatform: [ComicPlatform: [ComicListItem]] = [:]
             for response in responses {
                 let key = ComicSearchRequestKey(keyword: searchKeyword, platform: response.platform)
-                currentPages[key] = response.items == nil ? 0 : 1
-                requestHasMore[key] = !(response.items?.isEmpty ?? true)
                 if let items = response.items {
+                    currentPages[key] = pages[response.platform]
+                    requestHasMore[key] = !items.isEmpty
                     groupsByPlatform[response.platform] = items
                 } else if let message = response.errorMessage {
                     failures.append(failureMessage(keyword: searchKeyword, platform: response.platform, message: message))
                 }
             }
 
-            let groups = target.platforms.compactMap { groupsByPlatform[$0] }
+            let groups = platforms.compactMap { groupsByPlatform[$0] }
             let uniqueResult: ComicListUniqueResult
             do {
                 uniqueResult = try await ComicListBackgroundProcessing.interleavedUniqueItems(
@@ -126,7 +169,6 @@ final class ComicSearchViewModel: ObservableObject {
         }
 
         hasMore = requestHasMore.values.contains(true)
-        let requestCount = keywords.count * target.platforms.count
         if !comics.isEmpty || failures.count < requestCount {
             state = .loaded(comics)
         } else {
@@ -179,7 +221,6 @@ final class ComicSearchViewModel: ObservableObject {
             for response in responses {
                 let key = ComicSearchRequestKey(keyword: searchKeyword, platform: response.platform)
                 guard let items = response.items else {
-                    requestHasMore[key] = false
                     continue
                 }
                 currentPages[key] = pages[response.platform]

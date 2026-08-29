@@ -1,17 +1,91 @@
 import Combine
 import Foundation
 
+nonisolated struct ComicSearchBreakpoint: Equatable, Codable, Sendable {
+    nonisolated struct Request: Equatable, Codable, Sendable {
+        let keyword: String
+        let platform: ComicPlatform
+        let nextPage: Int
+    }
+
+    let requests: [Request]
+
+    var isAvailable: Bool {
+        !requests.isEmpty
+    }
+}
+
 struct SearchHistoryRecord: Identifiable, Equatable, Codable {
     let keyword: String
     let target: SearchHistoryTarget
+    let advancedOptions: ComicSearchAdvancedOptions
+    let searchesKeywordsSeparately: Bool
+    var breakpoint: ComicSearchBreakpoint?
     var searchedAt: Date
+
+    private enum CodingKeys: String, CodingKey {
+        case keyword
+        case target
+        case advancedOptions
+        case searchesKeywordsSeparately
+        case breakpoint
+        case searchedAt
+    }
+
+    nonisolated init(
+        keyword: String,
+        target: SearchHistoryTarget,
+        advancedOptions: ComicSearchAdvancedOptions = ComicSearchAdvancedOptions(),
+        searchesKeywordsSeparately: Bool = false,
+        breakpoint: ComicSearchBreakpoint? = nil,
+        searchedAt: Date
+    ) {
+        self.keyword = keyword
+        self.target = target
+        self.advancedOptions = advancedOptions
+        self.searchesKeywordsSeparately = searchesKeywordsSeparately
+        self.breakpoint = breakpoint
+        self.searchedAt = searchedAt
+    }
+
+    nonisolated init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        keyword = try container.decode(String.self, forKey: .keyword)
+        target = try container.decode(SearchHistoryTarget.self, forKey: .target)
+        advancedOptions = try container.decodeIfPresent(
+            ComicSearchAdvancedOptions.self,
+            forKey: .advancedOptions
+        ) ?? ComicSearchAdvancedOptions()
+        searchesKeywordsSeparately = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .searchesKeywordsSeparately
+        ) ?? false
+        breakpoint = try container.decodeIfPresent(
+            ComicSearchBreakpoint.self,
+            forKey: .breakpoint
+        )
+        searchedAt = try container.decode(Date.self, forKey: .searchedAt)
+    }
+
+    nonisolated func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(keyword, forKey: .keyword)
+        try container.encode(target, forKey: .target)
+        try container.encode(advancedOptions, forKey: .advancedOptions)
+        try container.encode(searchesKeywordsSeparately, forKey: .searchesKeywordsSeparately)
+        try container.encodeIfPresent(breakpoint, forKey: .breakpoint)
+        try container.encode(searchedAt, forKey: .searchedAt)
+    }
 
     var id: String {
         "\(target.id)-\(normalizedKeyword)"
     }
 
     var subtitle: String {
-        target.title
+        if breakpoint?.isAvailable == true {
+            return "\(target.title) · 可继续"
+        }
+        return target.title
     }
 
     var searchedAtText: String {
@@ -115,7 +189,13 @@ final class SearchHistoryService: ObservableObject {
         defaults.bool(forKey: SearchHistorySettingsKey.isEnabled)
     }
 
-    func record(keyword rawKeyword: String, target: ComicSearchTarget) {
+    func record(
+        keyword rawKeyword: String,
+        target: ComicSearchTarget,
+        advancedOptions: ComicSearchAdvancedOptions,
+        searchesKeywordsSeparately: Bool,
+        breakpoint: ComicSearchBreakpoint? = nil
+    ) {
         guard isEnabled else { return }
         let keyword = rawKeyword.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !keyword.isEmpty else { return }
@@ -126,7 +206,14 @@ final class SearchHistoryService: ObservableObject {
             record.target == historyTarget && normalized(record.keyword) == normalizedKeyword
         }
         let previousIDs = Set(records.map(\.id))
-        let record = SearchHistoryRecord(keyword: keyword, target: historyTarget, searchedAt: Date())
+        let record = SearchHistoryRecord(
+            keyword: keyword,
+            target: historyTarget,
+            advancedOptions: advancedOptions,
+            searchesKeywordsSeparately: searchesKeywordsSeparately,
+            breakpoint: breakpoint,
+            searchedAt: Date()
+        )
         records.insert(record, at: 0)
         trimToLimit()
         PicaXSQLiteStore.upsertSearchHistory(record)
@@ -134,6 +221,23 @@ final class SearchHistoryService: ObservableObject {
         for removedID in previousIDs.subtracting(currentIDs) {
             PicaXSQLiteStore.deleteSearchHistory(id: removedID)
         }
+    }
+
+    func updateBreakpoint(
+        keyword rawKeyword: String,
+        target: ComicSearchTarget,
+        breakpoint: ComicSearchBreakpoint?
+    ) {
+        let keyword = rawKeyword.trimmingCharacters(in: .whitespacesAndNewlines)
+        let historyTarget = SearchHistoryTarget(target)
+        guard let index = records.firstIndex(where: { record in
+            record.target == historyTarget && normalized(record.keyword) == normalized(keyword)
+        }) else {
+            return
+        }
+
+        records[index].breakpoint = breakpoint
+        PicaXSQLiteStore.upsertSearchHistory(records[index])
     }
 
     func remove(_ record: SearchHistoryRecord) {

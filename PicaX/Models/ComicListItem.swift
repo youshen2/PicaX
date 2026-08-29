@@ -536,7 +536,7 @@ enum ComicExploreEntry: Hashable, Identifiable {
     }
 }
 
-struct ComicSearchAdvancedOptions: Equatable, Sendable {
+nonisolated struct ComicSearchAdvancedOptions: Equatable, Codable, Sendable {
     var picacgSort = "dd"
     var nhentaiSort = "date"
     var jmComicSort = "mr"
@@ -631,7 +631,7 @@ struct ComicSearchAdvancedOptions: Equatable, Sendable {
     }
 }
 
-enum ComicSearchLanguage: String, CaseIterable, Identifiable, Sendable {
+nonisolated enum ComicSearchLanguage: String, CaseIterable, Codable, Identifiable, Sendable {
     case chinese
     case japanese
     case english

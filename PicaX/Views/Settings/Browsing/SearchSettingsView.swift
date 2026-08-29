@@ -160,7 +160,7 @@ struct SearchSettingsView: View {
                     )
                 }
             } footer: {
-                Text("搜索历史会记录关键词和平台选择，用于在搜索页快速重新搜索。")
+                Text("搜索历史会记录关键词、平台、高级选项和加载断点，便于重新搜索或继续浏览。")
             }
 
             Section {
