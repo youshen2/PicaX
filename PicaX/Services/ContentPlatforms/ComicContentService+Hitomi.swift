@@ -109,7 +109,34 @@ extension ComicContentService {
     }
 
     func searchHitomi(tag: ComicTagReference, page: Int) async throws -> [ComicListItem] {
-        let ids = try await hitomiSearchIDs(query: tag.query)
+        try await searchHitomi(terms: [tag.query], page: page)
+    }
+
+    func searchHitomi(terms: [String], page: Int) async throws -> [ComicListItem] {
+        let terms = terms
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !terms.isEmpty else { return [] }
+
+        let idLists = try await withThrowingTaskGroup(of: (Int, [Int]).self) { group in
+            for (index, term) in terms.enumerated() {
+                group.addTask {
+                    (index, try await hitomiSearchIDs(query: term))
+                }
+            }
+
+            var result = Array(repeating: [Int](), count: terms.count)
+            for try await (index, ids) in group {
+                result[index] = ids
+            }
+            return result
+        }
+
+        let firstIDs = idLists[0]
+        let matchingIDs = idLists.dropFirst().reduce(Set(firstIDs)) { partialResult, ids in
+            partialResult.intersection(ids)
+        }
+        let ids = firstIDs.filter { matchingIDs.contains($0) }
         let pageSize = 24
         let start = max(0, (page - 1) * pageSize)
         guard start < ids.count else { return [] }

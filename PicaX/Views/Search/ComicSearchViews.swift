@@ -103,7 +103,6 @@ struct ComicSearchPage: View {
     @EnvironmentObject private var searchHistory: SearchHistoryService
     @AppStorage(SearchSettingsKey.focusesSearchFieldOnOpen) private var focusesSearchFieldOnOpen = false
     @AppStorage(SearchSettingsKey.enablesSearchSuggestions) private var enablesSearchSuggestions = true
-    @AppStorage(SearchSettingsKey.searchesKeywordsSeparately) private var searchesKeywordsSeparately = false
     @AppStorage(SearchSettingsKey.suggestionSelectionBehavior) private var suggestionSelectionBehavior = SearchSuggestionSelectionBehavior.fill.rawValue
     @AppStorage(SearchSettingsKey.defaultTargetMode) private var defaultTargetMode = SearchDefaultTargetMode.platform.rawValue
     @AppStorage(SearchSettingsKey.defaultPlatform) private var defaultSearchPlatformID = ComicPlatform.picacg.rawValue
@@ -224,10 +223,6 @@ struct ComicSearchPage: View {
             guard viewModel.hasSearched else { return }
             startSearch(force: true)
         }
-        .onChange(of: searchesKeywordsSeparately) { _ in
-            guard viewModel.hasSearched else { return }
-            startSearch(force: true)
-        }
         .toolbar {
             ToolbarItemGroup(placement: .picaxTopBarTrailing) {
                 Button {
@@ -241,10 +236,8 @@ struct ComicSearchPage: View {
                 ComicSearchTargetMenu(
                     selectedTarget: selectedSearchTarget,
                     aggregatePlatforms: aggregatePlatforms,
-                    searchesKeywordsSeparately: searchesKeywordsSeparately,
                     onSelectTarget: { selectedSearchTarget = $0 },
-                    onToggleAggregatePlatform: toggleAggregatePlatform,
-                    onSetSearchesKeywordsSeparately: { searchesKeywordsSeparately = $0 }
+                    onToggleAggregatePlatform: toggleAggregatePlatform
                 )
                 .equatable()
 
@@ -280,7 +273,7 @@ struct ComicSearchPage: View {
             }
             Button("取消", role: .cancel) {}
         } message: { _ in
-            Text("断点续搜会从各关键词、各平台上次加载位置的下一页开始。")
+            Text("断点续搜会从各搜索组合、各平台上次加载位置的下一页开始。")
         }
         .task {
             applyConfiguredDefaultTargetIfNeeded()
@@ -306,7 +299,6 @@ struct ComicSearchPage: View {
         guard !trimmedKeyword.isEmpty else { return }
         let target = selectedSearchTarget
         let options = searchOptions
-        let separatesKeywords = searchesKeywordsSeparately
         let accounts = searchAccounts
         query = trimmedKeyword
         hiddenTagSuggestionsQuery = trimmedKeyword
@@ -317,7 +309,6 @@ struct ComicSearchPage: View {
                 keyword: trimmedKeyword,
                 target: target,
                 advancedOptions: options,
-                searchesKeywordsSeparately: separatesKeywords,
                 breakpoint: breakpoint
             )
         }
@@ -326,7 +317,6 @@ struct ComicSearchPage: View {
             keyword: trimmedKeyword,
             accounts: accounts,
             options: options,
-            searchesKeywordsSeparately: separatesKeywords,
             resumeFrom: breakpoint,
             force: force
         )
@@ -462,7 +452,7 @@ struct ComicSearchPage: View {
     }
 
     private func selectHistory(_ record: SearchHistoryRecord) {
-        if record.breakpoint?.isAvailable == true {
+        if record.resumableBreakpoint != nil {
             pendingHistoryRecord = record
         } else {
             applyHistory(record, resumesFromBreakpoint: false)
@@ -474,13 +464,12 @@ struct ComicSearchPage: View {
         query = record.keyword
         selectedSearchTarget = record.target.searchTarget
         searchOptions = record.advancedOptions
-        searchesKeywordsSeparately = record.searchesKeywordsSeparately
         if let aggregatePlatformSet = record.target.aggregatePlatformSet {
             aggregatePlatforms = aggregatePlatformSet
         }
         startSearch(
             force: true,
-            resumeFrom: resumesFromBreakpoint ? record.breakpoint : nil
+            resumeFrom: resumesFromBreakpoint ? record.resumableBreakpoint : nil
         )
     }
 
@@ -489,7 +478,7 @@ struct ComicSearchPage: View {
         if hiddenTagSuggestionsQuery != query,
            enablesSearchSuggestions,
            selectedSearchTarget == .platform(.eHentai) {
-            let suggestions = EhTagTranslationService.suggestions(for: query)
+            let suggestions = EhTagTranslationService.suggestions(for: query.currentSearchOperand)
             if !suggestions.isEmpty {
                 Section("E-Hentai 标签") {
                     ForEach(suggestions) { suggestion in
@@ -513,7 +502,7 @@ struct ComicSearchPage: View {
         } else if hiddenTagSuggestionsQuery != query,
                   enablesSearchSuggestions,
                   selectedSearchTarget == .platform(.nhentai) {
-            let suggestions = NhentaiTagSuggestionService.suggestions(for: query)
+            let suggestions = NhentaiTagSuggestionService.suggestions(for: query.currentSearchOperand)
             if !suggestions.isEmpty {
                 Section("NHentai 标签") {
                     ForEach(suggestions) { suggestion in
@@ -557,7 +546,11 @@ struct ComicSearchPage: View {
                 }
             }
         case .search:
-            query = suggestionQuery
+            query = query.replacingLastSearchFragment(
+                with: suggestionQuery,
+                suggestionTag: tag,
+                translatedTitle: translatedTitle
+            )
             isSearchFocused = false
             Task {
                 await search(force: true)
@@ -573,29 +566,16 @@ struct ComicSearchPage: View {
 private struct ComicSearchTargetMenu: View, Equatable {
     let selectedTarget: ComicSearchTarget
     let aggregatePlatforms: Set<ComicPlatform>
-    let searchesKeywordsSeparately: Bool
     let onSelectTarget: (ComicSearchTarget) -> Void
     let onToggleAggregatePlatform: (ComicPlatform) -> Void
-    let onSetSearchesKeywordsSeparately: (Bool) -> Void
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.selectedTarget == rhs.selectedTarget
             && lhs.aggregatePlatforms == rhs.aggregatePlatforms
-            && lhs.searchesKeywordsSeparately == rhs.searchesKeywordsSeparately
     }
 
     var body: some View {
         Menu {
-            Section("搜索方式") {
-                Toggle(
-                    "按空格拆分关键词",
-                    isOn: Binding(
-                        get: { searchesKeywordsSeparately },
-                        set: onSetSearchesKeywordsSeparately
-                    )
-                )
-            }
-
             Section("聚合搜索") {
                 Button {
                     onSelectTarget(aggregateSearchTarget)
@@ -647,7 +627,23 @@ private struct ComicSearchTargetMenu: View, Equatable {
 }
 
 private extension String {
+    var currentSearchOperand: String {
+        let start = lastSearchOperatorIndex.map { index(after: $0) } ?? startIndex
+        return String(self[start...])
+    }
+
     func replacingLastSearchFragment(with replacement: String, suggestionTag: String, translatedTitle: String) -> String {
+        let operandStart = lastSearchOperatorIndex.map { index(after: $0) } ?? startIndex
+        let prefix = String(self[..<operandStart])
+        let operand = String(self[operandStart...])
+        return prefix + operand.replacingLastOperandFragment(
+            with: replacement,
+            suggestionTag: suggestionTag,
+            translatedTitle: translatedTitle
+        )
+    }
+
+    private func replacingLastOperandFragment(with replacement: String, suggestionTag: String, translatedTitle: String) -> String {
         let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return replacement }
 
@@ -670,6 +666,10 @@ private extension String {
 
         let prefix = String(trimmed[..<prefixEnd]).trimmingCharacters(in: .whitespacesAndNewlines)
         return prefix.isEmpty ? replacement : "\(prefix) \(replacement)"
+    }
+
+    private var lastSearchOperatorIndex: String.Index? {
+        lastIndex { $0 == "/" || $0 == "&" }
     }
 
     private func matchedTrailingWordCount(words: [String], suggestionTag: String, translatedTitle: String) -> Int {

@@ -42,14 +42,13 @@ final class ComicSearchAdvancedOptionsTests: XCTestCase {
             ehentaiLanguage: .english
         )
         let record = SearchHistoryRecord(
-            keyword: "fantasy",
+            keyword: "fantasy/cat",
             target: .aggregate([.picacg, .nhentai, .eHentai]),
             advancedOptions: options,
-            searchesKeywordsSeparately: true,
             breakpoint: ComicSearchBreakpoint(
                 requests: [
                     ComicSearchBreakpoint.Request(keyword: "fantasy", platform: .picacg, nextPage: 3),
-                    ComicSearchBreakpoint.Request(keyword: "fantasy", platform: .nhentai, nextPage: 2)
+                    ComicSearchBreakpoint.Request(keyword: "cat", platform: .nhentai, nextPage: 2)
                 ]
             ),
             searchedAt: Date(timeIntervalSince1970: 1_000)
@@ -62,8 +61,8 @@ final class ComicSearchAdvancedOptionsTests: XCTestCase {
 
         XCTAssertEqual(decoded, record)
         XCTAssertEqual(decoded.advancedOptions, options)
-        XCTAssertTrue(decoded.searchesKeywordsSeparately)
         XCTAssertTrue(decoded.breakpoint?.isAvailable == true)
+        XCTAssertEqual(decoded.resumableBreakpoint, decoded.breakpoint)
     }
 
     func testLegacySearchHistoryWithoutAdvancedOptionsUsesDefaults() throws {
@@ -77,7 +76,6 @@ final class ComicSearchAdvancedOptionsTests: XCTestCase {
             JSONSerialization.jsonObject(with: encoded) as? [String: Any]
         )
         payload.removeValue(forKey: "advancedOptions")
-        payload.removeValue(forKey: "searchesKeywordsSeparately")
         payload.removeValue(forKey: "breakpoint")
 
         let decoded = try JSONDecoder().decode(
@@ -86,7 +84,21 @@ final class ComicSearchAdvancedOptionsTests: XCTestCase {
         )
 
         XCTAssertEqual(decoded.advancedOptions, ComicSearchAdvancedOptions())
-        XCTAssertFalse(decoded.searchesKeywordsSeparately)
         XCTAssertNil(decoded.breakpoint)
+    }
+
+    func testHistoryIgnoresBreakpointsThatDoNotMatchExpression() {
+        let record = SearchHistoryRecord(
+            keyword: "magical girl",
+            target: .platform(.nhentai),
+            breakpoint: ComicSearchBreakpoint(
+                requests: [
+                    ComicSearchBreakpoint.Request(keyword: "magical", platform: .nhentai, nextPage: 2)
+                ]
+            ),
+            searchedAt: Date(timeIntervalSince1970: 1_000)
+        )
+
+        XCTAssertNil(record.resumableBreakpoint)
     }
 }

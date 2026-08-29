@@ -19,7 +19,6 @@ struct SearchHistoryRecord: Identifiable, Equatable, Codable {
     let keyword: String
     let target: SearchHistoryTarget
     let advancedOptions: ComicSearchAdvancedOptions
-    let searchesKeywordsSeparately: Bool
     var breakpoint: ComicSearchBreakpoint?
     var searchedAt: Date
 
@@ -27,7 +26,6 @@ struct SearchHistoryRecord: Identifiable, Equatable, Codable {
         case keyword
         case target
         case advancedOptions
-        case searchesKeywordsSeparately
         case breakpoint
         case searchedAt
     }
@@ -36,14 +34,12 @@ struct SearchHistoryRecord: Identifiable, Equatable, Codable {
         keyword: String,
         target: SearchHistoryTarget,
         advancedOptions: ComicSearchAdvancedOptions = ComicSearchAdvancedOptions(),
-        searchesKeywordsSeparately: Bool = false,
         breakpoint: ComicSearchBreakpoint? = nil,
         searchedAt: Date
     ) {
         self.keyword = keyword
         self.target = target
         self.advancedOptions = advancedOptions
-        self.searchesKeywordsSeparately = searchesKeywordsSeparately
         self.breakpoint = breakpoint
         self.searchedAt = searchedAt
     }
@@ -56,10 +52,6 @@ struct SearchHistoryRecord: Identifiable, Equatable, Codable {
             ComicSearchAdvancedOptions.self,
             forKey: .advancedOptions
         ) ?? ComicSearchAdvancedOptions()
-        searchesKeywordsSeparately = try container.decodeIfPresent(
-            Bool.self,
-            forKey: .searchesKeywordsSeparately
-        ) ?? false
         breakpoint = try container.decodeIfPresent(
             ComicSearchBreakpoint.self,
             forKey: .breakpoint
@@ -72,7 +64,6 @@ struct SearchHistoryRecord: Identifiable, Equatable, Codable {
         try container.encode(keyword, forKey: .keyword)
         try container.encode(target, forKey: .target)
         try container.encode(advancedOptions, forKey: .advancedOptions)
-        try container.encode(searchesKeywordsSeparately, forKey: .searchesKeywordsSeparately)
         try container.encodeIfPresent(breakpoint, forKey: .breakpoint)
         try container.encode(searchedAt, forKey: .searchedAt)
     }
@@ -82,10 +73,22 @@ struct SearchHistoryRecord: Identifiable, Equatable, Codable {
     }
 
     var subtitle: String {
-        if breakpoint?.isAvailable == true {
+        if resumableBreakpoint != nil {
             return "\(target.title) · 可继续"
         }
         return target.title
+    }
+
+    var resumableBreakpoint: ComicSearchBreakpoint? {
+        guard let breakpoint else { return nil }
+        let validKeywords = Set(
+            ComicSearchExpressionParser.clauses(from: keyword).map(\.breakpointKey)
+        )
+        let validPlatforms = Set(target.searchTarget.platforms)
+        let requests = breakpoint.requests.filter {
+            validKeywords.contains($0.keyword) && validPlatforms.contains($0.platform)
+        }
+        return requests.isEmpty ? nil : ComicSearchBreakpoint(requests: requests)
     }
 
     var searchedAtText: String {
@@ -193,7 +196,6 @@ final class SearchHistoryService: ObservableObject {
         keyword rawKeyword: String,
         target: ComicSearchTarget,
         advancedOptions: ComicSearchAdvancedOptions,
-        searchesKeywordsSeparately: Bool,
         breakpoint: ComicSearchBreakpoint? = nil
     ) {
         guard isEnabled else { return }
@@ -210,7 +212,6 @@ final class SearchHistoryService: ObservableObject {
             keyword: keyword,
             target: historyTarget,
             advancedOptions: advancedOptions,
-            searchesKeywordsSeparately: searchesKeywordsSeparately,
             breakpoint: breakpoint,
             searchedAt: Date()
         )

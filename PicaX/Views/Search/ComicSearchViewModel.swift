@@ -1,18 +1,6 @@
 import Combine
 import Foundation
 
-enum ComicSearchKeywordSequence {
-    nonisolated static func keywords(from rawKeyword: String, searchesSeparately: Bool) -> [String] {
-        let trimmedKeyword = rawKeyword.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedKeyword.isEmpty else { return [] }
-        guard searchesSeparately else { return [trimmedKeyword] }
-
-        return trimmedKeyword
-            .split(whereSeparator: \.isWhitespace)
-            .map(String.init)
-    }
-}
-
 @MainActor
 final class ComicSearchViewModel: ObservableObject {
     @Published private(set) var state: ComicSearchLoadState = .idle
@@ -26,9 +14,8 @@ final class ComicSearchViewModel: ObservableObject {
     private var loadedIDs = Set<String>()
     private var currentTarget: ComicSearchTarget?
     private var currentKeyword = ""
-    private var currentKeywords: [String] = []
+    private var currentClauses: [ComicSearchClause] = []
     private var currentOptions = ComicSearchAdvancedOptions()
-    private var currentSearchesKeywordsSeparately = false
     private var requestGeneration = 0
 
     init(service: ComicContentService) {
@@ -41,12 +28,12 @@ final class ComicSearchViewModel: ObservableObject {
 
     var breakpoint: ComicSearchBreakpoint? {
         guard let target = currentTarget else { return nil }
-        let requests = currentKeywords.flatMap { keyword in
+        let requests = currentClauses.flatMap { clause in
             target.platforms.compactMap { platform -> ComicSearchBreakpoint.Request? in
-                let key = ComicSearchRequestKey(keyword: keyword, platform: platform)
+                let key = ComicSearchRequestKey(keyword: clause.breakpointKey, platform: platform)
                 guard requestHasMore[key] == true else { return nil }
                 return ComicSearchBreakpoint.Request(
-                    keyword: keyword,
+                    keyword: clause.breakpointKey,
                     platform: platform,
                     nextPage: (currentPages[key] ?? 0) + 1
                 )
@@ -60,16 +47,12 @@ final class ComicSearchViewModel: ObservableObject {
         keyword: String,
         accounts: [ComicPlatform: PlatformAccount],
         options: ComicSearchAdvancedOptions,
-        searchesKeywordsSeparately: Bool,
         resumeFrom breakpoint: ComicSearchBreakpoint? = nil,
         force: Bool = false
     ) async {
         let trimmed = trimmedKeyword(keyword)
-        let keywords = ComicSearchKeywordSequence.keywords(
-            from: trimmed,
-            searchesSeparately: searchesKeywordsSeparately
-        )
-        guard !keywords.isEmpty else {
+        let clauses = ComicSearchExpressionParser.clauses(from: trimmed)
+        guard !clauses.isEmpty else {
             reset()
             return
         }
@@ -78,8 +61,7 @@ final class ComicSearchViewModel: ObservableObject {
            breakpoint == nil,
            currentTarget == target,
            currentKeyword == trimmed,
-           currentOptions == options,
-           currentSearchesKeywordsSeparately == searchesKeywordsSeparately {
+           currentOptions == options {
             return
         }
 
@@ -94,44 +76,51 @@ final class ComicSearchViewModel: ObservableObject {
         loadedIDs.removeAll()
         currentTarget = target
         currentKeyword = trimmed
-        currentKeywords = keywords
+        currentClauses = clauses
         currentOptions = options
-        currentSearchesKeywordsSeparately = searchesKeywordsSeparately
 
         var comics: [ComicListItem] = []
         var failures: [String] = []
         var requestCount = 0
-        let resumePages = breakpoint.map { breakpoint in
-            Dictionary(
-                breakpoint.requests.map {
-                    (ComicSearchRequestKey(keyword: $0.keyword, platform: $0.platform), $0.nextPage)
+        let validRequestKeys = Set(clauses.flatMap { clause in
+            target.platforms.map {
+                ComicSearchRequestKey(keyword: clause.breakpointKey, platform: $0)
+            }
+        })
+        let resumePages: [ComicSearchRequestKey: Int]? = breakpoint.flatMap { breakpoint in
+            let pages = Dictionary(
+                breakpoint.requests.compactMap { request -> (ComicSearchRequestKey, Int)? in
+                    let key = ComicSearchRequestKey(keyword: request.keyword, platform: request.platform)
+                    return validRequestKeys.contains(key) ? (key, request.nextPage) : nil
                 },
                 uniquingKeysWith: max
             )
+            return pages.isEmpty ? nil : pages
         }
 
-        for searchKeyword in keywords {
+        for clause in clauses {
             guard generation == requestGeneration, !Task.isCancelled else { return }
+            let requestKeyword = clause.breakpointKey
 
             let platforms = target.platforms.filter { platform in
                 guard let resumePages else { return true }
-                return resumePages[ComicSearchRequestKey(keyword: searchKeyword, platform: platform)] != nil
+                return resumePages[ComicSearchRequestKey(keyword: requestKeyword, platform: platform)] != nil
             }
             guard !platforms.isEmpty else { continue }
             let pages = Dictionary(uniqueKeysWithValues: platforms.map { platform in
-                let key = ComicSearchRequestKey(keyword: searchKeyword, platform: platform)
+                let key = ComicSearchRequestKey(keyword: requestKeyword, platform: platform)
                 return (platform, resumePages?[key] ?? 1)
             })
             requestCount += platforms.count
             for platform in platforms {
-                let key = ComicSearchRequestKey(keyword: searchKeyword, platform: platform)
+                let key = ComicSearchRequestKey(keyword: requestKeyword, platform: platform)
                 currentPages[key] = (pages[platform] ?? 1) - 1
                 requestHasMore[key] = true
             }
 
             let responses = await fetchSearchPages(
                 platforms: platforms,
-                keyword: searchKeyword,
+                clause: clause,
                 accounts: accounts,
                 pages: pages,
                 options: options
@@ -140,13 +129,13 @@ final class ComicSearchViewModel: ObservableObject {
 
             var groupsByPlatform: [ComicPlatform: [ComicListItem]] = [:]
             for response in responses {
-                let key = ComicSearchRequestKey(keyword: searchKeyword, platform: response.platform)
+                let key = ComicSearchRequestKey(keyword: requestKeyword, platform: response.platform)
                 if let items = response.items {
                     currentPages[key] = pages[response.platform]
                     requestHasMore[key] = !items.isEmpty
                     groupsByPlatform[response.platform] = items
                 } else if let message = response.errorMessage {
-                    failures.append(failureMessage(keyword: searchKeyword, platform: response.platform, message: message))
+                    failures.append(failureMessage(keyword: clause.displayKeyword, platform: response.platform, message: message))
                 }
             }
 
@@ -181,7 +170,7 @@ final class ComicSearchViewModel: ObservableObject {
               !isLoadingMore,
               case .loaded(let comics) = state,
               let target = currentTarget,
-              !currentKeywords.isEmpty else {
+              !currentClauses.isEmpty else {
             return
         }
 
@@ -196,21 +185,22 @@ final class ComicSearchViewModel: ObservableObject {
             }
         }
 
-        for searchKeyword in currentKeywords {
+        for clause in currentClauses {
             guard generation == requestGeneration, !Task.isCancelled else { return }
+            let requestKeyword = clause.breakpointKey
 
             let platforms = target.platforms.filter { platform in
-                requestHasMore[ComicSearchRequestKey(keyword: searchKeyword, platform: platform)] == true
+                requestHasMore[ComicSearchRequestKey(keyword: requestKeyword, platform: platform)] == true
             }
             guard !platforms.isEmpty else { continue }
 
             let pages = Dictionary(uniqueKeysWithValues: platforms.map { platform in
-                let key = ComicSearchRequestKey(keyword: searchKeyword, platform: platform)
+                let key = ComicSearchRequestKey(keyword: requestKeyword, platform: platform)
                 return (platform, (currentPages[key] ?? 0) + 1)
             })
             let responses = await fetchSearchPages(
                 platforms: platforms,
-                keyword: searchKeyword,
+                clause: clause,
                 accounts: accounts,
                 pages: pages,
                 options: options
@@ -219,7 +209,7 @@ final class ComicSearchViewModel: ObservableObject {
 
             var groupsByPlatform: [ComicPlatform: [ComicListItem]] = [:]
             for response in responses {
-                let key = ComicSearchRequestKey(keyword: searchKeyword, platform: response.platform)
+                let key = ComicSearchRequestKey(keyword: requestKeyword, platform: response.platform)
                 guard let items = response.items else {
                     continue
                 }
@@ -263,7 +253,7 @@ final class ComicSearchViewModel: ObservableObject {
 
     private func fetchSearchPages(
         platforms: [ComicPlatform],
-        keyword: String,
+        clause: ComicSearchClause,
         accounts: [ComicPlatform: PlatformAccount],
         pages: [ComicPlatform: Int],
         options: ComicSearchAdvancedOptions
@@ -275,7 +265,7 @@ final class ComicSearchViewModel: ObservableObject {
                     do {
                         let items = try await service.searchComics(
                             platform: platform,
-                            keyword: keyword,
+                            query: clause,
                             account: accounts[platform],
                             page: pages[platform] ?? 1,
                             options: options
@@ -304,7 +294,7 @@ final class ComicSearchViewModel: ObservableObject {
     }
 
     private func failureMessage(keyword: String, platform: ComicPlatform, message: String) -> String {
-        guard currentKeywords.count > 1 else { return "\(platform.title): \(message)" }
+        guard currentClauses.count > 1 else { return "\(platform.title): \(message)" }
         return "\(keyword) · \(platform.title): \(message)"
     }
 
@@ -318,9 +308,8 @@ final class ComicSearchViewModel: ObservableObject {
         loadedIDs.removeAll()
         currentTarget = nil
         currentKeyword = ""
-        currentKeywords.removeAll()
+        currentClauses.removeAll()
         currentOptions = ComicSearchAdvancedOptions()
-        currentSearchesKeywordsSeparately = false
     }
 }
 

@@ -349,12 +349,12 @@ struct ComicContentService: Sendable {
 
     func searchComics(
         platform: ComicPlatform,
-        keyword: String,
+        query: ComicSearchClause,
         account: PlatformAccount?,
         page: Int = 1,
         options: ComicSearchAdvancedOptions? = nil
     ) async throws -> [ComicListItem] {
-        let trimmed = keyword.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = query.keyword(for: platform).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return [] }
         let resolvedOptions = options ?? ComicSearchAdvancedOptions()
 
@@ -377,8 +377,7 @@ struct ComicContentService: Sendable {
                 sort: resolvedOptions.sortValue(for: platform)
             )
         case .hitomi:
-            let tag = ComicTagReference(title: trimmed, query: trimmed, platform: platform, urlString: nil)
-            return try await searchHitomi(tag: tag, page: page)
+            return try await searchHitomi(terms: query.terms, page: page)
         }
     }
 
