@@ -868,6 +868,8 @@ enum PicaComicBackupImporter {
             .cdnAspa
         case 3:
             .cdnNtr
+        case 4:
+            .cdnUtc
         default:
             nil
         }

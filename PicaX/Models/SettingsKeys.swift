@@ -574,6 +574,7 @@ enum JmAPIEndpoint: String, CaseIterable, Identifiable {
     case cdnSha
     case cdnAspa
     case cdnNtr
+    case cdnUtc
 
     var id: String { rawValue }
 
@@ -589,6 +590,8 @@ enum JmAPIEndpoint: String, CaseIterable, Identifiable {
             "分流 3"
         case .cdnNtr:
             "分流 4"
+        case .cdnUtc:
+            "分流 5"
         }
     }
 
@@ -604,6 +607,8 @@ enum JmAPIEndpoint: String, CaseIterable, Identifiable {
             "https://www.cdngwc.net"
         case .cdnNtr:
             "https://www.cdngwc.club"
+        case .cdnUtc:
+            "https://www.cdnutc.me"
         }
     }
 
@@ -619,6 +624,8 @@ enum JmAPIEndpoint: String, CaseIterable, Identifiable {
             2
         case .cdnNtr:
             3
+        case .cdnUtc:
+            4
         }
     }
 

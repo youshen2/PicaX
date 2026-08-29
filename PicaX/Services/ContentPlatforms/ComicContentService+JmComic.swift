@@ -37,7 +37,7 @@ extension ComicContentService {
     var jmAppVersion: String {
         let value = UserDefaults.standard.string(forKey: PlatformFeatureSettingsKey.jmAppVersion) ?? ""
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? "2.0.26" : trimmed
+        return trimmed.isEmpty ? "2.1.4" : trimmed
     }
     var jmSecret: String { "185Hcomic3PAPP7R" }
     var jmAuthKey: String { "18comicAPPContent" }
@@ -432,19 +432,7 @@ extension ComicContentService {
                 guard let url = URL(string: urlString) else { continue }
                 let encrypted = try await requestString(url: url, headers: jmRemoteHeaders)
                 let decoded = try jmDecrypt(encrypted, secret: jmDomainDecryptSecret)
-                guard let data = decoded.data(using: .utf8),
-                      let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                      let domains = json["Server"] as? [String] else {
-                    throw ComicContentError.invalidResponse("JMComic 域名响应缺少 Server。")
-                }
-                let baseURLs = domains.prefix(4).map {
-                    PlatformFeatureSettings.normalizedBaseURL($0, fallback: "")
-                }.filter {
-                    URL(string: $0)?.host != nil
-                }
-                if !baseURLs.isEmpty {
-                    return Array(baseURLs)
-                }
+                return try Self.jmAPIBaseURLs(fromDomainPayload: decoded)
             } catch where error.isTaskCancellation {
                 throw error
             } catch {
@@ -452,6 +440,27 @@ extension ComicContentService {
             }
         }
         throw lastError ?? ComicContentError.server("JMComic API 域名更新失败。")
+    }
+
+    static func jmAPIBaseURLs(fromDomainPayload payload: String) throws -> [String] {
+        guard let data = payload.data(using: .utf8),
+              let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let domains = json["Server"] as? [String] else {
+            throw ComicContentError.invalidResponse("JMComic 域名响应缺少 Server。")
+        }
+
+        var seen = Set<String>()
+        let baseURLs = domains.compactMap { domain -> String? in
+            let baseURL = PlatformFeatureSettings.normalizedBaseURL(domain, fallback: "")
+            guard URL(string: baseURL)?.host != nil, seen.insert(baseURL).inserted else {
+                return nil
+            }
+            return baseURL
+        }
+        guard !baseURLs.isEmpty else {
+            throw ComicContentError.invalidResponse("JMComic 域名响应没有有效 Server。")
+        }
+        return baseURLs
     }
 
     func loadRemoteJmAppVersion(baseURLs: [String]) async throws -> String {

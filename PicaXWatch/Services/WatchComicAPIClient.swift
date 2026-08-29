@@ -615,7 +615,7 @@ private extension WatchComicAPIClient {
             .components(separatedBy: .newlines)
             .map { normalizedBaseURL($0, fallback: "") }
             .filter { !$0.isEmpty && URL(string: $0)?.host != nil }
-        return uniqueBaseURLs(configured + ["https://www.cdnhjk.net", "https://www.cdngwc.cc", "https://www.cdngwc.net", "https://www.cdngwc.club"])
+        return uniqueBaseURLs(configured + ["https://www.cdnhjk.net", "https://www.cdngwc.cc", "https://www.cdngwc.net", "https://www.cdngwc.club", "https://www.cdnutc.me"])
     }
 
     var jmImageBaseURL: String {
@@ -639,7 +639,7 @@ private extension WatchComicAPIClient {
 
     var jmAppVersion: String {
         let value = UserDefaults.standard.string(forKey: WatchJMSettingsKey.appVersion) ?? ""
-        return value.nonEmptyValue ?? "2.0.26"
+        return value.nonEmptyValue ?? "2.1.4"
     }
 
     var jmSecret: String { "185Hcomic3PAPP7R" }
