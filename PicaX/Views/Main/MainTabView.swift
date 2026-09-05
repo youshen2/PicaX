@@ -38,6 +38,7 @@ struct MainTabView: View {
             Tab("搜索", systemImage: "magnifyingglass", value: Selection.search, role: .search) {
                 PicaxNavigationContainer {
                     ComicSearchPage(hidesTabBar: false)
+                        .picaxTabBarRoot()
                 }
             }
         }
@@ -62,6 +63,7 @@ struct MainTabView: View {
     private func tabNavigationContainer(for tab: AppTab, includesSearchButton: Bool) -> some View {
         PicaxNavigationContainer {
             tabContent(for: tab)
+                .picaxTabBarRoot()
                 .navigationTitle(tab.title)
                 .toolbar {
                     ToolbarItemGroup(placement: .picaxTopBarTrailing) {
