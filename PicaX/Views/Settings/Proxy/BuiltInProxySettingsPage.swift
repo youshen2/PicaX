@@ -2,7 +2,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct BuiltInProxySettingsPage: View {
-    @EnvironmentObject private var settings: AppProxySettings
+    @ObservedObject var settings: AppProxySettings
 
     @State private var showingPasteImporter = false
     @State private var showingSubscriptionImporter = false
@@ -149,22 +149,20 @@ struct BuiltInProxySettingsPage: View {
             }
         }
         .sheet(isPresented: $showingPasteImporter) {
-            ClashYAMLPasteImportSheet { summary in
+            ClashYAMLPasteImportSheet(settings: settings) { summary in
                 feedback = Feedback(
                     message: reportMessage(summary),
                     isError: false
                 )
             }
-            .environmentObject(settings)
         }
         .sheet(isPresented: $showingSubscriptionImporter) {
-            ClashYAMLSubscriptionImportSheet { summary in
+            ClashYAMLSubscriptionImportSheet(settings: settings) { summary in
                 feedback = Feedback(
                     message: reportMessage(summary),
                     isError: false
                 )
             }
-            .environmentObject(settings)
         }
         .fileImporter(
             isPresented: $showingFileImporter,

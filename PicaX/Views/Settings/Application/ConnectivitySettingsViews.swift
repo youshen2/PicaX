@@ -25,7 +25,6 @@ struct WatchConnectivitySettingsView: View {
 
 struct NetworkSettingsView: View {
     var body: some View {
-        AppProxySettingsPage()
-            .environmentObject(AppProxySettings.shared)
+        AppProxySettingsPage(settings: AppProxySettings.shared)
     }
 }

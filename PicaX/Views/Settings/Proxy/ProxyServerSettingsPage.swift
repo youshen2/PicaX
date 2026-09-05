@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct ProxyServerSettingsPage: View {
-    @EnvironmentObject private var settings: AppProxySettings
+    @ObservedObject var settings: AppProxySettings
 
     @State private var proxyType: AppProxyProtocol = .http
     @State private var host = ""

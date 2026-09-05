@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct AppProxySettingsPage: View {
-    @EnvironmentObject private var settings: AppProxySettings
+    @ObservedObject var settings: AppProxySettings
     @AppStorage("settings.network.retryCount") private var retryCount = 2
 
     @State private var feedback: Feedback?
@@ -29,7 +29,7 @@ struct AppProxySettingsPage: View {
                 )
             ) {
                 NavigationLink {
-                    ProxyServerSettingsPage()
+                    ProxyServerSettingsPage(settings: settings)
                 } label: {
                     configurationRow(
                         title: "代理服务器",
@@ -39,7 +39,7 @@ struct AppProxySettingsPage: View {
                 }
 
                 NavigationLink {
-                    BuiltInProxySettingsPage()
+                    BuiltInProxySettingsPage(settings: settings)
                 } label: {
                     configurationRow(
                         title: "内置代理",

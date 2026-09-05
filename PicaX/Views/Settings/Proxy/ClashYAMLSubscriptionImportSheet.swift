@@ -2,7 +2,7 @@ import SwiftUI
 
 struct ClashYAMLSubscriptionImportSheet: View {
     @Environment(\.dismiss) private var dismiss
-    @EnvironmentObject private var settings: AppProxySettings
+    @ObservedObject var settings: AppProxySettings
 
     let onImported: (AppBuiltInProxyImportSummary) -> Void
 
@@ -64,7 +64,7 @@ struct ClashYAMLSubscriptionImportSheet: View {
                 }
             }
             .picaxHidesTabBar()
-        .navigationTitle("订阅导入")
+            .navigationTitle("订阅导入")
             .picaxNavigationBarTitleDisplayModeInline()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

@@ -2,7 +2,7 @@ import SwiftUI
 
 struct ClashYAMLPasteImportSheet: View {
     @Environment(\.dismiss) private var dismiss
-    @EnvironmentObject private var settings: AppProxySettings
+    @ObservedObject var settings: AppProxySettings
 
     let onImported: (AppBuiltInProxyImportSummary) -> Void
 
@@ -37,7 +37,7 @@ struct ClashYAMLPasteImportSheet: View {
                 }
             }
             .picaxHidesTabBar()
-        .navigationTitle("粘贴 YAML")
+            .navigationTitle("粘贴 YAML")
             .picaxNavigationBarTitleDisplayModeInline()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
