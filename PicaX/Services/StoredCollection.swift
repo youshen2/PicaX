@@ -19,6 +19,10 @@ final class StoredCollection<Record: Codable & Identifiable>: ObservableObject {
             .sink { [weak self] _ in self?.reload() }
     }
 
+    // Avoid Swift 6.3.3's Release optimizer crash in synthesized generic deinitializers.
+    // Cleanup only releases stored properties and needs no actor-isolated work.
+    nonisolated deinit {}
+
     func put(_ record: Record) {
         var next = records
         if let index = next.firstIndex(where: { $0.id == record.id }) {
