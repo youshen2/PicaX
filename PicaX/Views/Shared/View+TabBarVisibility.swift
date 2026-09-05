@@ -11,6 +11,7 @@ extension View {
         if hidden {
             if #available(iOS 17.0, *) {
                 toolbar(.hidden, for: .tabBar)
+                    .background(PicaxTabBarVisibilityBridge(hidden: true))
             } else {
                 modifier(PicaxLegacyTabBarVisibilityModifier(hidden: true))
             }
