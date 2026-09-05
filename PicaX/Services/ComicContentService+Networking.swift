@@ -46,7 +46,7 @@ extension ComicContentService {
 
         for attempt in 0..<attempts {
             do {
-                let (data, response) = try await session.data(for: request)
+                let (data, response) = try await networkData(for: request)
                 saveCookies(from: response, requestURL: request.url, cookies: cookies)
 
                 if let httpResponse = response as? HTTPURLResponse,

@@ -14,6 +14,7 @@
 		6D9FF3202FF02000008AA850 /* libwebp in Frameworks */ = {isa = PBXBuildFile; productRef = 6D9FF3222FF02000008AA850 /* libwebp */; };
 		6D9FF3322FF03000008AA850 /* ZIPFoundation in Frameworks */ = {isa = PBXBuildFile; productRef = 6D9FF3312FF03000008AA850 /* ZIPFoundation */; };
 		6D9FF3352FF03000008AA850 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = 6D9FF3342FF03000008AA850 /* GRDB */; };
+		B28F04013F12000100000001 /* Yams in Frameworks */ = {isa = PBXBuildFile; productRef = B28F04013F12000100000003 /* Yams */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -108,6 +109,7 @@
 				6D9FF2502FEEB001008AA850 /* CryptoSwift in Frameworks */,
 				6D9FF3322FF03000008AA850 /* ZIPFoundation in Frameworks */,
 				6D9FF3352FF03000008AA850 /* GRDB in Frameworks */,
+				B28F04013F12000100000001 /* Yams in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -190,6 +192,7 @@
 				6D9FF2522FEEB001008AA850 /* CryptoSwift */,
 				6D9FF3312FF03000008AA850 /* ZIPFoundation */,
 				6D9FF3342FF03000008AA850 /* GRDB */,
+				B28F04013F12000100000003 /* Yams */,
 			);
 			productName = PicaX;
 			productReference = 6D9FF2332FEEA844008AA850 /* PicaX.app */;
@@ -305,6 +308,7 @@
 				6D9FF3212FF02000008AA850 /* XCRemoteSwiftPackageReference "libwebp-Xcode" */,
 				6D9FF3302FF03000008AA850 /* XCRemoteSwiftPackageReference "ZIPFoundation" */,
 				6D9FF3332FF03000008AA850 /* XCRemoteSwiftPackageReference "GRDB.swift" */,
+				B28F04013F12000100000002 /* XCRemoteSwiftPackageReference "Yams" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 6D9FF2342FEEA844008AA850 /* Products */;
@@ -956,6 +960,14 @@
 				minimumVersion = 7.10.0;
 			};
 		};
+		B28F04013F12000100000002 /* XCRemoteSwiftPackageReference "Yams" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/jpsim/Yams.git";
+			requirement = {
+				kind = exactVersion;
+				version = 6.2.2;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -978,6 +990,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 6D9FF3332FF03000008AA850 /* XCRemoteSwiftPackageReference "GRDB.swift" */;
 			productName = GRDB;
+		};
+		B28F04013F12000100000003 /* Yams */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B28F04013F12000100000002 /* XCRemoteSwiftPackageReference "Yams" */;
+			productName = Yams;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

@@ -18,14 +18,6 @@ enum ImageCacheService {
     nonisolated(unsafe) private static var isStoreTrimScheduled = false
     private static var activeTrimTask: Task<Void, Never>?
     nonisolated private static let requestCoalescer = AsyncRequestCoalescer<Data>()
-    private static let uncachedSession: URLSession = {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-        configuration.urlCache = nil
-        configuration.httpMaximumConnectionsPerHost = 6
-        return URLSession(configuration: configuration)
-    }()
-
     @MainActor
     @discardableResult
     static func configure(defaults: UserDefaults = .standard) -> Task<Void, Never> {
@@ -168,7 +160,7 @@ enum ImageCacheService {
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 30)
         request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
         do {
-            return try await uncachedSession.data(for: request)
+            return try await AppProxyNetwork.shared.data(for: request, purpose: .image)
         } catch {
             guard error.isTaskCancellation else {
                 throw error

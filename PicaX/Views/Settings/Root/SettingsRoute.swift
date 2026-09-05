@@ -154,7 +154,7 @@ enum SettingsRoute: String, CaseIterable, Hashable, Identifiable {
         case .watchConnectivity:
             ["Watch", "Apple Watch", "手表", "同步", "阅读记录", "本地收藏", "稍后再读"]
         case .network:
-            ["代理", "Proxy", "主机", "端口", "连接", "重试"]
+            ["代理", "内置代理", "Proxy", "Clash", "YAML", "订阅", "节点", "SOCKS5", "Shadowsocks", "VMess", "Trojan", "主机", "端口", "连接", "重试"]
         case .about:
             ["用户协议", "隐私政策", "免责声明", "开源许可", "版本", "更新日志", "GitHub", "Telegram", "编译"]
         }

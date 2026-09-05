@@ -766,7 +766,8 @@ enum BackupService {
     }
 
     private static func contentKind(for key: String) -> BackupContentKind? {
-        if key.hasPrefix("settings.webDAV.") || key.hasPrefix("settings.appLock.") {
+        if key.hasPrefix("settings.webDAV.") || key.hasPrefix("settings.appLock.")
+            || key.hasPrefix("settings.network.proxy.") {
             return nil
         }
         if key == "picax.accounts" || key == "picax.session" || key == "picax.platformAccounts" {

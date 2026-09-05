@@ -51,7 +51,7 @@ final class EhTagTranslationUpdateService: ObservableObject {
         defer { isUpdating = false }
 
         do {
-            let session = AppNetworkSettings.makeSession()
+            let session = try AppNetworkSettings.makeSession()
             async let version = Self.downloadText(path: "version", session: session)
             let translations = try await Self.downloadDatabase(session: session)
             let downloadedVersion = try await version.trimmingCharacters(in: .whitespacesAndNewlines)

@@ -5,7 +5,6 @@ actor EhentaiLazyImageResolver {
     static let shared = EhentaiLazyImageResolver()
     nonisolated static let scheme = "picax-ehentai-image"
 
-    private let session = AppNetworkSettings.makeSession()
     private var contexts: [String: Context] = [:]
     private var readerLinksByURL: [String: [String]] = [:]
     private var loadingReaderLinkURLs = Set<String>()
@@ -419,7 +418,7 @@ actor EhentaiLazyImageResolver {
 
         for attempt in 0..<attempts {
             do {
-                let (data, response) = try await session.data(for: request)
+                let (data, response) = try await AppProxyNetwork.shared.data(for: request)
                 let httpResponse = response as? HTTPURLResponse
                 if let statusCode = httpResponse?.statusCode,
                    shouldRetry(statusCode: statusCode),

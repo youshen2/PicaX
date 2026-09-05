@@ -21,7 +21,7 @@ enum AppUpdateService {
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.setValue("PicaX", forHTTPHeaderField: "User-Agent")
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await AppProxyNetwork.shared.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else {
             throw URLError(.badServerResponse)
         }

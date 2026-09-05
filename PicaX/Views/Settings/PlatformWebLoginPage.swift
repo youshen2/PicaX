@@ -4,6 +4,7 @@ import WebKit
 struct PlatformWebLoginPage: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var platformAccounts: PlatformAccountService
+    @ObservedObject private var proxySettings = AppProxySettings.shared
 
     let platform: ComicPlatform
 
@@ -15,14 +16,20 @@ struct PlatformWebLoginPage: View {
     @State private var message: String?
     @State private var isSaving = false
     @State private var didSave = false
+    @State private var websiteDataStore: WKWebsiteDataStore?
+    @State private var proxyLease: AppLocalProxyLease?
+    @State private var networkError: String?
 
     private let service = ComicContentService()
 
     var body: some View {
         Group {
-            if let initialURL {
+            if let networkError {
+                ContentUnavailableView("无法打开网页登录", systemImage: "network", description: Text(networkError))
+            } else if let initialURL, let websiteDataStore {
                 LoginWebView(
                     initialURL: initialURL,
+                    websiteDataStore: websiteDataStore,
                     userAgent: nil,
                     onWebViewReady: { webView = $0 },
                     onTitleChanged: { title = $0.isEmpty ? "网页登录" : $0 },
@@ -35,6 +42,9 @@ struct PlatformWebLoginPage: View {
                         }
                     }
                 )
+                .id(proxySettings.appProxyRevision)
+            } else if initialURL != nil {
+                ProgressView("正在准备网页登录…")
             } else {
                 ContentUnavailableView("无法打开网页登录", systemImage: "safari", description: Text("当前来源没有可用登录地址。"))
             }
@@ -42,6 +52,13 @@ struct PlatformWebLoginPage: View {
         .navigationTitle(title)
         .picaxNavigationBarTitleDisplayModeInline()
         .picaxHidesTabBar()
+        .task(id: proxySettings.appProxyRevision) {
+            await prepareWebsiteDataStore()
+        }
+        .onDisappear {
+            webView?.stopLoading()
+            proxyLease?.invalidate()
+        }
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
                 Button {
@@ -55,7 +72,7 @@ struct PlatformWebLoginPage: View {
                         Text("完成")
                     }
                 }
-                .disabled(isSaving || initialURL == nil)
+                .disabled(isSaving || websiteDataStore == nil)
             }
         }
         .safeAreaInset(edge: .bottom) {
@@ -73,6 +90,36 @@ struct PlatformWebLoginPage: View {
 
     private var initialURL: URL? {
         platform.loginWebsite.flatMap(URL.init(string:))
+    }
+
+    @MainActor
+    private func prepareWebsiteDataStore() async {
+        webView?.stopLoading()
+        webView = nil
+        websiteDataStore = nil
+        networkError = nil
+        proxyLease?.invalidate()
+        proxyLease = nil
+        do {
+            let store = WKWebsiteDataStore.nonPersistent()
+            if case .proxy(let route) = try AppProxyNetwork.shared.currentRoute() {
+                guard #available(iOS 17.0, macOS 14.0, visionOS 1.0, *) else {
+                    throw AppProxyError.localBridgeUnavailable("通过应用代理网页登录需要 iOS 17 或更高版本。")
+                }
+                let lease = try await AppLocalProxyLease.start(route: route)
+                guard !Task.isCancelled else {
+                    lease.invalidate()
+                    return
+                }
+                store.proxyConfigurations = [try lease.networkConfiguration()]
+                proxyLease = lease
+            }
+            guard !Task.isCancelled else { return }
+            websiteDataStore = store
+        } catch {
+            guard !Task.isCancelled else { return }
+            networkError = error.localizedDescription
+        }
     }
 
     @MainActor
@@ -310,6 +357,7 @@ private extension ComicPlatform {
 
 private struct LoginWebView {
     let initialURL: URL
+    let websiteDataStore: WKWebsiteDataStore
     let userAgent: String?
     let onWebViewReady: (WKWebView) -> Void
     let onTitleChanged: (String) -> Void
@@ -317,7 +365,7 @@ private struct LoginWebView {
 
     func makeWebView(coordinator: Coordinator) -> WKWebView {
         let configuration = WKWebViewConfiguration()
-        configuration.websiteDataStore = .nonPersistent()
+        configuration.websiteDataStore = websiteDataStore
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = coordinator
         if let userAgent {

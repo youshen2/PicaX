@@ -1,67 +1,19 @@
-import CFNetwork
 import Foundation
 
-enum AppNetworkSettings {
-    private enum Key {
-        nonisolated static let useProxy = "settings.network.useProxy"
-        nonisolated static let proxyHost = "settings.network.proxyHost"
-        nonisolated static let proxyPort = "settings.network.proxyPort"
-        nonisolated static let imageQuality = "settings.network.imageQuality"
-        nonisolated static let retryCount = "settings.network.retryCount"
-    }
-
-    private nonisolated static var defaults: UserDefaults {
-        .standard
-    }
-
-    nonisolated static var retryAttempts: Int {
-        let retryCount = defaults.object(forKey: Key.retryCount) == nil ? 2 : defaults.integer(forKey: Key.retryCount)
-        return min(max(retryCount, 0), 5) + 1
-    }
-
-    nonisolated static var picacgImageQuality: String {
-        switch defaults.string(forKey: Key.imageQuality) ?? "均衡" {
-        case "省流":
-            return "low"
-        case "高清":
-            return "high"
-        case "原图":
-            return "original"
-        default:
-            return "middle"
-        }
-    }
-
-    nonisolated static func makeSession() -> URLSession {
-        let configuration = URLSessionConfiguration.default
-        configuration.timeoutIntervalForRequest = 30
-        configuration.timeoutIntervalForResource = 90
-
-        let host = (defaults.string(forKey: Key.proxyHost) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        if defaults.bool(forKey: Key.useProxy), !host.isEmpty {
-            let storedPort = defaults.object(forKey: Key.proxyPort) == nil ? 7890 : defaults.integer(forKey: Key.proxyPort)
-            let port = min(max(storedPort, 1), 65535)
-            configuration.connectionProxyDictionary = [
-                kCFNetworkProxiesHTTPEnable as String: 1,
-                kCFNetworkProxiesHTTPProxy as String: host,
-                kCFNetworkProxiesHTTPPort as String: port,
-                "HTTPSEnable": 1,
-                "HTTPSProxy": host,
-                "HTTPSPort": port
-            ]
-        }
-
-        return URLSession(configuration: configuration)
-    }
-}
-
 struct ComicContentService: Sendable {
-    let session: URLSession
+    private let providedSession: URLSession?
     private let localStore: LocalFavoritesStore
 
     nonisolated init(session: URLSession? = nil, localStore: LocalFavoritesStore = LocalFavoritesStore()) {
-        self.session = session ?? AppNetworkSettings.makeSession()
+        self.providedSession = session
         self.localStore = localStore
+    }
+
+    nonisolated func networkData(for request: URLRequest) async throws -> (Data, URLResponse) {
+        if let providedSession {
+            return try await providedSession.data(for: request)
+        }
+        return try await AppProxyNetwork.shared.data(for: request)
     }
 
     nonisolated func warmNhentaiTagNameCache(for items: [ComicListItem]) {
@@ -716,7 +668,7 @@ struct ComicContentService: Sendable {
         let startedAt = Date()
         do {
             try Task.checkCancellation()
-            let (_, response) = try await session.data(for: candidate.request)
+            let (_, response) = try await networkData(for: candidate.request)
             try Task.checkCancellation()
             guard let response = response as? HTTPURLResponse else {
                 throw ComicContentError.invalidResponse("测速请求没有返回 HTTP 响应。")
@@ -835,7 +787,7 @@ enum NhentaiTagNameCacheWarmupService {
         Task.detached(priority: .utility) {
             defer { release(candidates) }
 
-            let session = AppNetworkSettings.makeSession()
+            guard let session = try? AppNetworkSettings.makeSession() else { return }
             for item in candidates {
                 if Task.isCancelled { break }
                 guard let itemRecords = try? await tagRecords(for: item, session: session) else {
