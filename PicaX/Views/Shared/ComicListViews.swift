@@ -772,11 +772,12 @@ enum ComicListBackgroundProcessing {
         return try await run {
             var result: [ComicListItem] = []
             result.reserveCapacity(comics.count)
+            let tagResolver = ComicListTagResolver(comics: comics)
             for (index, comic) in comics.enumerated() {
                 if index.isMultiple(of: 64) {
                     try Task.checkCancellation()
                 }
-                if comicMatches(comic, keyword: keyword) {
+                if comicMatches(comic, keyword: keyword, tagResolver: tagResolver) {
                     result.append(comic)
                 }
             }
@@ -870,14 +871,18 @@ enum ComicListBackgroundProcessing {
         }
     }
 
-    private nonisolated static func comicMatches(_ comic: ComicListItem, keyword: String) -> Bool {
+    private nonisolated static func comicMatches(
+        _ comic: ComicListItem,
+        keyword: String,
+        tagResolver: ComicListTagResolver
+    ) -> Bool {
         comic.title.localizedCaseInsensitiveContains(keyword)
             || comic.subtitle.localizedCaseInsensitiveContains(keyword)
             || comic.id.localizedCaseInsensitiveContains(keyword)
             || comic.platformTitle.localizedCaseInsensitiveContains(keyword)
             || (comic.pageText?.localizedCaseInsensitiveContains(keyword) ?? false)
             || comic.metadataText.localizedCaseInsensitiveContains(keyword)
-            || comic.tags.contains { $0.localizedCaseInsensitiveContains(keyword) }
+            || tagResolver.matchingTags(for: comic).contains { $0.localizedCaseInsensitiveContains(keyword) }
     }
 }
 
@@ -1669,11 +1674,12 @@ private struct ComicListRenderSnapshot: Sendable {
             configuration: request.titleMatchingConfiguration
         )
 
+        let tagResolver = ComicListTagResolver(comics: request.comics)
         for (index, comic) in request.comics.enumerated() {
             if index.isMultiple(of: 64), Task.isCancelled {
                 throw CancellationError()
             }
-            if request.appliesBlocking, request.blockingMatcher.blockedKeyword(for: comic) != nil {
+            if request.appliesBlocking, request.blockingMatcher.blockedKeyword(for: comic, tagResolver: tagResolver) != nil {
                 continue
             }
             if request.appliesReadProgressFilter,
@@ -1704,7 +1710,7 @@ private struct ComicListRenderSnapshot: Sendable {
             visibleComics: visibleComics,
             readingRecordsByID: request.readingRecordsByID,
             crossPlatformReadingIDs: crossPlatformReadingIDs,
-            displayTagsByID: ComicListTagDisplayResolver.displayTagsByID(for: visibleComics),
+            displayTagsByID: tagResolver.displayTagsByID(for: visibleComics),
             contentIdentity: makeContentIdentity(for: visibleComics)
         )
     }
@@ -1823,96 +1829,6 @@ private struct ComicWaterfallEntry: Identifiable {
 
     var id: String {
         row.id
-    }
-}
-
-private enum ComicListTagDisplayResolver {
-    nonisolated static func displayTagsByID(for comics: [ComicListItem]) -> [String: [String]] {
-        let nhentaiCache = PicaXSQLiteStore.loadNhentaiTagNames(ids: nhentaiTagIDs(in: comics))
-        var result: [String: [String]] = [:]
-
-        for (index, comic) in comics.enumerated() {
-            if index.isMultiple(of: 64), Task.isCancelled {
-                break
-            }
-            let displayTags = displayTags(for: comic, nhentaiCache: nhentaiCache)
-            if displayTags != comic.tags {
-                result[comic.readingHistoryID] = displayTags
-            }
-        }
-        return result
-    }
-
-    private nonisolated static func displayTags(
-        for comic: ComicListItem,
-        nhentaiCache: [Int: StoredNhentaiTagName]
-    ) -> [String] {
-        let tags = comic.tags.compactMap { tag in
-            displayTitle(for: tag, platform: comic.platform, nhentaiCache: nhentaiCache)
-        }
-        guard tags.isEmpty,
-              comic.platform == .nhentai,
-              comic.tags.contains(where: { nhentaiTagID(from: $0) != nil }) else {
-            return tags
-        }
-        return ["正在解析标签"]
-    }
-
-    private nonisolated static func nhentaiTagIDs(in comics: [ComicListItem]) -> [Int] {
-        var ids: [Int] = []
-        for comic in comics where comic.platform == .nhentai {
-            ids.append(contentsOf: comic.tags.compactMap(nhentaiTagID(from:)))
-        }
-        return ids
-    }
-
-    private nonisolated static func displayTitle(
-        for tag: String,
-        platform: ComicPlatform,
-        nhentaiCache: [Int: StoredNhentaiTagName]
-    ) -> String? {
-        switch platform {
-        case .nhentai:
-            if let id = nhentaiTagID(from: tag) {
-                guard let record = nhentaiCache[id] else { return nil }
-                return NhentaiTagSuggestionService.translatedTitle(forTagName: record.name, group: record.group)
-            }
-            if let scopedTag = scopedTag(from: tag) {
-                return NhentaiTagSuggestionService.translatedTitle(
-                    forTagName: scopedTag.value,
-                    group: scopedTag.namespace
-                )
-            }
-            return NhentaiTagSuggestionService.translatedTitle(forTagName: tag)
-        case .eHentai:
-            if let scopedTag = scopedTag(from: tag) {
-                return EhTagTranslationService.translatedTagTitle(
-                    title: scopedTag.value,
-                    query: tag,
-                    namespace: scopedTag.namespace
-                )
-            }
-            return EhTagTranslationService.translatedAnyTagTitle(tag)
-        case .hitomi:
-            return EhTagTranslationService.translatedAnyTagTitle(tag)
-        case .picacg, .jmComic, .htManga:
-            return tag
-        }
-    }
-
-    private nonisolated static func nhentaiTagID(from tag: String) -> Int? {
-        let trimmed = tag.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.lowercased().hasPrefix("tag:") else { return nil }
-        return Int(trimmed.dropFirst("tag:".count))
-    }
-
-    private nonisolated static func scopedTag(from tag: String) -> (namespace: String, value: String)? {
-        let trimmed = tag.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let separatorIndex = trimmed.firstIndex(of: ":") else { return nil }
-        let namespace = String(trimmed[..<separatorIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
-        let value = String(trimmed[trimmed.index(after: separatorIndex)...]).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !namespace.isEmpty, !value.isEmpty else { return nil }
-        return (namespace, value)
     }
 }
 

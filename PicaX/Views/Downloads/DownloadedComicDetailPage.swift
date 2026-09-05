@@ -110,9 +110,7 @@ struct DownloadedComicDetailPage: View {
         return [
             ComicTagGroup(
                 title: "标签",
-                tags: record.item.tags.map {
-                    ComicTagReference(title: $0, query: $0, platform: record.item.platform, urlString: nil)
-                }
+                tags: ComicListTagResolver(comics: [record.item]).tagReferences(for: record.item)
             )
         ]
     }

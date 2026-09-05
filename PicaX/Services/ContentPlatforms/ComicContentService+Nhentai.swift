@@ -216,7 +216,7 @@ extension ComicContentService {
             title: title,
             subtitle: subtitle,
             coverURLString: absoluteNhentaiThumbnail(coverPath),
-            tags: tagGroups.flatMap { $0.tags.map(\.title) },
+            tags: nhentaiListTags(from: json, tagRecords: nhentaiTagNameRecords(from: tags)),
             pageCount: json.intValue(for: "num_pages"),
             likesCount: json.intValue(for: "num_favorites"),
             favoriteDate: item.favoriteDate,
@@ -235,9 +235,9 @@ extension ComicContentService {
     func nhentaiListTags(from doc: [String: Any], tagRecords: [StoredNhentaiTagName]) -> [String] {
         let tagIDs = nhentaiTagIDs(from: doc)
         if !tagIDs.isEmpty {
-            return tagIDs.prefix(6).map { "tag:\($0)" }
+            return tagIDs.map { "tag:\($0)" }
         }
-        return tagRecords.prefix(6).map(\.name)
+        return tagRecords.map { "\($0.group):\($0.name)" }
     }
 
     func nhentaiLanguage(from tagRecords: [StoredNhentaiTagName]) -> String? {

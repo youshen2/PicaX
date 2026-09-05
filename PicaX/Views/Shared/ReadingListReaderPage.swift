@@ -45,9 +45,7 @@ struct ReadingListEntry: Identifiable, Hashable {
         return [
             ComicTagGroup(
                 title: "标签",
-                tags: item.tags.map {
-                    ComicTagReference(title: $0, query: $0, platform: item.platform, urlString: nil)
-                }
+                tags: ComicListTagResolver(comics: [item]).tagReferences(for: item)
             )
         ]
     }

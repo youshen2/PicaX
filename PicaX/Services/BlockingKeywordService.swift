@@ -80,7 +80,7 @@ final class BlockingKeywordService: ObservableObject {
         switch tag.platform {
         case .jmComic:
             add(tag.displayTitle, scope: .jmComic)
-        case .nhentai, .eHentai:
+        case .nhentai, .eHentai, .hitomi:
             add("tag:\(tag.query)", scope: .common)
         default:
             add("tag:\(tag.displayTitle)", scope: .common)
@@ -106,7 +106,9 @@ final class BlockingKeywordService: ObservableObject {
     }
 
     func visibleItems(from items: [ComicListItem]) -> [ComicListItem] {
-        items.filter { blockedKeyword(for: $0) == nil }
+        guard !commonKeywordMatcher.isEmpty else { return items }
+        let tagResolver = ComicListTagResolver(comics: items)
+        return items.filter { commonKeywordMatcher.blockedKeyword(for: $0, tagResolver: tagResolver) == nil }
     }
 
     func reloadFromDefaults() {
@@ -195,7 +197,10 @@ struct BlockingKeywordMatcher: Sendable {
         rules.isEmpty
     }
 
-    nonisolated func blockedKeyword(for item: ComicListItem) -> String? {
+    nonisolated func blockedKeyword(
+        for item: ComicListItem,
+        tagResolver: ComicListTagResolver? = nil
+    ) -> String? {
         guard !rules.isEmpty else { return nil }
 
         let title = Self.comparisonValue(item.title)
@@ -208,7 +213,7 @@ struct BlockingKeywordMatcher: Sendable {
                 if title.contains(rule.comparisonWord) || subtitle.contains(rule.comparisonWord) {
                     return rule.rawValue
                 }
-                if Self.tagCandidateSet(for: item.tags, cachedIn: &tagCandidateSet).contains(rule.comparisonWord) {
+                if Self.tagCandidateSet(for: item, resolver: tagResolver, cachedIn: &tagCandidateSet).contains(ComicListTagResolver.normalizedTag(rule.comparisonWord)) {
                     return rule.rawValue
                 }
             case .title:
@@ -220,7 +225,7 @@ struct BlockingKeywordMatcher: Sendable {
                     return rule.rawValue
                 }
             case .tag:
-                if Self.tagCandidateSet(for: item.tags, cachedIn: &tagCandidateSet).contains(rule.comparisonWord) {
+                if Self.tagCandidateSet(for: item, resolver: tagResolver, cachedIn: &tagCandidateSet).contains(rule.comparisonWord) {
                     return rule.rawValue
                 }
             }
@@ -229,23 +234,27 @@ struct BlockingKeywordMatcher: Sendable {
         return nil
     }
 
-    private nonisolated static func tagCandidateSet(for tags: [String], cachedIn cache: inout Set<String>?) -> Set<String> {
+    private nonisolated static func tagCandidateSet(
+        for item: ComicListItem,
+        resolver: ComicListTagResolver?,
+        cachedIn cache: inout Set<String>?
+    ) -> Set<String> {
         if let cache {
             return cache
         }
-        let candidates = Set(tags.flatMap(tagCandidates(for:)))
+        let resolver = resolver ?? ComicListTagResolver(comics: [item])
+        let candidates = Set(resolver.matchingTags(for: item).flatMap(tagCandidates(for:)))
         cache = candidates
         return candidates
     }
 
     private nonisolated static func tagCandidates(for tag: String) -> [String] {
-        let trimmed = tag.trimmingCharacters(in: .whitespacesAndNewlines)
-        var candidates = [trimmed, sexMarkerNormalized(trimmed)]
+        let trimmed = ComicListTagResolver.normalizedTag(tag)
+        var candidates = [trimmed]
 
         if let colonIndex = trimmed.firstIndex(of: ":") {
             let right = String(trimmed[trimmed.index(after: colonIndex)...]).trimmingCharacters(in: .whitespacesAndNewlines)
             candidates.append(right)
-            candidates.append(sexMarkerNormalized(right))
         }
 
         return candidates
@@ -255,15 +264,6 @@ struct BlockingKeywordMatcher: Sendable {
 
     private nonisolated static func comparisonValue(_ value: String) -> String {
         value.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
-    }
-
-    private nonisolated static func sexMarkerNormalized(_ value: String) -> String {
-        value
-            .replacingOccurrences(of: " ♀", with: "")
-            .replacingOccurrences(of: " ♂", with: "")
-            .replacingOccurrences(of: "♀", with: "")
-            .replacingOccurrences(of: "♂", with: "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 
@@ -302,7 +302,7 @@ private struct BlockingKeywordRule: Sendable {
             guard !word.isEmpty else { return nil }
             self.rawValue = rawValue
             mode = .tag
-            comparisonWord = Self.comparisonValue(word)
+            comparisonWord = Self.comparisonValue(ComicListTagResolver.normalizedTag(word))
             return
         }
         guard !trimmed.isEmpty else { return nil }

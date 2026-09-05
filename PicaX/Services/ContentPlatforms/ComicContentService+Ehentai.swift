@@ -133,7 +133,7 @@ extension ComicContentService {
             title: title,
             subtitle: uploader,
             coverURLString: cover,
-            tags: tags.map(\.title),
+            tags: tags.map(\.query),
             pageCount: nil,
             likesCount: nil,
             favoriteDate: favoriteDate,
@@ -162,7 +162,7 @@ extension ComicContentService {
             guard parts.count == 2 else { continue }
             let namespace = parts[0]
             let value = parts[1].trimmingCharacters(in: .whitespacesAndNewlines)
-            guard namespace != "language", !value.isEmpty else { continue }
+            guard !value.isEmpty else { continue }
             let query = "\(namespace):\(value)"
             let tag = ComicTagReference(
                 title: EhTagTranslationService.translatedTagTitle(title: value, query: query, namespace: namespace),
@@ -170,7 +170,7 @@ extension ComicContentService {
                 platform: .eHentai,
                 urlString: nil
             )
-            if ["character", "artist", "cosplayer", "group"].contains(namespace) {
+            if ["character", "artist", "cosplayer", "group", "language"].contains(namespace) {
                 secondaryTags.append(tag)
             } else {
                 primaryTags.append(tag)
@@ -274,7 +274,7 @@ extension ComicContentService {
             title: displayTitle,
             subtitle: uploader,
             coverURLString: cover,
-            tags: tagGroups.flatMap { $0.tags.map(\.title) },
+            tags: tagGroups.flatMap { $0.tags.map(\.query) },
             pageCount: pages ?? item.pageCount,
             likesCount: item.likesCount,
             favoriteDate: item.favoriteDate,
