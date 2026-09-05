@@ -80,10 +80,9 @@ struct SearchHistoryRecord: Identifiable, Equatable, Codable {
     }
 
     var resumableBreakpoint: ComicSearchBreakpoint? {
-        guard let breakpoint else { return nil }
-        let validKeywords = Set(
-            ComicSearchExpressionParser.clauses(from: keyword).map(\.breakpointKey)
-        )
+        guard let breakpoint,
+              let clauses = try? ComicSearchExpressionParser.clauses(from: keyword) else { return nil }
+        let validKeywords = Set(clauses.map(\.breakpointKey))
         let validPlatforms = Set(target.searchTarget.platforms)
         let requests = breakpoint.requests.filter {
             validKeywords.contains($0.keyword) && validPlatforms.contains($0.platform)
@@ -132,7 +131,7 @@ enum SearchHistoryTarget: Equatable, Hashable, Codable {
         switch self {
         case .aggregate(let platforms):
             let normalized = Self.normalizedPlatforms(platforms)
-            if normalized.count == ComicPlatform.allCases.count {
+            if normalized.count == ComicPlatform.onlinePlatforms.count {
                 return "多平台聚合"
             }
             return "\(normalized.count) 个平台聚合"
@@ -166,8 +165,8 @@ enum SearchHistoryTarget: Equatable, Hashable, Codable {
 
     private static func normalizedPlatforms(_ platforms: [ComicPlatform]) -> [ComicPlatform] {
         let selected = Set(platforms)
-        let normalized = ComicPlatform.allCases.filter { selected.contains($0) }
-        return normalized.isEmpty ? ComicPlatform.allCases : normalized
+        let normalized = ComicPlatform.onlinePlatforms.filter { selected.contains($0) }
+        return normalized.isEmpty ? ComicPlatform.onlinePlatforms : normalized
     }
 }
 

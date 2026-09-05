@@ -37,6 +37,7 @@ struct BlockingKeywordFeedback: Identifiable {
 final class BlockingKeywordService: ObservableObject {
     @Published private(set) var commonKeywords: [String]
     @Published private(set) var jmComicKeywords: [String]
+    @Published private(set) var disabledKeywords: [String: Set<String>] = [:]
 
     private let defaults: UserDefaults
     private(set) var commonKeywordMatcher: BlockingKeywordMatcher
@@ -47,6 +48,7 @@ final class BlockingKeywordService: ObservableObject {
         commonKeywords = loadedCommonKeywords
         jmComicKeywords = Self.loadKeywords(defaults: defaults, key: BlockingKeywordSettingsKey.jmComic)
         commonKeywordMatcher = BlockingKeywordMatcher(keywords: loadedCommonKeywords)
+        reloadFromDefaults()
     }
 
     func keywords(for scope: BlockingKeywordScope) -> [String] {
@@ -92,6 +94,7 @@ final class BlockingKeywordService: ObservableObject {
         var keywords = keywords(for: scope)
         keywords.removeAll { $0 == normalized }
         setKeywords(keywords, for: scope)
+        setEnabled(true, keyword: normalized, scope: scope)
     }
 
     func remove(at offsets: IndexSet, displayedKeywords: [String], scope: BlockingKeywordScope) {
@@ -99,6 +102,30 @@ final class BlockingKeywordService: ObservableObject {
             guard displayedKeywords.indices.contains(index) else { continue }
             remove(displayedKeywords[index], scope: scope)
         }
+    }
+
+    func isEnabled(_ keyword: String, scope: BlockingKeywordScope) -> Bool {
+        !(disabledKeywords[scope.storageKey]?.contains(keyword) ?? false)
+    }
+
+    func setEnabled(_ enabled: Bool, keyword: String, scope: BlockingKeywordScope) {
+        var disabled = disabledKeywords[scope.storageKey] ?? []
+        if enabled { disabled.remove(keyword) } else { disabled.insert(keyword) }
+        defaults.set(Array(disabled).sorted(), forKey: scope.storageKey + ".disabled")
+        reloadFromDefaults()
+    }
+
+    func replace(_ original: String, with replacement: String, scope: BlockingKeywordScope) -> BlockingKeywordFeedback {
+        if normalizedKeyword(replacement) == original {
+            return BlockingKeywordFeedback(title: "已保存", message: original, isSuccess: true)
+        }
+        let wasEnabled = isEnabled(original, scope: scope)
+        let feedback = add(replacement, scope: scope)
+        if feedback.isSuccess {
+            remove(original, scope: scope)
+            setEnabled(wasEnabled, keyword: normalizedKeyword(replacement), scope: scope)
+        }
+        return feedback
     }
 
     func blockedKeyword(for item: ComicListItem) -> String? {
@@ -112,15 +139,22 @@ final class BlockingKeywordService: ObservableObject {
     }
 
     func reloadFromDefaults() {
+        let disabled = Dictionary(uniqueKeysWithValues: BlockingKeywordScope.allCases.map {
+            ($0.storageKey, Set(defaults.stringArray(forKey: $0.storageKey + ".disabled") ?? []))
+        })
         let loadedCommonKeywords = Self.loadKeywords(defaults: defaults, key: BlockingKeywordSettingsKey.common)
-        commonKeywordMatcher = BlockingKeywordMatcher(keywords: loadedCommonKeywords)
+        commonKeywordMatcher = BlockingKeywordMatcher(keywords: loadedCommonKeywords.filter {
+            !(disabled[BlockingKeywordSettingsKey.common]?.contains($0) ?? false)
+        })
+        disabledKeywords = disabled
         commonKeywords = loadedCommonKeywords
         jmComicKeywords = Self.loadKeywords(defaults: defaults, key: BlockingKeywordSettingsKey.jmComic)
     }
 
     nonisolated static func jmKeywordByApplyingBlocks(to keyword: String, defaults: UserDefaults = .standard) -> String {
         let trimmed = keyword.trimmingCharacters(in: .whitespacesAndNewlines)
-        let jmKeywords = loadKeywords(defaults: defaults, key: BlockingKeywordSettingsKey.jmComic)
+        let disabled = Set(defaults.stringArray(forKey: BlockingKeywordSettingsKey.jmComic + ".disabled") ?? [])
+        let jmKeywords = loadKeywords(defaults: defaults, key: BlockingKeywordSettingsKey.jmComic).filter { !disabled.contains($0) }
         guard !trimmed.isEmpty, !jmKeywords.isEmpty else { return trimmed }
 
         let blockingSet = Set(jmKeywords)
@@ -143,7 +177,7 @@ final class BlockingKeywordService: ObservableObject {
         let normalized = uniqueKeywords(keywords)
         switch scope {
         case .common:
-            commonKeywordMatcher = BlockingKeywordMatcher(keywords: normalized)
+            commonKeywordMatcher = BlockingKeywordMatcher(keywords: normalized.filter { isEnabled($0, scope: .common) })
             commonKeywords = normalized
         case .jmComic:
             jmComicKeywords = normalized

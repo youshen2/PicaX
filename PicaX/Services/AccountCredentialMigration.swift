@@ -122,7 +122,7 @@ enum PlatformCredentialMigration {
         let values = Set(
             persistedAccounts.map(\.platform) + legacyAccounts.map(\.platform)
         )
-        return ComicPlatform.allCases.filter(values.contains)
+        return ComicPlatform.onlinePlatforms.filter(values.contains)
     }
 
     private static func resolve(
@@ -133,7 +133,7 @@ enum PlatformCredentialMigration {
         let persistedByPlatform = newestAccountsByPlatform(persistedAccounts)
         let legacyByPlatform = newestAccountsByPlatform(legacyAccounts)
 
-        return ComicPlatform.allCases.compactMap { platform in
+        return ComicPlatform.onlinePlatforms.compactMap { platform in
             let persisted = persistedByPlatform[platform]
             let legacy = legacyByPlatform[platform]
             guard let metadataAccount = preferredMetadata(

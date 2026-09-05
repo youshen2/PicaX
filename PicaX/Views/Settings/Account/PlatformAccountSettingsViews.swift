@@ -6,7 +6,7 @@ struct PlatformAccountsSettingsView: View {
     var body: some View {
         List {
             Section("平台") {
-                ForEach(ComicPlatform.allCases) { platform in
+                ForEach(ComicPlatform.onlinePlatforms) { platform in
                     NavigationLink {
                         PlatformLoginView(platform: platform)
                     } label: {
@@ -41,7 +41,7 @@ struct PlatformLoginView: View {
         switch platform {
         case .picacg, .jmComic, .htManga:
             true
-        case .nhentai, .eHentai, .hitomi:
+        case .nhentai, .eHentai, .hitomi, .local:
             false
         }
     }

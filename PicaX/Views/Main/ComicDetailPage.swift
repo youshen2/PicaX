@@ -66,6 +66,10 @@ struct ComicDetailPage: View {
         }
         .toolbar {
             ToolbarItemGroup(placement: .picaxTopBarTrailing) {
+                NavigationLink {
+                    OtherComicSourcesPage(item: item, service: service)
+                } label: { Image(systemName: "square.stack.3d.up") }
+                .accessibilityLabel("其他来源与版本")
                 Button {
                     if let detail = viewModel.loadedDetail {
                         downloadContext = DownloadSheetContext(detail: detail)
@@ -134,7 +138,7 @@ struct ComicDetailPage: View {
 
     private var canDownloadLoadedDetail: Bool {
         guard let detail = viewModel.loadedDetail else { return false }
-        return !detail.chapters.isEmpty
+        return item.platform != .local && !detail.chapters.isEmpty
     }
 
     private var readLaterItem: ComicListItem {
@@ -518,7 +522,7 @@ private extension ComicDetailInfo {
         case .picacg, .jmComic, .nhentai, .hitomi:
             let subtitle = item.subtitle.trimmingCharacters(in: .whitespacesAndNewlines)
             return subtitle.isEmpty ? nil : subtitle
-        case .eHentai, .htManga:
+        case .eHentai, .htManga, .local:
             return nil
         }
     }

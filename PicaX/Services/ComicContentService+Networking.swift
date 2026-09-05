@@ -123,7 +123,7 @@ extension ComicContentService {
 
     func defaultCategories(platform: ComicPlatform) -> [ComicCategoryItem] {
         switch platform {
-        case .picacg:
+        case .picacg, .local:
             return []
         case .jmComic:
             return [

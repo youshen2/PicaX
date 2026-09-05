@@ -31,6 +31,16 @@ nonisolated enum ComicTitleMatcher {
         )
     }
 
+    static func versionSearchTitle(_ title: String) -> String {
+        let alias = title.components(separatedBy: CharacterSet(charactersIn: "|｜\n")).first ?? title
+        let stripped = strippingBracketedMetadata(from: alias)
+        return stripped.isEmpty ? title : stripped
+    }
+
+    static func versionGroupingKeys(for title: String) -> [String] {
+        normalizedTitleCandidates(title).map { String(String.UnicodeScalarView($0.compactMap(UnicodeScalar.init))) }
+    }
+
     static func similarityPercent(_ lhs: String, _ rhs: String) -> Double {
         let left = normalizedTitle(lhs)
         let right = normalizedTitle(rhs)

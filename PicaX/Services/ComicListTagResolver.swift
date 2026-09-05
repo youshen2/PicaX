@@ -113,7 +113,7 @@ struct ComicListTagResolver: Sendable {
                 )
             }
             return EhTagTranslationService.translatedAnyTagTitle(normalized)
-        case .picacg, .jmComic, .htManga:
+        case .picacg, .jmComic, .htManga, .local:
             return tag
         }
     }

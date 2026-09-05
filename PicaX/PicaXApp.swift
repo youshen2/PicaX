@@ -108,6 +108,9 @@ struct PicaXApp: App {
 
         #if os(iOS)
         baseContent
+            .picaxAppLockProtection()
+            .onAppear { AppLockService.shared.scenePhaseChanged(scenePhase) }
+            .onChange(of: scenePhase) { AppLockService.shared.scenePhaseChanged($0) }
             .onAppear(perform: syncAccountsToWatch)
             .onChange(of: platformAccountService.accounts) { _ in
                 syncAccountsToWatch()

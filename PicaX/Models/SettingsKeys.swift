@@ -538,6 +538,8 @@ enum PlatformFeatureSettings {
             "https://e-hentai.org"
         case .hitomi:
             "https://hitomi.la"
+        case .local:
+            ""
         case .htManga:
             "https://www.wnacg.com"
         }

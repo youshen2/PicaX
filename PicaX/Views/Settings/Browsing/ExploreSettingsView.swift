@@ -9,7 +9,7 @@ struct ExploreSettingsView: View {
         List {
             Section("平台") {
                 Picker("默认选中平台", selection: $defaultPlatformID) {
-                    ForEach(ComicPlatform.allCases) { platform in
+                    ForEach(ComicPlatform.onlinePlatforms) { platform in
                         Text(platform.title)
                             .tag(platform.rawValue)
                     }

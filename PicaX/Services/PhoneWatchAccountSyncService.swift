@@ -168,15 +168,16 @@ extension PhoneWatchAccountSyncService: WCSessionDelegate {
         }
         guard let incoming = WatchAccountSyncEnvelope.localFavorites(from: message) else { return }
         do {
-            let current = try PicaXSQLiteStore.loadLocalFavoritesOrThrow(folderID: "default")
-                .map(WatchLocalFavoriteItem.init)
+            let stored = try PicaXSQLiteStore.loadLocalFavoritesOrThrow(folderID: "default")
+            let localItems = stored.filter { $0.platform == .local }
+            let current = stored.filter { $0.platform != .local }.map(WatchLocalFavoriteItem.init)
             let result = syncStateStore.reconcileLocalFavorites(
                 current: current,
                 incoming: incoming,
                 incomingDeletions: WatchAccountSyncEnvelope.localFavoriteDeletions(from: message)
             )
             try PicaXSQLiteStore.replaceLocalFavoritesOrThrow(
-                result.items.compactMap(StoredLocalFavorite.init),
+                result.items.compactMap(StoredLocalFavorite.init) + localItems,
                 folderID: "default"
             )
             syncStateStore.commitLocalFavorites(result)
@@ -199,14 +200,16 @@ extension PhoneWatchAccountSyncService: WCSessionDelegate {
         }
         guard let incoming = WatchAccountSyncEnvelope.readLater(from: message) else { return }
         do {
-            let current = try PicaXSQLiteStore.loadReadLaterOrThrow().map(WatchReadLaterItem.init)
+            let stored = try PicaXSQLiteStore.loadReadLaterOrThrow()
+            let localItems = stored.filter { $0.item.platform == .local }
+            let current = stored.filter { $0.item.platform != .local }.map(WatchReadLaterItem.init)
             let result = syncStateStore.reconcileReadLater(
                 current: current,
                 incoming: incoming,
                 incomingDeletions: WatchAccountSyncEnvelope.readLaterDeletions(from: message)
             )
             try PicaXSQLiteStore.replaceReadLaterOrThrow(
-                result.items.compactMap(ReadLaterRecord.init)
+                result.items.compactMap(ReadLaterRecord.init) + localItems
             )
             syncStateStore.commitReadLater(result)
             latestSnapshot.readLater = result.items
@@ -230,15 +233,16 @@ extension PhoneWatchAccountSyncService: WCSessionDelegate {
             return
         }
         do {
-            let current = try PicaXSQLiteStore.loadReadingHistoryOrThrow()
-                .map(WatchReadingHistoryRecord.init)
+            let stored = try PicaXSQLiteStore.loadReadingHistoryOrThrow()
+            let localItems = stored.filter { $0.item.platform == .local }
+            let current = stored.filter { $0.item.platform != .local }.map(WatchReadingHistoryRecord.init)
             let result = syncStateStore.reconcileReadingHistory(
                 current: current,
                 incoming: incoming,
                 incomingDeletions: WatchAccountSyncEnvelope.readingHistoryDeletions(from: message)
             )
             try PicaXSQLiteStore.replaceReadingHistoryOrThrow(
-                result.items.compactMap(ReadingHistoryRecord.init)
+                result.items.compactMap(ReadingHistoryRecord.init) + localItems
             )
             syncStateStore.commitReadingHistory(result)
             latestSnapshot.readingHistory = result.items
@@ -294,15 +298,15 @@ private extension WatchAccountSnapshot {
     ) throws {
         let localFavorites = syncsLocalFavorites
             ? try PicaXSQLiteStore.loadLocalFavoritesOrThrow(folderID: "default")
-                .map(WatchLocalFavoriteItem.init)
+                .filter { $0.platform != .local }.map(WatchLocalFavoriteItem.init)
             : []
         let readLater = syncsReadLater
-            ? try PicaXSQLiteStore.loadReadLaterOrThrow().map(WatchReadLaterItem.init)
+            ? try PicaXSQLiteStore.loadReadLaterOrThrow().filter { $0.item.platform != .local }.map(WatchReadLaterItem.init)
             : []
         let readingHistory = syncsReadingHistory
-            ? try PicaXSQLiteStore.loadReadingHistoryOrThrow().map(WatchReadingHistoryRecord.init)
+            ? try PicaXSQLiteStore.loadReadingHistoryOrThrow().filter { $0.item.platform != .local }.map(WatchReadingHistoryRecord.init)
             : []
-        let platformAccounts = ComicPlatform.allCases.compactMap { platform -> WatchPlatformAccount? in
+        let platformAccounts = ComicPlatform.onlinePlatforms.compactMap { platform -> WatchPlatformAccount? in
             guard let account = accounts[platform] else { return nil }
             return WatchPlatformAccount(
                 id: platform.id,

@@ -25,6 +25,8 @@ struct HomeComicSourceRow: View {
             return account.displayName
         }
         switch platform {
+        case .local:
+            return "本地漫画文件"
         case .picacg:
             return "分流、头像框、打卡、我的评论"
         case .jmComic:
@@ -70,6 +72,8 @@ struct HomeComicSourceFeaturePage: View {
             frontendSection
 
             switch platform {
+            case .local:
+                EmptyView()
             case .picacg:
                 PicacgSourceFeatureSection(service: service, account: account, showMessage: showMessage)
             case .jmComic:
@@ -137,6 +141,8 @@ struct HomeComicSourceFeaturePage: View {
 
     private var frontendBinding: Binding<String> {
         switch platform {
+        case .local:
+            .constant("")
         case .picacg:
             Binding(get: { picacgFrontendURL }, set: { picacgFrontendURL = $0 })
         case .jmComic:

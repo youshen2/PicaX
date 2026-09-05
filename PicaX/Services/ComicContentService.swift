@@ -87,6 +87,8 @@ struct ComicContentService: Sendable {
             return try await loadHtMangaExplore(entry: entry, page: page)
         case .jmComic:
             return try await loadJmComicExplore(entry: entry, page: page)
+        case .local:
+            return []
         case .hitomi:
             return try await loadHitomiExplore(entry: entry, page: page)
         }
@@ -113,7 +115,7 @@ struct ComicContentService: Sendable {
             return try await loadHtMangaFavorites(account: account, folderID: folder?.id, page: page)
         case .jmComic:
             return try await loadJmComicFavorites(account: account, folderID: folder?.id, page: page)
-        case .hitomi:
+        case .hitomi, .local:
             throw ComicContentError.unsupported("Hitomi 没有平台收藏接口。")
         }
     }
@@ -130,7 +132,7 @@ struct ComicContentService: Sendable {
         switch platform {
         case .picacg, .nhentai, .eHentai, .jmComic, .htManga:
             true
-        case .hitomi:
+        case .hitomi, .local:
             false
         }
     }
@@ -139,7 +141,7 @@ struct ComicContentService: Sendable {
         switch platform {
         case .eHentai, .jmComic, .htManga:
             true
-        case .picacg, .nhentai, .hitomi:
+        case .picacg, .nhentai, .hitomi, .local:
             false
         }
     }
@@ -148,7 +150,7 @@ struct ComicContentService: Sendable {
         switch platform {
         case .picacg, .jmComic:
             true
-        case .nhentai, .eHentai, .htManga, .hitomi:
+        case .nhentai, .eHentai, .htManga, .hitomi, .local:
             false
         }
     }
@@ -159,7 +161,7 @@ struct ComicContentService: Sendable {
             true
         case .eHentai:
             true
-        case .nhentai, .htManga, .hitomi:
+        case .nhentai, .htManga, .hitomi, .local:
             false
         }
     }
@@ -172,7 +174,7 @@ struct ComicContentService: Sendable {
             if isLiked {
                 try await likeJmComic(item: item)
             }
-        case .nhentai, .eHentai, .htManga, .hitomi:
+        case .nhentai, .eHentai, .htManga, .hitomi, .local:
             throw ComicContentError.unsupported("\(item.platformTitle) 当前没有可用点赞接口。")
         }
     }
@@ -197,7 +199,7 @@ struct ComicContentService: Sendable {
             return try await loadJmComicFavoriteFolders(account: account)
         case .htManga:
             return try await loadHtMangaFavoriteFolders(account: account)
-        case .hitomi:
+        case .hitomi, .local:
             throw ComicContentError.unsupported("\(platform.title) 当前没有可用平台收藏写入接口。")
         }
     }
@@ -214,7 +216,7 @@ struct ComicContentService: Sendable {
             try await addJmComicFavorite(item: item, folderID: folder.id, account: account)
         case .htManga:
             try await addHtMangaFavorite(item: item, folderID: folder.id, account: account)
-        case .hitomi:
+        case .hitomi, .local:
             throw ComicContentError.unsupported("\(item.platformTitle) 当前没有可用平台收藏写入接口。")
         }
     }
@@ -299,7 +301,7 @@ struct ComicContentService: Sendable {
                 _ = try? await jmComicCheckIn(account: account)
             }
             return account
-        case .hitomi:
+        case .hitomi, .local:
             throw ComicContentError.unsupported("Hitomi 没有账号密码登录接口。")
         }
     }
@@ -316,6 +318,10 @@ struct ComicContentService: Sendable {
             return try await loadHtMangaDetail(item: item)
         case .jmComic:
             return try await loadJmComicDetail(item: item)
+        case .local:
+            guard let record = PicaXSQLiteStore.loadDownloadRecords().first(where: { $0.item.readingHistoryID == item.readingHistoryID }),
+                  let detail = record.detail else { throw ComicContentError.invalidResponse("本地漫画文件已不可用。") }
+            return detail
         case .hitomi:
             return try await loadHitomiDetail(item: item)
         }
@@ -342,6 +348,8 @@ struct ComicContentService: Sendable {
             return try await searchHtManga(tag: tag, page: page)
         case .jmComic:
             return try await searchJmComic(query: BlockingKeywordService.jmKeywordByApplyingBlocks(to: tag.query), page: page)
+        case .local:
+            return []
         case .hitomi:
             return try await searchHitomi(tag: tag, page: page)
         }
@@ -376,6 +384,12 @@ struct ComicContentService: Sendable {
                 page: page,
                 sort: resolvedOptions.sortValue(for: platform)
             )
+        case .local:
+            return PicaXSQLiteStore.loadDownloadRecords().filter {
+                $0.item.platform == .local
+            }.map(\.item).filter { item in
+                query.terms.allSatisfy { item.title.localizedCaseInsensitiveContains($0.trimmingCharacters(in: CharacterSet(charactersIn: "\""))) }
+            }.dropFirst((max(page, 1) - 1) * 30).prefix(30).map { $0 }
         case .hitomi:
             return try await searchHitomi(terms: query.terms, page: page)
         }
@@ -388,7 +402,7 @@ struct ComicContentService: Sendable {
             return NhentaiTagSuggestionService.searchQueryByTranslatingChineseTerms(keyword)
         case .eHentai:
             return EhTagTranslationService.searchQueryByTranslatingChineseTerms(keyword)
-        case .picacg, .htManga, .jmComic, .hitomi:
+        case .picacg, .htManga, .jmComic, .hitomi, .local:
             return keyword
         }
     }
@@ -412,7 +426,7 @@ struct ComicContentService: Sendable {
             return try await loadEhentaiComments(item: item, account: account)
         case .jmComic:
             return try await loadJmComicComments(item: item, page: page)
-        case .htManga, .hitomi:
+        case .htManga, .hitomi, .local:
             throw ComicContentError.unsupported("\(item.platformTitle) 没有可用评论接口。")
         }
     }
@@ -421,7 +435,7 @@ struct ComicContentService: Sendable {
         switch platform {
         case .picacg, .nhentai, .eHentai, .jmComic:
             true
-        case .htManga, .hitomi:
+        case .htManga, .hitomi, .local:
             false
         }
     }
@@ -439,7 +453,7 @@ struct ComicContentService: Sendable {
             return try await loadJmComicChapterComments(chapter: chapter, page: page)
         case .nhentai, .eHentai:
             return try await loadComments(item: item, account: account, page: page)
-        case .htManga, .hitomi:
+        case .htManga, .hitomi, .local:
             throw ComicContentError.unsupported("\(item.platformTitle) 没有可用章节评论接口。")
         }
     }
@@ -457,6 +471,12 @@ struct ComicContentService: Sendable {
             urls = try await loadHtMangaImages(item: item)
         case .jmComic:
             urls = try await loadJmComicChapterImages(chapter: chapter)
+        case .local:
+            guard let record = PicaXSQLiteStore.loadDownloadRecords().first(where: { $0.item.readingHistoryID == item.readingHistoryID }),
+                  let index = record.chapters.first(where: { $0.chapter.id == chapter.id })?.index else {
+                throw ComicContentError.invalidResponse("本地章节已不可用。")
+            }
+            return await DownloadService.localChapterImages(item: item, chapter: chapter, chapterIndex: index)
         case .hitomi:
             urls = try await loadHitomiImages(item: item)
         }
@@ -494,7 +514,7 @@ struct ComicContentService: Sendable {
             try await postEhentaiComment(item: item, content: trimmed, account: account)
         case .jmComic:
             try await postJmComicComment(item: item, content: trimmed, account: account)
-        case .nhentai, .htManga, .hitomi:
+        case .nhentai, .htManga, .hitomi, .local:
             throw ComicContentError.unsupported("\(item.platformTitle) 当前不支持发送评论。")
         }
     }

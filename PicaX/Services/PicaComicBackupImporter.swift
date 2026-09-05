@@ -269,7 +269,7 @@ enum PicaComicBackupImporter {
             accounts[platform] = PlatformAccount(platform: platform, username: username, credential: credential)
         }
 
-        for platform in ComicPlatform.allCases where accounts[platform] == nil {
+        for platform in ComicPlatform.onlinePlatforms where accounts[platform] == nil {
             let cookies = normalizedCookiesForPlatform(platform, cookies: cookiesForPlatform(platform, rows: cookieRows))
             let token = platformToken(platform: platform, json: [:], cookies: cookies)
             let refreshToken = platformRefreshToken(platform: platform, cookies: cookies)
@@ -290,7 +290,7 @@ enum PicaComicBackupImporter {
             accounts[platform] = PlatformAccount(platform: platform, username: platform.title, credential: credential)
         }
 
-        return ComicPlatform.allCases.compactMap { platform in
+        return ComicPlatform.onlinePlatforms.compactMap { platform in
             accounts[platform]
         }
     }
@@ -301,7 +301,7 @@ enum PicaComicBackupImporter {
         return uniqueStrings(values).enumerated().map { index, keyword in
             SearchHistoryRecord(
                 keyword: keyword,
-                target: .aggregate(ComicPlatform.allCases),
+                target: .aggregate(ComicPlatform.onlinePlatforms),
                 searchedAt: now.addingTimeInterval(Double(-index))
             )
         }
@@ -615,7 +615,7 @@ enum PicaComicBackupImporter {
             return value.removingPrefix("Ht")
         case .nhentai:
             return firstNumber(in: value) ?? value.removingPrefix("nhentai")
-        case .picacg, .eHentai:
+        case .picacg, .eHentai, .local:
             return value
         }
     }
@@ -635,6 +635,8 @@ enum PicaComicBackupImporter {
         case .htManga:
             let tagGroups = (json["comic"] as? [String: Any])?["tags"] as? [String: Any] ?? [:]
             return Array(tagGroups.keys)
+        case .local:
+            return []
         case .nhentai:
             return stringArray(json["tags"]) ?? []
         }
@@ -671,7 +673,7 @@ enum PicaComicBackupImporter {
         case .jmComic:
             let id = (json["comic"] as? [String: Any])?["id"] as? String ?? ""
             return id.isEmpty ? "" : "https://cdn-msp.jmapiproxyxxx.vip/media/albums/\(id)_3x4.jpg"
-        case .picacg:
+        case .picacg, .local:
             return ""
         }
     }
@@ -711,7 +713,7 @@ enum PicaComicBackupImporter {
             return firstString(json, keys: ["token", "authorization", "access_token"]) ?? cookieValue(named: "token", in: cookies) ?? cookieValue(named: "access_token", in: cookies)
         case .nhentai:
             return cookieValue(named: "access_token", in: cookies)
-        case .jmComic, .eHentai, .hitomi, .htManga:
+        case .jmComic, .eHentai, .hitomi, .htManga, .local:
             return nil
         }
     }
@@ -720,7 +722,7 @@ enum PicaComicBackupImporter {
         switch platform {
         case .nhentai:
             return cookieValue(named: "refresh_token", in: cookies)
-        case .picacg, .jmComic, .eHentai, .hitomi, .htManga:
+        case .picacg, .jmComic, .eHentai, .hitomi, .htManga, .local:
             return nil
         }
     }
@@ -730,7 +732,7 @@ enum PicaComicBackupImporter {
         switch platform {
         case .nhentai:
             return "User"
-        case .picacg, .jmComic, .eHentai, .hitomi, .htManga:
+        case .picacg, .jmComic, .eHentai, .hitomi, .htManga, .local:
             return nil
         }
     }
@@ -760,7 +762,7 @@ enum PicaComicBackupImporter {
             ["hitomi.la", ".hitomi.la"]
         case .picacg:
             ["picacomic.com", ".picacomic.com", "picaapi.picacomic.com", ".picaapi.picacomic.com"]
-        case .jmComic:
+        case .jmComic, .local:
             []
         }
         guard !hosts.isEmpty else { return [] }

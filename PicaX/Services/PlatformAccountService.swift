@@ -10,7 +10,7 @@ final class PlatformAccountService: ObservableObject {
     }
 
     var loggedInAccounts: [PlatformAccount] {
-        ComicPlatform.allCases.compactMap { accounts[$0] }
+        ComicPlatform.onlinePlatforms.compactMap { accounts[$0] }
     }
 
     func account(for platform: ComicPlatform) -> PlatformAccount? {

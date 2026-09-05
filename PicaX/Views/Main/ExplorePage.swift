@@ -12,7 +12,7 @@ struct ExplorePage: View {
         List {
             Section {
                 Picker("平台", selection: $selectedPlatform) {
-                    ForEach(ComicPlatform.allCases) { platform in
+                    ForEach(ComicPlatform.onlinePlatforms) { platform in
                         Label(platform.title, systemImage: platform.systemImage)
                             .tag(platform)
                     }

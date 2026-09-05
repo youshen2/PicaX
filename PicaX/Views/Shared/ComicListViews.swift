@@ -36,6 +36,7 @@ struct ComicListSection: View {
     @State private var renderedComicCount = Self.initialRenderedComicCount
     @State private var renderSnapshot = ComicListRenderSnapshot.empty
     @State private var tagDisplayVersion = 0
+    @State private var showsBlockingDetails = false
     @State private var lastWaterfallPaginationTrigger: ComicWaterfallPaginationTrigger?
     @Namespace private var waterfallScrollCoordinateSpace
     @Namespace private var navigationTransitionNamespace
@@ -49,6 +50,15 @@ struct ComicListSection: View {
     var body: some View {
         Group {
             comicList
+        }
+        .safeAreaInset(edge: .top) {
+            if !renderSnapshot.blockedComics.isEmpty {
+                Button("已屏蔽 \(renderSnapshot.blockedComics.count) 项 · 查看原因") { showsBlockingDetails = true }
+                    .font(.footnote).padding(8).frame(maxWidth: .infinity).background(.bar)
+            }
+        }
+        .sheet(isPresented: $showsBlockingDetails) {
+            BlockedComicResultsSheet(matches: renderSnapshot.blockedComics, service: service)
         }
         .picaxComicDetailDestination(
             item: $detailRequest,
@@ -1627,6 +1637,7 @@ private struct ComicListSnapshotRequest: Sendable {
 private struct ComicListRenderSnapshot: Sendable {
     let key: ComicListSnapshotKey
     let visibleComics: [ComicListItem]
+    let blockedComics: [BlockedComicMatch]
     let readingRecordsByID: [String: ReadingHistoryRecord]
     let crossPlatformReadingIDs: Set<String>
     let displayTagsByID: [String: [String]]
@@ -1635,6 +1646,7 @@ private struct ComicListRenderSnapshot: Sendable {
     static let empty = ComicListRenderSnapshot(
         key: .empty,
         visibleComics: [],
+        blockedComics: [],
         readingRecordsByID: [:],
         crossPlatformReadingIDs: [],
         displayTagsByID: [:],
@@ -1647,6 +1659,7 @@ private struct ComicListRenderSnapshot: Sendable {
 
     nonisolated static func make(for request: ComicListSnapshotRequest) throws -> ComicListRenderSnapshot {
         var visibleComics: [ComicListItem] = []
+        var blockedComics: [BlockedComicMatch] = []
         visibleComics.reserveCapacity(request.comics.count)
         var crossPlatformReadingIDs = Set<String>()
 
@@ -1679,7 +1692,8 @@ private struct ComicListRenderSnapshot: Sendable {
             if index.isMultiple(of: 64), Task.isCancelled {
                 throw CancellationError()
             }
-            if request.appliesBlocking, request.blockingMatcher.blockedKeyword(for: comic, tagResolver: tagResolver) != nil {
+            if request.appliesBlocking, let rule = request.blockingMatcher.blockedKeyword(for: comic, tagResolver: tagResolver) {
+                blockedComics.append(BlockedComicMatch(item: comic, rule: rule))
                 continue
             }
             if request.appliesReadProgressFilter,
@@ -1708,6 +1722,7 @@ private struct ComicListRenderSnapshot: Sendable {
         return ComicListRenderSnapshot(
             key: request.key,
             visibleComics: visibleComics,
+            blockedComics: blockedComics,
             readingRecordsByID: request.readingRecordsByID,
             crossPlatformReadingIDs: crossPlatformReadingIDs,
             displayTagsByID: tagResolver.displayTagsByID(for: visibleComics),

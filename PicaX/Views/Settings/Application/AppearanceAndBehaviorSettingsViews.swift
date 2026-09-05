@@ -67,6 +67,9 @@ struct AppBehaviorSettingsView: View {
 
             Section {
                 Toggle("图片页面标记为敏感内容", isOn: $marksImageContentAsSensitive)
+                #if os(iOS)
+                NavigationLink("应用锁") { AppLockSettingsView() }
+                #endif
             } footer: {
                 Text("开启后，包含漫画封面或章节图片的页面会标记为敏感内容；进入后台后系统会用占位内容保护这些页面。")
             }

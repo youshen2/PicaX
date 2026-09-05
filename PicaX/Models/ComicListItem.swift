@@ -100,7 +100,7 @@ struct ComicListItem: Identifiable, Equatable, Codable, Sendable {
         switch platform {
         case .picacg, .nhentai, .eHentai, .jmComic:
             true
-        case .htManga, .hitomi:
+        case .htManga, .hitomi, .local:
             false
         }
     }
@@ -201,7 +201,7 @@ extension ComicListItem {
                     systemImage: "link"
                 )
             }
-        case .picacg:
+        case .picacg, .local:
             nil
         }
     }
@@ -227,7 +227,7 @@ extension ComicListItem {
             }
             guard let id = firstNumber(in: self.id) else { return nil }
             return "\(baseURL)/photos-index-page-1-aid-\(id).html"
-        case .picacg, .jmComic:
+        case .picacg, .jmComic, .local:
             return nil
         }
     }
@@ -370,6 +370,11 @@ extension URL {
     }
 
     nonisolated var picaxLocalFileURL: URL? {
+        if scheme == "picax-download" {
+            guard !pathComponents.contains(".."),
+                  let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+            return root.appendingPathComponent("PicaX/Downloads", isDirectory: true).appendingPathComponent(path)
+        }
         if isFileURL {
             return self
         }
@@ -377,6 +382,18 @@ extension URL {
             return URL(fileURLWithPath: path)
         }
         return nil
+    }
+
+    nonisolated var picaxPortableDownloadURLString: String {
+        guard isFileURL, let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+            return absoluteString
+        }
+        let prefix = root.appendingPathComponent("PicaX/Downloads", isDirectory: true).path + "/"
+        guard path.hasPrefix(prefix) else { return absoluteString }
+        var components = URLComponents()
+        components.scheme = "picax-download"
+        components.path = "/" + String(path.dropFirst(prefix.count))
+        return components.url?.absoluteString ?? absoluteString
     }
 
     nonisolated var picaxSupportsURLCache: Bool {
@@ -471,6 +488,8 @@ enum ComicExploreEntry: Hashable, Identifiable {
             [.latest, .popular(.today), .popular(.week), .popular(.month)]
         case .jmComic:
             [.random, .latest, .popular(.today), .popular(.week), .popular(.month), .popular(.allTime)]
+        case .local:
+            []
         case .hitomi:
             [.random, .latest, .popular(.today), .popular(.week), .popular(.month), .popular(.year)]
         }
@@ -565,7 +584,7 @@ nonisolated struct ComicSearchAdvancedOptions: Equatable, Codable, Sendable {
             nhentaiSort
         case .jmComic:
             jmComicSort
-        case .eHentai, .htManga, .hitomi:
+        case .eHentai, .htManga, .hitomi, .local:
             ""
         }
     }
@@ -578,7 +597,7 @@ nonisolated struct ComicSearchAdvancedOptions: Equatable, Codable, Sendable {
             nhentaiSort = value
         case .jmComic:
             jmComicSort = value
-        case .eHentai, .htManga, .hitomi:
+        case .eHentai, .htManga, .hitomi, .local:
             break
         }
     }
@@ -599,7 +618,7 @@ nonisolated struct ComicSearchAdvancedOptions: Equatable, Codable, Sendable {
             nhentaiLanguage
         case .eHentai:
             ehentaiLanguage
-        case .picacg, .jmComic, .htManga, .hitomi:
+        case .picacg, .jmComic, .htManga, .hitomi, .local:
             nil
         }
     }
@@ -610,7 +629,7 @@ nonisolated struct ComicSearchAdvancedOptions: Equatable, Codable, Sendable {
             nhentaiLanguage = language
         case .eHentai:
             ehentaiLanguage = language
-        case .picacg, .jmComic, .htManga, .hitomi:
+        case .picacg, .jmComic, .htManga, .hitomi, .local:
             break
         }
     }
@@ -625,7 +644,7 @@ nonisolated struct ComicSearchAdvancedOptions: Equatable, Codable, Sendable {
             jmComicSort != "mr"
         case .eHentai:
             ehentaiLanguage != nil
-        case .htManga, .hitomi:
+        case .htManga, .hitomi, .local:
             false
         }
     }
@@ -689,7 +708,7 @@ extension ComicPlatform {
                 ComicSearchSortChoice(value: "mp", title: "最多图片"),
                 ComicSearchSortChoice(value: "tf", title: "最多喜欢")
             ]
-        case .eHentai, .htManga, .hitomi:
+        case .eHentai, .htManga, .hitomi, .local:
             []
         }
     }

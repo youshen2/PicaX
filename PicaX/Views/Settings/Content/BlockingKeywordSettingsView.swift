@@ -6,6 +6,7 @@ struct BlockingKeywordSettingsView: View {
     @State private var selectedScope: BlockingKeywordScope = .common
     @State private var showsDescendingOrder = true
     @State private var addScope: BlockingKeywordScope?
+    @State private var editedRule: BlockingRuleEditRequest?
 
     private var displayedKeywords: [String] {
         let keywords = blockingKeywords.keywords(for: selectedScope)
@@ -41,9 +42,17 @@ struct BlockingKeywordSettingsView: View {
                         .listRowBackground(Color.clear)
                 } else {
                     ForEach(displayedKeywords, id: \.self) { keyword in
-                        Text(keyword)
-                            .font(.body)
-                            .textSelection(.enabled)
+                        Toggle(isOn: Binding(
+                            get: { blockingKeywords.isEnabled(keyword, scope: selectedScope) },
+                            set: { blockingKeywords.setEnabled($0, keyword: keyword, scope: selectedScope) }
+                        )) {
+                            Button(keyword) {
+                                editedRule = BlockingRuleEditRequest(keyword: keyword, scope: selectedScope)
+                            }.buttonStyle(.plain)
+                        }
+                        .contextMenu {
+                            Button("编辑") { editedRule = BlockingRuleEditRequest(keyword: keyword, scope: selectedScope) }
+                        }
                     }
                     .onDelete(perform: removeKeywords)
                 }
@@ -64,6 +73,9 @@ struct BlockingKeywordSettingsView: View {
                 }
                 .accessibilityLabel("添加屏蔽词")
             }
+        }
+        .sheet(item: $editedRule) { request in
+            BlockingKeywordAddSheet(scope: request.scope, original: request.keyword)
         }
         .sheet(item: $addScope) { scope in
             BlockingKeywordAddSheet(scope: scope)
@@ -87,11 +99,18 @@ struct BlockingKeywordSettingsView: View {
     }
 }
 
+private struct BlockingRuleEditRequest: Identifiable {
+    let id = UUID()
+    let keyword: String
+    let scope: BlockingKeywordScope
+}
+
 private struct BlockingKeywordAddSheet: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var blockingKeywords: BlockingKeywordService
 
     let scope: BlockingKeywordScope
+    var original: String? = nil
 
     @State private var keyword = ""
     @State private var feedback: BlockingKeywordFeedback?
@@ -116,7 +135,8 @@ private struct BlockingKeywordAddSheet: View {
                     Text(helpText)
                 }
             }
-            .navigationTitle("添加屏蔽词")
+            .navigationTitle(original == nil ? "添加屏蔽词" : "编辑屏蔽词")
+            .onAppear { keyword = original ?? "" }
             .picaxNavigationBarTitleDisplayModeInline()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -124,7 +144,7 @@ private struct BlockingKeywordAddSheet: View {
                 }
 
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("添加", action: addKeyword)
+                    Button("保存", action: addKeyword)
                 }
             }
             .alert(item: $feedback) { feedback in
@@ -138,7 +158,8 @@ private struct BlockingKeywordAddSheet: View {
     }
 
     private func addKeyword() {
-        let result = blockingKeywords.add(keyword, scope: scope)
+        let result = original.map { blockingKeywords.replace($0, with: keyword, scope: scope) }
+            ?? blockingKeywords.add(keyword, scope: scope)
         if result.isSuccess {
             dismiss()
         } else {

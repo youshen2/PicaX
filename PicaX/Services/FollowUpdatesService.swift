@@ -179,7 +179,7 @@ final class FollowUpdatesService: ObservableObject {
     }
 
     private func synchronizeWithFavorites() {
-        let favorites = PicaXSQLiteStore.loadLocalFavorites(folderID: "default").map(\.item)
+        let favorites = PicaXSQLiteStore.loadLocalFavorites(folderID: "default").map(\.item).filter { $0.platform != .local }
         let favoriteIDs = Set(favorites.map(\.readingHistoryID))
         var existing = Dictionary(uniqueKeysWithValues: records.map { ($0.id, $0) })
         records = favorites.map { item in

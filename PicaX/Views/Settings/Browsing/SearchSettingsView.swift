@@ -11,7 +11,7 @@ struct SearchSettingsView: View {
     @AppStorage(SearchSettingsKey.suggestionSelectionBehavior) private var suggestionSelectionBehavior = SearchSuggestionSelectionBehavior.fill.rawValue
     @AppStorage(SearchSettingsKey.defaultTargetMode) private var defaultTargetMode = SearchDefaultTargetMode.platform.rawValue
     @AppStorage(SearchSettingsKey.defaultPlatform) private var defaultSearchPlatformID = ComicPlatform.picacg.rawValue
-    @AppStorage(SearchSettingsKey.defaultAggregatePlatforms) private var defaultAggregatePlatformIDs = ComicPlatform.allCases.map(\.rawValue).joined(separator: ",")
+    @AppStorage(SearchSettingsKey.defaultAggregatePlatforms) private var defaultAggregatePlatformIDs = ComicPlatform.onlinePlatforms.map(\.rawValue).joined(separator: ",")
     @AppStorage(SearchHistorySettingsKey.isEnabled) private var savesSearchHistory = true
     @AppStorage(SearchHistorySettingsKey.maxRecords) private var maxSearchHistoryRecords = 50
 
@@ -28,7 +28,7 @@ struct SearchSettingsView: View {
                 .split(separator: ",")
                 .compactMap { ComicPlatform(rawValue: String($0)) }
         )
-        return platforms.isEmpty ? Set(ComicPlatform.allCases) : platforms
+        return platforms.isEmpty ? Set(ComicPlatform.onlinePlatforms) : platforms
     }
 
     var body: some View {
@@ -43,13 +43,13 @@ struct SearchSettingsView: View {
 
                 if selectedDefaultTargetMode == .platform {
                     Picker("默认平台", selection: $defaultSearchPlatformID) {
-                        ForEach(ComicPlatform.allCases) { platform in
+                        ForEach(ComicPlatform.onlinePlatforms) { platform in
                             Text(platform.title)
                                 .tag(platform.rawValue)
                         }
                     }
                 } else {
-                    ForEach(ComicPlatform.allCases) { platform in
+                    ForEach(ComicPlatform.onlinePlatforms) { platform in
                         Button {
                             toggleDefaultAggregatePlatform(platform)
                         } label: {
@@ -206,7 +206,7 @@ struct SearchSettingsView: View {
             platforms.insert(platform)
         }
 
-        defaultAggregatePlatformIDs = ComicPlatform.allCases
+        defaultAggregatePlatformIDs = ComicPlatform.onlinePlatforms
             .filter { platforms.contains($0) }
             .map(\.rawValue)
             .joined(separator: ",")

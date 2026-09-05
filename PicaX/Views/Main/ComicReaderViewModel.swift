@@ -14,6 +14,7 @@ final class ComicReaderViewModel: ObservableObject {
     private let service: ComicContentService
     private let localChapterImageProvider: ((ComicChapter, Int) async -> [ComicChapterImage])?
     private var loadedChapterID: String?
+    private var bookmarkImageURLs: [Int: [String]] = [:]
     private var preloadDebounceTask: Task<Void, Never>?
     private var preloadTask: Task<Void, Never>?
     private var preloadedImageKeys = Set<String>()
@@ -141,20 +142,24 @@ final class ComicReaderViewModel: ObservableObject {
             throw ReaderChapterImageLoadError.invalidChapter
         }
         let chapter = detail.chapters[index]
+        let images: [ComicChapterImage]
         if preloadedChapterID == chapter.id, !preloadedChapterImages.isEmpty {
-            let images = preloadedChapterImages
+            images = preloadedChapterImages
             preloadedChapterID = nil
             preloadedChapterImages = []
-            return images
+        } else if let localChapterImageProvider {
+            images = await localChapterImageProvider(chapter, index)
+            guard !images.isEmpty else { throw ReaderChapterImageLoadError.chapterNotDownloaded }
+        } else {
+            images = try await service.loadChapterImages(item: detail.item, chapter: chapter, account: account)
         }
-        if let localChapterImageProvider {
-            let images = await localChapterImageProvider(chapter, index)
-            guard !images.isEmpty else {
-                throw ReaderChapterImageLoadError.chapterNotDownloaded
-            }
-            return images
-        }
-        return try await service.loadChapterImages(item: detail.item, chapter: chapter, account: account)
+        bookmarkImageURLs[index] = images.map(\.urlString)
+        return images
+    }
+
+    func bookmarkImageURL(chapterIndex: Int, pageIndex: Int) -> String? {
+        guard let urls = bookmarkImageURLs[chapterIndex], urls.indices.contains(pageIndex) else { return nil }
+        return URL.picaxResolved(from: urls[pageIndex])?.picaxPortableDownloadURLString ?? urls[pageIndex]
     }
 
     func scheduleImagePreload(aroundPage index: Int, count: Int, delay: Double, targetPixelWidth: Int?) {

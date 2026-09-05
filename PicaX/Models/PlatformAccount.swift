@@ -8,6 +8,9 @@ enum ComicPlatform: String, CaseIterable, Codable, Identifiable, Sendable {
     case eHentai
     case hitomi
     case htManga
+    case local
+
+    nonisolated static var onlinePlatforms: [ComicPlatform] { allCases.filter { $0 != .local } }
 
     nonisolated var id: String { rawValue }
 
@@ -40,6 +43,8 @@ enum ComicPlatform: String, CaseIterable, Codable, Identifiable, Sendable {
             "E-Hentai"
         case .hitomi:
             "Hitomi"
+        case .local:
+            "本地导入"
         case .htManga:
             "绅士漫画"
         }
@@ -57,6 +62,8 @@ enum ComicPlatform: String, CaseIterable, Codable, Identifiable, Sendable {
             "E-Hentai 网页登录"
         case .hitomi:
             "Hitomi 浏览状态"
+        case .local:
+            "设备中的漫画文件"
         case .htManga:
             "绅士漫画账号"
         }
@@ -75,7 +82,7 @@ enum ComicPlatform: String, CaseIterable, Codable, Identifiable, Sendable {
 
     var loginWebsite: String? {
         switch self {
-        case .picacg, .jmComic:
+        case .picacg, .jmComic, .local:
             nil
         case .nhentai:
             "\(PlatformFeatureSettings.frontendBaseURL(for: .nhentai))/login/?next=/"
@@ -100,6 +107,8 @@ enum ComicPlatform: String, CaseIterable, Codable, Identifiable, Sendable {
             "e.circle"
         case .hitomi:
             "h.circle"
+        case .local:
+            "folder.circle"
         case .htManga:
             "book.circle"
         }
@@ -117,6 +126,8 @@ enum ComicPlatform: String, CaseIterable, Codable, Identifiable, Sendable {
             .purple
         case .hitomi:
             .blue
+        case .local:
+            .indigo
         case .htManga:
             .teal
         }

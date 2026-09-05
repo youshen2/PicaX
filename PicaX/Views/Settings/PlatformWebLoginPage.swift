@@ -127,6 +127,8 @@ struct PlatformWebLoginPage: View {
         let accountUserAgent = PlatformWebUserAgent.normalized(userAgent)
 
         switch platform {
+        case .local:
+            throw PlatformWebLoginError.notReady
         case .picacg:
             guard let token = tokenCookie?.value, !token.isEmpty else {
                 throw PlatformWebLoginError.notReady
@@ -239,7 +241,7 @@ private extension ComicPlatform {
             "请在网页中完成登录。"
         case .eHentai:
             "请在网页中完成登录。"
-        case .jmComic, .htManga, .hitomi:
+        case .jmComic, .htManga, .hitomi, .local:
             "登录完成后点“完成”保存。"
         }
     }
@@ -277,6 +279,8 @@ private extension ComicPlatform {
             hosts.append(host.lowercased())
         }
         switch self {
+        case .local:
+            break
         case .picacg:
             hosts.append("picacomic.com")
         case .nhentai:

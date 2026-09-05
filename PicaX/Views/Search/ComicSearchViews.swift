@@ -6,7 +6,7 @@ enum ComicSearchTarget: Hashable, Identifiable, Sendable {
     case platform(ComicPlatform)
 
     static var defaultAggregate: ComicSearchTarget {
-        .aggregate(ComicPlatform.allCases)
+        .aggregate(ComicPlatform.onlinePlatforms)
     }
 
     var id: String {
@@ -22,7 +22,7 @@ enum ComicSearchTarget: Hashable, Identifiable, Sendable {
         switch self {
         case .aggregate(let platforms):
             let normalized = Self.normalizedPlatforms(platforms)
-            if normalized.count == ComicPlatform.allCases.count {
+            if normalized.count == ComicPlatform.onlinePlatforms.count {
                 return "多平台聚合"
             }
             return "\(normalized.count) 个平台聚合"
@@ -74,8 +74,8 @@ enum ComicSearchTarget: Hashable, Identifiable, Sendable {
 
     private static func normalizedPlatforms(_ platforms: [ComicPlatform]) -> [ComicPlatform] {
         let selected = Set(platforms)
-        let normalized = ComicPlatform.allCases.filter { selected.contains($0) }
-        return normalized.isEmpty ? ComicPlatform.allCases : normalized
+        let normalized = ComicPlatform.onlinePlatforms.filter { selected.contains($0) }
+        return normalized.isEmpty ? ComicPlatform.onlinePlatforms : normalized
     }
 
     static func configuredDefault(defaults: UserDefaults = .standard) -> ComicSearchTarget {
@@ -94,7 +94,7 @@ enum ComicSearchTarget: Hashable, Identifiable, Sendable {
     }
 
     private static var defaultAggregatePlatformIDs: String {
-        ComicPlatform.allCases.map(\.rawValue).joined(separator: ",")
+        ComicPlatform.onlinePlatforms.map(\.rawValue).joined(separator: ",")
     }
 }
 
@@ -106,7 +106,7 @@ struct ComicSearchPage: View {
     @AppStorage(SearchSettingsKey.suggestionSelectionBehavior) private var suggestionSelectionBehavior = SearchSuggestionSelectionBehavior.fill.rawValue
     @AppStorage(SearchSettingsKey.defaultTargetMode) private var defaultTargetMode = SearchDefaultTargetMode.platform.rawValue
     @AppStorage(SearchSettingsKey.defaultPlatform) private var defaultSearchPlatformID = ComicPlatform.picacg.rawValue
-    @AppStorage(SearchSettingsKey.defaultAggregatePlatforms) private var defaultAggregatePlatformIDs = ComicPlatform.allCases.map(\.rawValue).joined(separator: ",")
+    @AppStorage(SearchSettingsKey.defaultAggregatePlatforms) private var defaultAggregatePlatformIDs = ComicPlatform.onlinePlatforms.map(\.rawValue).joined(separator: ",")
     let service: ComicContentService
     private let usesConfiguredDefaultTarget: Bool
     private let recordsInitialSearchInHistory: Bool
@@ -114,9 +114,12 @@ struct ComicSearchPage: View {
     @StateObject private var viewModel: ComicSearchViewModel
     @State private var query: String
     @State private var selectedSearchTarget: ComicSearchTarget
-    @State private var aggregatePlatforms = Set(ComicPlatform.allCases)
+    @State private var aggregatePlatforms = Set(ComicPlatform.onlinePlatforms)
     @State private var searchOptions = ComicSearchAdvancedOptions()
     @State private var showsAdvancedOptions = false
+    @State private var showsSavedSearches = false
+    @State private var showsVersions = false
+    @State private var showsSearchProgress = false
     @State private var hiddenTagSuggestionsQuery: String?
     @State private var searchSubmitSuppressionGeneration = 0
     @State private var suppressedSearchSubmitGeneration: Int?
@@ -126,6 +129,7 @@ struct ComicSearchPage: View {
     @State private var loadMoreTask: Task<Void, Never>?
     @State private var pendingHistoryRecord: SearchHistoryRecord?
     @State private var currentSearchRecordsHistory = false
+    @State private var appliedHistoryTarget: ComicSearchTarget?
     @FocusState private var isSearchFocused: Bool
 
     init(
@@ -194,6 +198,22 @@ struct ComicSearchPage: View {
                 }
             }
         }
+        .safeAreaInset(edge: .bottom) {
+            if !viewModel.requests.isEmpty {
+                Button {
+                    showsSearchProgress = true
+                } label: {
+                    HStack {
+                        if viewModel.isSearching || viewModel.isLoadingMore { ProgressView() }
+                        let completed = viewModel.requests.filter {
+                            if case .loaded = $0.status { return true }; return false
+                        }.count
+                        Text("搜索进度：\(completed)/\(viewModel.requests.count) · 查看详情")
+                            .font(.footnote)
+                    }.padding(8).frame(maxWidth: .infinity)
+                }.background(.bar)
+            }
+        }
         .navigationTitle("搜索")
         .picaxNavigationBarTitleDisplayModeInline()
         .picaxHidesTabBar(hidesTabBar)
@@ -219,12 +239,21 @@ struct ComicSearchPage: View {
             }
             startSearch(force: true)
         }
-        .onChange(of: selectedSearchTarget) { _ in
+        .onChange(of: selectedSearchTarget) { target in
+            if appliedHistoryTarget == target { appliedHistoryTarget = nil; return }
+            appliedHistoryTarget = nil
             guard viewModel.hasSearched else { return }
             startSearch(force: true)
         }
         .toolbar {
             ToolbarItemGroup(placement: .picaxTopBarTrailing) {
+                Menu {
+                    Button("多源版本") { showsVersions = true }
+                    Button("常用搜索", systemImage: "star") { showsSavedSearches = true }
+                    Button("组合预览与进度", systemImage: "list.bullet.rectangle") { showsSearchProgress = true }
+                } label: { Image(systemName: "ellipsis.circle") }
+                .accessibilityLabel("搜索工具")
+
                 Button {
                     showsAdvancedOptions = true
                 } label: {
@@ -248,6 +277,36 @@ struct ComicSearchPage: View {
                 }
                 .disabled(viewModel.trimmedKeyword(query).isEmpty)
                 .accessibilityLabel("刷新")
+            }
+        }
+        .sheet(isPresented: $showsVersions) {
+            PicaxNavigationContainer {
+                if case .loaded(let comics) = viewModel.state {
+                    ComicVersionsView(comics: comics, service: service)
+                        .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { showsVersions = false } } }
+                } else {
+                    ContentUnavailableView("先进行搜索", systemImage: "magnifyingglass")
+                        .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { showsVersions = false } } }
+                }
+            }
+        }
+        .sheet(isPresented: $showsSavedSearches) {
+            SavedSearchesSheet(current: SearchHistoryRecord(
+                keyword: query, target: SearchHistoryTarget(selectedSearchTarget),
+                advancedOptions: searchOptions, searchedAt: Date()
+            )) { record in
+                applyHistory(record, resumesFromBreakpoint: false)
+            }
+        }
+        .sheet(isPresented: $showsSearchProgress) {
+            ComicSearchProgressSheet(model: viewModel, query: query, target: selectedSearchTarget) { platform in
+                searchTask?.cancel()
+                searchTask = Task {
+                    await viewModel.retryFailed(platform: platform, accounts: searchAccounts)
+                    if currentSearchRecordsHistory {
+                        searchHistory.updateBreakpoint(keyword: query, target: selectedSearchTarget, breakpoint: viewModel.breakpoint)
+                    }
+                }
             }
         }
         .sheet(isPresented: $showsAdvancedOptions) {
@@ -406,7 +465,7 @@ struct ComicSearchPage: View {
     }
 
     private var searchAccounts: [ComicPlatform: PlatformAccount] {
-        Dictionary(uniqueKeysWithValues: ComicPlatform.allCases.compactMap { platform in
+        Dictionary(uniqueKeysWithValues: ComicPlatform.onlinePlatforms.compactMap { platform in
             platformAccounts.account(for: platform).map { (platform, $0) }
         })
     }
@@ -448,7 +507,7 @@ struct ComicSearchPage: View {
         }
 
         aggregatePlatforms = nextPlatforms
-        selectedSearchTarget = .aggregate(ComicPlatform.allCases.filter { nextPlatforms.contains($0) })
+        selectedSearchTarget = .aggregate(ComicPlatform.onlinePlatforms.filter { nextPlatforms.contains($0) })
     }
 
     private func selectHistory(_ record: SearchHistoryRecord) {
@@ -462,6 +521,7 @@ struct ComicSearchPage: View {
     private func applyHistory(_ record: SearchHistoryRecord, resumesFromBreakpoint: Bool) {
         pendingHistoryRecord = nil
         query = record.keyword
+        if selectedSearchTarget != record.target.searchTarget { appliedHistoryTarget = record.target.searchTarget }
         selectedSearchTarget = record.target.searchTarget
         searchOptions = record.advancedOptions
         if let aggregatePlatformSet = record.target.aggregatePlatformSet {
@@ -587,7 +647,7 @@ private struct ComicSearchTargetMenu: View, Equatable {
                     }
                 }
 
-                ForEach(ComicPlatform.allCases) { platform in
+                ForEach(ComicPlatform.onlinePlatforms) { platform in
                     Button {
                         onToggleAggregatePlatform(platform)
                     } label: {
@@ -602,7 +662,7 @@ private struct ComicSearchTargetMenu: View, Equatable {
             Divider()
 
             Section("单平台") {
-                ForEach(ComicPlatform.allCases) { platform in
+                ForEach(ComicPlatform.onlinePlatforms) { platform in
                     let target = ComicSearchTarget.platform(platform)
                     Button {
                         onSelectTarget(target)
@@ -622,25 +682,24 @@ private struct ComicSearchTargetMenu: View, Equatable {
     }
 
     private var aggregateSearchTarget: ComicSearchTarget {
-        .aggregate(ComicPlatform.allCases.filter { aggregatePlatforms.contains($0) })
+        .aggregate(ComicPlatform.onlinePlatforms.filter { aggregatePlatforms.contains($0) })
     }
 }
 
 private extension String {
     var currentSearchOperand: String {
-        let start = lastSearchOperatorIndex.map { index(after: $0) } ?? startIndex
-        return String(self[start...])
+        String(self[ComicSearchExpressionTokenizer.currentOperandRange(in: self)])
     }
 
     func replacingLastSearchFragment(with replacement: String, suggestionTag: String, translatedTitle: String) -> String {
-        let operandStart = lastSearchOperatorIndex.map { index(after: $0) } ?? startIndex
-        let prefix = String(self[..<operandStart])
-        let operand = String(self[operandStart...])
+        let range = ComicSearchExpressionTokenizer.currentOperandRange(in: self)
+        let prefix = String(self[..<range.lowerBound])
+        let operand = String(self[range])
         return prefix + operand.replacingLastOperandFragment(
             with: replacement,
             suggestionTag: suggestionTag,
             translatedTitle: translatedTitle
-        )
+        ) + self[range.upperBound...]
     }
 
     private func replacingLastOperandFragment(with replacement: String, suggestionTag: String, translatedTitle: String) -> String {
@@ -666,10 +725,6 @@ private extension String {
 
         let prefix = String(trimmed[..<prefixEnd]).trimmingCharacters(in: .whitespacesAndNewlines)
         return prefix.isEmpty ? replacement : "\(prefix) \(replacement)"
-    }
-
-    private var lastSearchOperatorIndex: String.Index? {
-        lastIndex { $0 == "/" || $0 == "&" }
     }
 
     private func matchedTrailingWordCount(words: [String], suggestionTag: String, translatedTitle: String) -> Int {
@@ -871,7 +926,7 @@ private struct ComicSearchAdvancedOptionsSheet: View {
             options.jmComicSort = "mr"
         case .eHentai:
             options.ehentaiLanguage = nil
-        case .htManga, .hitomi:
+        case .htManga, .hitomi, .local:
             break
         }
     }

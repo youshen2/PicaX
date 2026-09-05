@@ -708,7 +708,7 @@ enum PicaXSQLiteStore {
         let previousSecrets: [ComicPlatform: PlatformCredentialSecrets?]?
         if payload.platformAccounts != nil {
             previousSecrets = try Dictionary(
-                uniqueKeysWithValues: ComicPlatform.allCases.map {
+                uniqueKeysWithValues: ComicPlatform.onlinePlatforms.map {
                     ($0, try PlatformCredentialVault.secrets(for: $0))
                 }
             )
@@ -722,7 +722,7 @@ enum PicaXSQLiteStore {
             )
             if let persistedAccounts {
                 let restoredPlatforms = Set(persistedAccounts.map(\.platform))
-                for platform in ComicPlatform.allCases where !restoredPlatforms.contains(platform) {
+                for platform in ComicPlatform.onlinePlatforms where !restoredPlatforms.contains(platform) {
                     try PlatformCredentialVault.delete(platform: platform)
                 }
             }
@@ -809,7 +809,7 @@ enum PicaXSQLiteStore {
         } catch {
             let operationError = error
             if let previousSecrets {
-                for platform in ComicPlatform.allCases {
+                for platform in ComicPlatform.onlinePlatforms {
                     try PlatformCredentialVault.restore(
                         previousSecrets[platform] ?? nil,
                         for: platform

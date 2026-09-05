@@ -87,6 +87,7 @@ struct ComicReaderPage: View {
     let onReaderExit: (() -> Void)?
     @StateObject private var viewModel: ComicReaderViewModel
     @State private var presentedChapterSheetTab: ReaderChapterSheetTab?
+    @State private var showsPageBookmarks = false
     @State private var locallyHidesReaderUI = false
     @State private var pagedPageIndex = 0
     @State private var continuousScrollBridge = ReaderContinuousScrollBridge()
@@ -181,6 +182,19 @@ struct ComicReaderPage: View {
                 in: navigationTransitionNamespace,
                 service: service
             )
+            .sheet(isPresented: $showsPageBookmarks) {
+                ReaderBookmarksSheet(current: currentPageBookmark, comicID: detail.item.readingHistoryID,
+                                     availableChapterIDs: Set(detail.chapters.map(\.id))) { bookmark in
+                    guard let index = detail.chapters.firstIndex(where: { $0.id == bookmark.chapterID }) else { return }
+                    Task {
+                        if usesWholeBookContinuousReading || index == viewModel.currentChapterIndex {
+                            requestProgressJump(to: bookmark.pageIndex, chapterIndex: index)
+                        } else {
+                            await loadChapter(at: index, pageIndex: bookmark.pageIndex)
+                        }
+                    }
+                }
+            }
             .sheet(item: $presentedChapterSheetTab) { tab in
                 ReaderChapterPickerSheet(
                     chapters: detail.chapters,
@@ -222,6 +236,11 @@ struct ComicReaderPage: View {
                         navigationTitle: viewModel.navigationTitle,
                         onSelect: requestChapterLoad
                     )
+                }
+
+                ToolbarItem(placement: .picaxTopBarTrailing) {
+                    Button { showsPageBookmarks = true } label: { Image(systemName: "bookmark") }
+                        .accessibilityLabel("页级书签")
                 }
 
                 ToolbarItem(placement: .picaxTopBarTrailing) {
@@ -445,7 +464,7 @@ struct ComicReaderPage: View {
     }
 
     private var isChapterSheetPresented: Bool {
-        presentedChapterSheetTab != nil
+        presentedChapterSheetTab != nil || showsPageBookmarks
     }
 
     private var autoPagingIntervalOptions: [Int] {
@@ -459,6 +478,18 @@ struct ComicReaderPage: View {
     private func presentChapterSheet(_ tab: ReaderChapterSheetTab) {
         guard tab == .chapters || hasReadingList else { return }
         presentedChapterSheetTab = tab
+    }
+
+    private var currentPageBookmark: ComicPageBookmark? {
+        guard let chapter = currentChapter,
+              case .loaded(let images) = viewModel.state,
+              !images.isEmpty else { return nil }
+        let page = min(max(viewModel.currentPageIndex, 0), max(viewModel.currentChapterPageCount - 1, 0))
+        return ComicPageBookmark(
+            comicID: detail.item.readingHistoryID, chapterID: chapter.id, chapterTitle: chapter.title,
+            chapterIndex: historyChapterIndexResolver(viewModel.currentChapterIndex), pageIndex: page,
+            thumbnailURLString: viewModel.bookmarkImageURL(chapterIndex: viewModel.currentChapterIndex, pageIndex: page), note: ""
+        )
     }
 
     private func requestChapterLoad(at index: Int) {
@@ -2178,7 +2209,7 @@ struct ComicReaderPage: View {
     }
 
     private var isAutoPaging: Bool {
-        autoPagingState?.wrappedValue ?? locallyAutoPaging
+        !showsPageBookmarks && (autoPagingState?.wrappedValue ?? locallyAutoPaging)
     }
 
     private var showsProgressOverlay: Bool {

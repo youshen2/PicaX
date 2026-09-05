@@ -6,6 +6,8 @@ struct DownloadListPage: View {
     let service: ComicContentService
 
     @State private var showsQueueSheet = false
+    @State private var showsLocalImporter = false
+    @State private var integrityRecord: DownloadRecord?
     @State private var showsFilterSheet = false
     @State private var selectedRecord: DownloadRecord?
     @State private var readerRequest: DownloadedComicReaderRequest?
@@ -33,6 +35,8 @@ struct DownloadListPage: View {
         .navigationTitle("下载")
         .toolbar {
             ToolbarItemGroup(placement: .picaxTopBarTrailing) {
+                Button { showsLocalImporter = true } label: { Image(systemName: "square.and.arrow.down") }
+                    .accessibilityLabel("导入本地漫画")
                 Button {
                     showsQueueSheet = true
                 } label: {
@@ -48,6 +52,8 @@ struct DownloadListPage: View {
                 .accessibilityLabel("高级筛选")
             }
         }
+        .sheet(isPresented: $showsLocalImporter) { LocalComicImportSheet() }
+        .sheet(item: $integrityRecord) { DownloadIntegritySheet(record: $0) }
         .sheet(isPresented: $showsQueueSheet) {
             DownloadQueueSheet()
                 .picaxPresentationDetents([.medium, .large])
@@ -173,6 +179,7 @@ struct DownloadListPage: View {
                         }
                         .buttonStyle(.plain)
                         .contextMenu {
+                            Button("检查完整性与修复") { integrityRecord = record }
                             Button {
                                 prepareArchiveExport(for: record)
                             } label: {

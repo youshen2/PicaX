@@ -9,7 +9,7 @@ struct CategoriesPage: View {
         List {
             Section {
                 Picker("平台", selection: $selectedPlatform) {
-                    ForEach(ComicPlatform.allCases) { platform in
+                    ForEach(ComicPlatform.onlinePlatforms) { platform in
                         Text(platform.title)
                             .tag(platform)
                     }

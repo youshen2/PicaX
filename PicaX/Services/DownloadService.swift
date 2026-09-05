@@ -403,16 +403,16 @@ final class DownloadService: ObservableObject {
         set { taskStore.tasks = newValue }
     }
 
-    private let defaults: UserDefaults
-    private let contentService: ComicContentService
-    private let fileManager: FileManager
+    let defaults: UserDefaults
+    let contentService: ComicContentService
+    let fileManager: FileManager
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
     private var workerTask: Task<Void, Never>?
     private var taskStructureCancellable: AnyCancellable?
     private var lastTaskProgressPublicationDate = Date.distantPast
     private var lastProgressPresentationRefreshDate = Date.distantPast
-    private var accountProvider: ((ComicPlatform) -> PlatformAccount?)?
+    var accountProvider: ((ComicPlatform) -> PlatformAccount?)?
     #if os(iOS)
     private lazy var backgroundExecution = DownloadBackgroundExecutionController { [weak self] in
         self?.handleBackgroundExecutionExpired()
@@ -1204,7 +1204,7 @@ final class DownloadService: ObservableObject {
         }
     }
 
-    private func loadImageDataWithRetry(urlString: String) async throws -> Data {
+    func loadImageDataWithRetry(urlString: String, bypassesCache: Bool = false) async throws -> Data {
         let storedRetryCount = defaults.object(forKey: DownloadSettingsKey.imageRetryCount) == nil
             ? 2
             : defaults.integer(forKey: DownloadSettingsKey.imageRetryCount)
@@ -1215,7 +1215,7 @@ final class DownloadService: ObservableObject {
             do {
                 return try await contentService.loadImageData(
                     urlString: urlString,
-                    storesInCache: readsImagesFromCache
+                    storesInCache: !bypassesCache && readsImagesFromCache
                 )
             } catch {
                 lastError = error
@@ -1233,7 +1233,7 @@ final class DownloadService: ObservableObject {
             : defaults.bool(forKey: DownloadSettingsKey.readsImagesFromCache)
     }
 
-    private func throttleIfNeeded(downloadedBytes: Int, startedAt: Date) async throws {
+    func throttleIfNeeded(downloadedBytes: Int, startedAt: Date) async throws {
         guard defaults.bool(forKey: DownloadSettingsKey.speedLimitEnabled) else { return }
         let storedLimit = defaults.object(forKey: DownloadSettingsKey.speedLimitKBPerSecond) == nil
             ? 1024
@@ -1245,7 +1245,7 @@ final class DownloadService: ObservableObject {
         try await Task.sleep(nanoseconds: UInt64((expectedDuration - elapsed) * 1_000_000_000))
     }
 
-    private func appendDownloadedChapter(
+    func appendDownloadedChapter(
         item: ComicListItem,
         totalChapterCount: Int,
         chapter: DownloadedChapterRecord,
@@ -1329,7 +1329,7 @@ final class DownloadService: ObservableObject {
         }
     }
 
-    private func comicDirectory(for item: ComicListItem) throws -> URL {
+    func comicDirectory(for item: ComicListItem) throws -> URL {
         let directoryURL = try downloadsRootURL()
             .appendingPathComponent(item.platform.id, isDirectory: true)
             .appendingPathComponent(Self.safeFileName("\(item.id)-\(item.title)"), isDirectory: true)
@@ -1346,7 +1346,7 @@ final class DownloadService: ObservableObject {
             .appendingPathComponent(Self.safeFileName("\(item.id)-\(item.title)"), isDirectory: true)
     }
 
-    private func chapterDirectory(for item: ComicListItem, chapter: ComicChapter, index: Int) throws -> URL {
+    func chapterDirectory(for item: ComicListItem, chapter: ComicChapter, index: Int) throws -> URL {
         let chapterURL = try comicDirectory(for: item)
             .appendingPathComponent(String(format: "%03d-%@", index + 1, Self.safeFileName(chapter.title)), isDirectory: true)
         try fileManager.createDirectory(at: chapterURL, withIntermediateDirectories: true)
@@ -1393,7 +1393,7 @@ final class DownloadService: ObservableObject {
         }.value
     }
 
-    private nonisolated static func directorySize(at rootURL: URL, fileManager: FileManager = .default) -> Int64 {
+    nonisolated static func directorySize(at rootURL: URL, fileManager: FileManager = .default) -> Int64 {
         guard let enumerator = fileManager.enumerator(
             at: rootURL,
             includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
@@ -1411,15 +1411,15 @@ final class DownloadService: ObservableObject {
         return total
     }
 
-    private func directoryName(for item: ComicListItem) -> String {
+    func directoryName(for item: ComicListItem) -> String {
         Self.directoryName(for: item)
     }
 
-    private nonisolated static func directoryName(for item: ComicListItem) -> String {
+    nonisolated static func directoryName(for item: ComicListItem) -> String {
         "\(item.platform.rawValue)/\(safeFileName("\(item.id)-\(item.title)"))"
     }
 
-    private func fileName(
+    func fileName(
         for urlString: String,
         pageIndex: Int,
         preferredExtension: String? = nil
@@ -1429,7 +1429,7 @@ final class DownloadService: ObservableObject {
         return String(format: "%04d.%@", pageIndex + 1, normalizedExt)
     }
 
-    private nonisolated static func isImageFile(_ url: URL) -> Bool {
+    nonisolated static func isImageFile(_ url: URL) -> Bool {
         switch url.pathExtension.lowercased() {
         case "jpg", "jpeg", "png", "webp", "gif":
             true
@@ -1442,7 +1442,7 @@ final class DownloadService: ObservableObject {
         "\(item.platform.id)-\(item.id)"
     }
 
-    private nonisolated static func localChapterImages(
+    nonisolated static func localChapterImages(
         item: ComicListItem,
         chapter: ComicChapter,
         chapterIndex: Int
@@ -1467,14 +1467,14 @@ final class DownloadService: ObservableObject {
         }.value
     }
 
-    private nonisolated static func chapterDirectoryURL(item: ComicListItem, chapter: ComicChapter, index: Int) throws -> URL {
+    nonisolated static func chapterDirectoryURL(item: ComicListItem, chapter: ComicChapter, index: Int) throws -> URL {
         try downloadsRootURL()
             .appendingPathComponent(item.platform.rawValue, isDirectory: true)
             .appendingPathComponent(safeFileName("\(item.id)-\(item.title)"), isDirectory: true)
             .appendingPathComponent(String(format: "%03d-%@", index + 1, safeFileName(chapter.title)), isDirectory: true)
     }
 
-    private nonisolated static func write(_ data: Data, to url: URL) async throws {
+    nonisolated static func write(_ data: Data, to url: URL) async throws {
         let task = Task.detached(priority: .utility) {
             try Task.checkCancellation()
             try data.write(to: url, options: .atomic)
@@ -1487,7 +1487,7 @@ final class DownloadService: ObservableObject {
         }
     }
 
-    private nonisolated static func decodeJmImageForStorage(
+    nonisolated static func decodeJmImageForStorage(
         data: Data,
         url: URL
     ) async throws -> JmImageScrambler.DecodedStorageImage {
@@ -1635,23 +1635,10 @@ final class DownloadService: ObservableObject {
     }
 
     private nonisolated static func archivePlatformTitle(for platform: ComicPlatform) -> String {
-        switch platform {
-        case .picacg:
-            "PicACG"
-        case .jmComic:
-            "JMComic"
-        case .nhentai:
-            "NHentai"
-        case .eHentai:
-            "E-Hentai"
-        case .hitomi:
-            "Hitomi"
-        case .htManga:
-            "绅士漫画"
-        }
+        platform.title
     }
 
-    private nonisolated static func safeFileName(_ value: String) -> String {
+    nonisolated static func safeFileName(_ value: String) -> String {
         let invalidCharacters = CharacterSet(charactersIn: "/\\?%*|\"<>:")
             .union(.newlines)
             .union(.controlCharacters)

@@ -101,4 +101,18 @@ final class ComicSearchAdvancedOptionsTests: XCTestCase {
 
         XCTAssertNil(record.resumableBreakpoint)
     }
+
+    func testHistoryResumesExpandedParenthesizedClauses() {
+        let requests = [
+            ComicSearchBreakpoint.Request(keyword: "A&C", platform: .nhentai, nextPage: 3),
+            ComicSearchBreakpoint.Request(keyword: "B&C", platform: .nhentai, nextPage: 5)
+        ]
+        let record = SearchHistoryRecord(
+            keyword: "(A/B)&C",
+            target: .platform(.nhentai),
+            breakpoint: ComicSearchBreakpoint(requests: requests),
+            searchedAt: Date(timeIntervalSince1970: 1_000)
+        )
+        XCTAssertEqual(record.resumableBreakpoint?.requests, requests)
+    }
 }

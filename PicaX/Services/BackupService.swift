@@ -512,7 +512,7 @@ enum BackupService {
                 }
             }
             if didChangeAccounts {
-                sqlite.platformAccounts = ComicPlatform.allCases.compactMap { local[$0] }
+                sqlite.platformAccounts = ComicPlatform.onlinePlatforms.compactMap { local[$0] }
             }
         }
         if includedContent.contains(.favorites) {
@@ -690,7 +690,7 @@ enum BackupService {
     private static func appendSQLiteDefaults(to values: inout [String: BackupDefaultValue], includedContent: Set<BackupContentKind>) {
         if includedContent.contains(.accounts) {
             let accounts = PicaXSQLiteStore.loadPlatformAccounts()
-            let redactedAccounts = ComicPlatform.allCases.compactMap { platform -> PlatformAccount? in
+            let redactedAccounts = ComicPlatform.onlinePlatforms.compactMap { platform -> PlatformAccount? in
                 guard var account = accounts[platform] else { return nil }
                 account.credential = account.credential.removingSecrets()
                 return account
@@ -766,7 +766,7 @@ enum BackupService {
     }
 
     private static func contentKind(for key: String) -> BackupContentKind? {
-        if key.hasPrefix("settings.webDAV.") {
+        if key.hasPrefix("settings.webDAV.") || key.hasPrefix("settings.appLock.") {
             return nil
         }
         if key == "picax.accounts" || key == "picax.session" || key == "picax.platformAccounts" {
@@ -787,7 +787,8 @@ enum BackupService {
         if key == SearchHistorySettingsKey.records {
             return .searchHistory
         }
-        if key == BlockingKeywordSettingsKey.common || key == BlockingKeywordSettingsKey.jmComic {
+        if key == BlockingKeywordSettingsKey.common || key == BlockingKeywordSettingsKey.jmComic
+            || key == BlockingKeywordSettingsKey.common + ".disabled" || key == BlockingKeywordSettingsKey.jmComic + ".disabled" {
             return .blockingKeywords
         }
         if key.hasPrefix("picax.localFavorites.") {
@@ -808,6 +809,17 @@ enum BackupService {
             return uniqueStrings((existingValue as? [String] ?? []) + (importedValue.stringArrayValue ?? []))
         }
 
+        if let existing = existingValue as? Data, let imported = importedValue.decodedData() {
+            switch key {
+            case SavedComicSearch.storageKey:
+                return StoredCollection<SavedComicSearch>.merging(existing: existing, imported: imported) ?? existing
+            case ComicPageBookmark.storageKey:
+                return StoredCollection<ComicPageBookmark>.merging(existing: existing, imported: imported) ?? existing
+            case ComicVersionOverride.storageKey:
+                return StoredCollection<ComicVersionOverride>.merging(existing: existing, imported: imported) ?? existing
+            default: break
+            }
+        }
         return existingValue
     }
 

@@ -122,7 +122,7 @@ enum SettingsRoute: String, CaseIterable, Hashable, Identifiable {
     private var searchKeywords: [String] {
         switch self {
         case .platformAccounts:
-            ComicPlatform.allCases.map(\.title) + ["登录", "账号", "Cookie", "平台登录与账号管理"]
+            ComicPlatform.onlinePlatforms.map(\.title) + ["登录", "账号", "Cookie", "平台登录与账号管理"]
         case .home:
             ["阅读历史", "稍后再读", "追更", "阅读时长", "下载", "折叠", "卡片", "排序", "入口显示"]
         case .explore:
