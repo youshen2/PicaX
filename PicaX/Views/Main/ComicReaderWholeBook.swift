@@ -253,16 +253,21 @@ struct ReaderWholeBookContinuousView: View {
             .onPreferenceChange(ReaderWholeBookVisiblePageFramesPreferenceKey.self) { pageFrames in
                 syncVisiblePage(pageFrames)
             }
-            .onAppear {
-                focusLoadableImages(around: currentVisiblePage)
+            .task {
+                let initialPage = currentVisiblePage
+                scrollTracker.reset()
+                focusLoadableImages(around: initialPage)
                 onPositionChange(
-                    currentVisiblePage.chapterIndex,
-                    currentVisiblePage.pageIndex,
+                    initialPage.chapterIndex,
+                    initialPage.pageIndex,
                     initialImages.count
                 )
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                    proxy.scrollTo(currentVisiblePage, anchor: .top)
-                }
+                try? await Task.sleep(nanoseconds: 200_000_000)
+                guard !Task.isCancelled, !scrollTracker.isReady else { return }
+                scrollTracker.setReady()
+                guard !scrollTracker.hasUserScrolled,
+                      !scrollBridge.isUserInteracting else { return }
+                proxy.scrollTo(initialPage, anchor: .top)
             }
             .onDisappear {
                 appendTask?.cancel()
@@ -281,6 +286,7 @@ struct ReaderWholeBookContinuousView: View {
                 }
                 let pageIndex = min(max(request.pageIndex, 0), section.images.count - 1)
                 let pageID = ReaderWholeBookPageID(chapterIndex: request.chapterIndex, pageIndex: pageIndex)
+                scrollTracker.setReady()
                 focusLoadableImages(around: pageID)
                 withAnimation(.easeInOut(duration: 0.22)) {
                     proxy.scrollTo(pageID, anchor: .top)
@@ -406,7 +412,8 @@ struct ReaderWholeBookContinuousView: View {
             return
         }
 
-        if visiblePage == flattenedPages.first?.id,
+        if visiblePage.chapterIndex == sections.first(where: { !$0.images.isEmpty })?.chapterIndex,
+           visiblePage.pageIndex == 0,
            visiblePage != currentVisiblePage,
            !scrollTracker.isUserInteracting,
            !scrollTracker.wasLastUserScrollNearTop(

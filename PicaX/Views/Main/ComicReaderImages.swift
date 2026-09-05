@@ -8,6 +8,11 @@ import UIKit
 import AppKit
 #endif
 
+private struct ReaderImageRequest: Equatable {
+    let urlString: String
+    let targetPixelWidth: Int?
+}
+
 struct ReaderImageView: View {
     let image: ComicChapterImage
     let retryCount: Int
@@ -21,6 +26,8 @@ struct ReaderImageView: View {
     var onAspectRatioResolved: ((Double) -> Void)? = nil
     @State private var retryID = 0
     @State private var loadState: ReaderImageLoadState = .loading
+    @State private var representedURLString: String?
+    @State private var loadedRequest: ReaderImageRequest?
     @State private var knownAspectRatio: Double?
     @State private var layoutAspectRatio: Double?
 
@@ -48,15 +55,20 @@ struct ReaderImageView: View {
         .frame(maxWidth: .infinity)
         .background(Color.black)
         .picaxSensitiveImageContent(image.url != nil)
+        .transaction { transaction in
+            transaction.animation = nil
+            transaction.disablesAnimations = true
+        }
         .task(id: "\(image.urlString)-\(targetPixelWidth ?? 0)-\(retryID)-\(isLoadAllowed)") {
+            if representedURLString != image.urlString {
+                resetLocalImageState()
+                representedURLString = image.urlString
+            }
             guard isLoadAllowed else {
                 loadCachedAspectRatio()
                 return
             }
             await loadImage()
-        }
-        .onChange(of: image.urlString) { _ in
-            resetLocalImageState()
         }
     }
 
@@ -90,6 +102,8 @@ struct ReaderImageView: View {
 
     @MainActor
     private func loadImage() async {
+        let request = ReaderImageRequest(urlString: image.urlString, targetPixelWidth: targetPixelWidth)
+        guard loadedRequest != request else { return }
         guard let url = image.url else {
             loadState = .failed
             return
@@ -98,7 +112,10 @@ struct ReaderImageView: View {
         if let cachedAspectRatio = ReaderImageAspectRatioCache.shared.aspectRatio(for: image.urlString) {
             receiveAspectRatio(cachedAspectRatio, storesInCache: false)
         }
-        loadState = .loading
+        // Keep the displayed image while the preload window or decode size changes.
+        if loadedRequest == nil {
+            loadState = .loading
+        }
         let attempts = max(retryCount, 0) + 1
         for attempt in 0..<attempts {
             do {
@@ -113,10 +130,14 @@ struct ReaderImageView: View {
                 guard !Task.isCancelled else { return }
                 receiveAspectRatio(decodedImage.aspectRatio)
                 loadState = .loaded(decodedImage.image)
+                loadedRequest = request
                 return
             } catch {
+                guard !Task.isCancelled, !error.isTaskCancellation else { return }
                 guard attempt < attempts - 1 else {
-                    loadState = .failed
+                    if loadedRequest == nil {
+                        loadState = .failed
+                    }
                     return
                 }
                 let delay = UInt64(max(retryInterval, 0.2) * 1_000_000_000)
@@ -154,8 +175,8 @@ struct ReaderImageView: View {
 
     @MainActor
     private func resetLocalImageState() {
-        retryID = 0
         loadState = .loading
+        loadedRequest = nil
         knownAspectRatio = nil
         layoutAspectRatio = nil
     }
@@ -288,18 +309,17 @@ final class ReaderContinuousZoomUIView: UIView, UIScrollViewDelegate, UIGestureR
 
     func update(rootView: AnyView, configuration: ReaderZoomConfiguration, resetID: String) {
         hostingController.rootView = rootView
-        hostingController.view.invalidateIntrinsicContentSize()
-        hostingController.view.setNeedsLayout()
         let wasZoomEnabled = self.configuration.isZoomEnabled
-        self.configuration = configuration
+        if self.configuration != configuration {
+            self.configuration = configuration
+            configureGestures()
+            configureZoomLimits()
+        }
         let shouldReset = self.resetID != resetID
         self.resetID = resetID
-        configureGestures()
-        configureZoomLimits()
         if shouldReset || (wasZoomEnabled && !configuration.isZoomEnabled) {
             resetZoom(animated: false)
         }
-        setNeedsLayout()
     }
 
     func prepareForReuse() {
@@ -310,15 +330,11 @@ final class ReaderContinuousZoomUIView: UIView, UIScrollViewDelegate, UIGestureR
     override func layoutSubviews() {
         super.layoutSubviews()
         guard bounds.width > 0, bounds.height > 0 else { return }
-        scrollView.frame = bounds
-        let didChangeSize = lastBoundsSize != bounds.size
+        // The hosting view fills the viewport; reading progress does not change its size.
+        guard lastBoundsSize != bounds.size else { return }
         lastBoundsSize = bounds.size
-        if didChangeSize {
-            resetZoom(animated: false)
-        }
-        layoutHostedViewForCurrentZoomScale()
-        updateContentInsets()
-        updateInteractionState()
+        scrollView.frame = bounds
+        resetZoom(animated: false)
     }
 
     func viewForZooming(in scrollView: UIScrollView) -> UIView? {
@@ -447,13 +463,18 @@ final class ReaderContinuousZoomUIView: UIView, UIScrollViewDelegate, UIGestureR
         let contentSize = scrollView.contentSize
         let insetX = max((bounds.width - contentSize.width) * 0.5, 0)
         let insetY = max((bounds.height - contentSize.height) * 0.5, 0)
-        scrollView.contentInset = UIEdgeInsets(top: insetY, left: insetX, bottom: insetY, right: insetX)
+        let insets = UIEdgeInsets(top: insetY, left: insetX, bottom: insetY, right: insetX)
+        if scrollView.contentInset != insets {
+            scrollView.contentInset = insets
+        }
     }
 
     private func updateInteractionState() {
         let isZoomed = scrollView.zoomScale > scrollView.minimumZoomScale + 0.01
-        scrollView.panGestureRecognizer.isEnabled = isZoomed
-        hostingController.view.isUserInteractionEnabled = !isZoomed
+        if scrollView.panGestureRecognizer.isEnabled != isZoomed {
+            scrollView.panGestureRecognizer.isEnabled = isZoomed
+            hostingController.view.isUserInteractionEnabled = !isZoomed
+        }
     }
 
     @objc private func handleDoubleTap(_ recognizer: UITapGestureRecognizer) {

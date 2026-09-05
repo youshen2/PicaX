@@ -942,19 +942,13 @@ struct ComicReaderPage: View {
                         targetPixelWidth: targetPixelWidth
                     )
                 }
-                .onAppear {
-                    resetContinuousImageState()
-                    continuousScrollTracker.reset()
-                    focusContinuousLoadableImage(viewModel.currentPageIndex, images: images)
-                    updateReadingPage(viewModel.currentPageIndex, totalPages: images.count, targetPixelWidth: targetPixelWidth, force: true)
-                    scrollToInitialPage(proxy: proxy)
-                }
-                .onChange(of: viewModel.currentChapterIndex) { _ in
+                .task(id: viewModel.currentChapterIndex) {
                     resetContinuousImageState()
                     continuousScrollTracker.reset()
                     scrollContinuous(toY: 0, animated: false)
                     focusContinuousLoadableImage(viewModel.currentPageIndex, images: images)
-                    scrollToInitialPage(proxy: proxy)
+                    updateReadingPage(viewModel.currentPageIndex, totalPages: images.count, targetPixelWidth: targetPixelWidth, force: true)
+                    await scrollToInitialPage(proxy: proxy)
                 }
                 .onChange(of: progressJumpRequest) { request in
                     handleProgressJumpRequest(
@@ -962,6 +956,7 @@ struct ComicReaderPage: View {
                         images: images,
                         targetPixelWidth: targetPixelWidth
                     ) { pageIndex in
+                        continuousScrollTracker.setReady()
                         focusContinuousLoadableImage(pageIndex, images: images)
                         scrollToPage(pageIndex, proxy: proxy, animated: true)
                     }
@@ -1351,14 +1346,14 @@ struct ComicReaderPage: View {
         await loadChapter(at: chapterIndex, pageIndex: pageIndex, force: force)
     }
 
-    private func scrollToInitialPage(proxy: ScrollViewProxy) {
+    private func scrollToInitialPage(proxy: ScrollViewProxy) async {
         let pageIndex = max(viewModel.requestedPageIndex, 0)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-            scrollToPage(pageIndex, proxy: proxy, animated: true)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
-                continuousScrollTracker.setReady()
-            }
-        }
+        try? await Task.sleep(nanoseconds: 250_000_000)
+        guard !Task.isCancelled, !continuousScrollTracker.isReady else { return }
+        continuousScrollTracker.setReady()
+        guard !continuousScrollTracker.hasUserScrolled,
+              !continuousScrollBridge.isUserInteracting else { return }
+        scrollToPage(pageIndex, proxy: proxy, animated: false)
     }
 
     private func scrollToPage(

@@ -199,8 +199,9 @@ final class ReaderContinuousScrollTracker {
     private(set) var contentHeight: CGFloat = 0
     private(set) var visibleHeight: CGFloat = 0
     private(set) var isUserInteracting = false
+    private(set) var hasUserScrolled = false
     private(set) var lastUserScrollY: CGFloat?
-    private var isReady = false
+    private(set) var isReady = false
     private var aspectRatios: [Int: Double] = [:]
 
     var hasContentMetrics: Bool {
@@ -212,6 +213,7 @@ final class ReaderContinuousScrollTracker {
         contentHeight = 0
         visibleHeight = 0
         isUserInteracting = false
+        hasUserScrolled = false
         lastUserScrollY = nil
         isReady = false
         aspectRatios.removeAll(keepingCapacity: true)
@@ -229,6 +231,7 @@ final class ReaderContinuousScrollTracker {
         visibleHeight = metrics.visibleHeight
         isUserInteracting = metrics.isUserInteracting
         if metrics.isUserInteracting {
+            hasUserScrolled = true
             lastUserScrollY = metrics.offsetY
         } else if movedWithoutUserInteraction {
             lastUserScrollY = nil
